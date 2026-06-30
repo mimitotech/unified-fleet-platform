@@ -1,0 +1,22 @@
+{
+  "name": "unified-fleet-platform",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Multi-tenant fleet platform unifying Wialon, LocoNav, and TrackSolid",
+  "workspaces": [
+    "packages/*",
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "build": "npm run build -w @ufp/shared && npm run build -w backend && npm run build -w frontend",
+    "dev:backend": "npm run dev -w backend",
+    "dev:frontend": "npm run dev -w frontend",
+    "db:migrate": "bash scripts/seed-db.sh",
+    "setup": "bash scripts/setup.sh"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

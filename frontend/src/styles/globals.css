@@ -1,0 +1,298 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Light mode (default) - Arctic White Theme */
+  :root {
+    /* Pure white background with cool gray accents */
+    --background: 0 0% 99%;
+    --foreground: 220 13% 18%;
+
+    /* Cards: Pure white with subtle shadow */
+    --card: 0 0% 100%;
+    --card-foreground: 220 13% 18%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 13% 18%;
+
+    /* Primary: #006f45 - Keep your brand green */
+    --primary: 156 100% 22%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Secondary: Cool light gray instead of cream */
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 220 13% 25%;
+
+    /* Muted: Subtle cool gray */
+    --muted: 220 13% 96%;
+    --muted-foreground: 220 9% 46%;
+
+    /* Accent: Very light cool gray */
+    --accent: 220 14% 97%;
+    --accent-foreground: 156 100% 22%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 71% 35%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 38 92% 15%;
+
+    --info: 199 89% 42%;
+    --info-foreground: 0 0% 100%;
+
+    /* Borders: Crisp, defined cool gray */
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 156 100% 22%;
+
+    --radius: 0.5rem;
+
+    /* Sidebar: Clean white with cool gray accents */
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 220 13% 25%;
+    --sidebar-primary: 156 100% 22%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 14% 96%;
+    --sidebar-accent-foreground: 156 100% 22%;
+    --sidebar-border: 220 13% 93%;
+    --sidebar-ring: 156 100% 22%;
+
+    /* Custom fleet colors - Clean white palette */
+    --fleet-primary: 156 100% 22%;
+    --fleet-primary-light: 156 80% 35%;
+    --fleet-secondary: 220 14% 96%;
+    --fleet-secondary-light: 220 14% 98%;
+    --fleet-card: 0 0% 100%;
+    --fleet-border: 220 13% 91%;
+
+    /* Vehicle Status colors (Wialon standard) */
+    --status-moving: 142 71% 45%; /* Green #22c55e - vehicle in motion */
+    --status-idle: 38 92% 50%; /* Yellow/Orange #f59e0b - engine running, stationary */
+    --status-stopped: 0 84% 60%; /* Red #ef4444 - engine off, parked */
+    --status-offline: 220 9% 46%; /* Grey #9ca3af - no GPS signal */
+
+    /* Gradients - Clean, subtle */
+    --gradient-primary: linear-gradient(135deg, hsl(156 100% 22%), hsl(156 80% 35%));
+    --gradient-card: linear-gradient(180deg, hsl(0 0% 100%), hsl(220 14% 99%));
+    --gradient-glow: radial-gradient(ellipse at center, hsl(156 100% 22% / 0.06), transparent 70%);
+  }
+
+  /* Dark mode */
+  .dark {
+    --background: 30 15% 10%;
+    --foreground: 40 20% 95%;
+
+    --card: 30 12% 14%;
+    --card-foreground: 40 20% 95%;
+
+    --popover: 30 12% 14%;
+    --popover-foreground: 40 20% 95%;
+
+    /* Primary: #006f45 - slightly lighter for dark mode visibility */
+    --primary: 156 100% 32%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Secondary: Warm cream tint for dark mode */
+    --secondary: 40 25% 22%;
+    --secondary-foreground: 40 30% 90%;
+
+    --muted: 30 15% 18%;
+    --muted-foreground: 40 15% 60%;
+
+    --accent: 30 20% 20%;
+    --accent-foreground: 40 20% 95%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 71% 45%;
+    --success-foreground: 30 15% 10%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 30 15% 10%;
+
+    --info: 199 89% 48%;
+    --info-foreground: 30 15% 10%;
+
+    --border: 30 15% 22%;
+    --input: 30 15% 22%;
+    --ring: 156 100% 32%;
+
+    --sidebar-background: 30 15% 12%;
+    --sidebar-foreground: 40 20% 90%;
+    --sidebar-primary: 156 100% 32%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 30 15% 18%;
+    --sidebar-accent-foreground: 40 20% 95%;
+    --sidebar-border: 30 15% 18%;
+    --sidebar-ring: 156 100% 32%;
+
+    /* Custom fleet colors */
+    --fleet-primary: 156 100% 32%;
+    --fleet-primary-light: 156 80% 42%;
+    --fleet-secondary: 40 25% 22%;
+    --fleet-secondary-light: 40 25% 30%;
+    --fleet-card: 30 12% 14%;
+    --fleet-border: 30 15% 22%;
+
+    /* Vehicle Status colors (Wialon standard - dark mode) */
+    --status-moving: 142 71% 55%; /* Brighter green for dark mode */
+    --status-idle: 38 92% 60%; /* Brighter yellow/orange for dark mode */
+    --status-stopped: 0 84% 65%; /* Brighter red for dark mode */
+    --status-offline: 220 9% 56%; /* Lighter grey for dark mode */
+
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(156 100% 32%), hsl(156 80% 42%));
+    --gradient-card: linear-gradient(180deg, hsl(30 12% 16%), hsl(30 15% 12%));
+    --gradient-glow: radial-gradient(ellipse at center, hsl(156 100% 32% / 0.12), transparent 70%);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+@layer components {
+  .fleet-card {
+    @apply bg-card border border-border rounded-lg p-4 transition-all duration-300 shadow-sm;
+  }
+
+  .fleet-card-hover {
+    @apply fleet-card hover:border-primary/50 hover:shadow-md hover:shadow-primary/10;
+  }
+
+  .fleet-glow {
+    box-shadow: 0 0 40px hsl(var(--primary) / 0.12);
+  }
+
+  .fleet-stat {
+    @apply text-3xl font-semibold font-mono tracking-tight text-foreground;
+  }
+
+  .fleet-label {
+    @apply text-xs font-medium uppercase tracking-wider text-muted-foreground;
+  }
+
+  .status-badge {
+    @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  /* Vehicle status classes (Wialon standard colors) */
+  .status-moving {
+    @apply status-badge bg-status-moving/15 text-status-moving;
+  }
+
+  .status-idle {
+    @apply status-badge bg-status-idle/15 text-status-idle;
+  }
+
+  .status-stopped {
+    @apply status-badge bg-status-stopped/15 text-status-stopped;
+  }
+
+  .status-offline {
+    @apply status-badge bg-status-offline/15 text-status-offline;
+  }
+
+  /* Driver status classes */
+  .status-active {
+    @apply status-badge bg-success/15 text-[hsl(var(--success))];
+  }
+
+  .nav-link {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-muted-foreground transition-all duration-200;
+    @apply hover:bg-muted hover:text-foreground;
+  }
+
+  .nav-link-active {
+    @apply bg-primary/10 text-primary border-l-2 border-primary font-medium;
+  }
+
+  .data-grid {
+    @apply grid gap-4;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  }
+
+  .map-container {
+    @apply relative rounded-lg overflow-hidden border border-border bg-card;
+  }
+
+  .pulse-dot {
+    @apply relative;
+  }
+
+  .pulse-dot::before {
+    content: '';
+    @apply absolute inset-0 rounded-full animate-ping;
+    background: inherit;
+    opacity: 0.4;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-clip-text text-transparent;
+    background-image: var(--gradient-primary);
+  }
+
+  .border-glow {
+    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.3), 0 0 20px hsl(var(--primary) / 0.1);
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 3px;
+  }
+
+  /* Vehicle info popup - remove Leaflet default styling */
+  .vehicle-info-popup .leaflet-popup-content-wrapper {
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+    border-radius: 0.5rem;
+    overflow: hidden;
+  }
+
+  .vehicle-info-popup .leaflet-popup-content {
+    margin: 0;
+    width: auto !important;
+  }
+
+  .vehicle-info-popup .leaflet-popup-tip-container {
+    display: none;
+  }
+
+  .vehicle-info-popup .leaflet-popup-close-button {
+    display: none;
+  }
+}

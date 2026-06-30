@@ -1,0 +1,11 @@
+FROM node:22-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json* ./
+COPY packages/shared packages/shared
+COPY frontend frontend
+RUN npm install -w frontend -w @ufp/shared && npm run build -w @ufp/shared && npm run build -w frontend
+
+FROM nginx:alpine
+COPY --from=build /app/frontend/dist /usr/share/nginx/html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]

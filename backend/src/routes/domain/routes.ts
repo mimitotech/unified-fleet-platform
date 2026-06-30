@@ -1,0 +1,90 @@
+import { Router } from 'express';
+import { query } from '../../config/database.js';
+import { requireTenant, type TenantRequest } from '../../middleware/tenant.js';
+import { success, error } from '../../utils/response.js';
+import { toCamelRows } from '../../utils/mapper.js';
+
+const router = Router();
+
+router.get('/', requireTenant, async (req: TenantRequest, res) => {
+  const status = req.query.status as string | undefined;
+  let sql = `SELECT * FROM fleet_routes WHERE tenant_id = $1 AND deleted_at IS NULL`;
+  const params: unknown[] = [req.tenantId];
+  if (status) {
+    sql += ` AND status = $2`;
+    params.push(status);
+  }
+  sql += ` ORDER BY start_time DESC`;
+  const { rows } = await query(sql, params);
+  return success(res, toCamelRows(rows));
+});
+
+router.get('/stats', requireTenant, async (req: TenantRequest, res) => {
+  const { rows } = await query(
+    `SELECT
+       COUNT(*)::int as total,
+       COUNT(*) FILTER (WHERE status = 'scheduled')::int as scheduled,
+       COUNT(*) FILTER (WHERE status = 'in-progress')::int as in_progress,
+       COUNT(*) FILTER (WHERE status = 'completed')::int as completed,
+       COALESCE(SUM(distance), 0)::float as total_distance
+     FROM fleet_routes WHERE tenant_id = $1 AND deleted_at IS NULL`,
+    [req.tenantId]
+  );
+  return success(res, toCamelRows(rows)[0]);
+});
+
+router.get('/trips', requireTenant, async (req: TenantRequest, res) => {
+  const limit = parseInt(String(req.query.limit || '50'), 10);
+  const { rows } = await query(
+    `SELECT * FROM trip_summaries WHERE tenant_id = $1 ORDER BY departure_time DESC LIMIT $2`,
+    [req.tenantId, limit]
+  );
+  return success(res, toCamelRows(rows));
+});
+
+router.post('/', requireTenant, async (req: TenantRequest, res) => {
+  const {
+    name, status, assetId, assetName, assetPlate, driverId, driverName,
+    startTime, distance, waypoints, eta, color, estimatedDuration, notes,
+  } = req.body;
+  if (!name) return error(res, 'name required');
+  const { rows } = await query(
+    `INSERT INTO fleet_routes (tenant_id, name, status, asset_id, asset_name, asset_plate, driver_id, driver_name,
+       start_time, distance, waypoints, eta, color, estimated_duration, notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+    [
+      req.tenantId, name, status || 'scheduled', assetId, assetName, assetPlate,
+      driverId, driverName, startTime || new Date(), distance || 0,
+      JSON.stringify(waypoints || []), eta, color || 'blue', estimatedDuration || 0, notes,
+    ]
+  );
+  return success(res, toCamelRows(rows)[0], 201);
+});
+
+router.patch('/:id', requireTenant, async (req: TenantRequest, res) => {
+  const { status, endTime, actualStartTime, actualDuration, fuelUsage, notes } = req.body;
+  const { rows } = await query(
+    `UPDATE fleet_routes SET
+       status = COALESCE($3, status),
+       end_time = COALESCE($4, end_time),
+       actual_start_time = COALESCE($5, actual_start_time),
+       actual_duration = COALESCE($6, actual_duration),
+       fuel_usage = COALESCE($7, fuel_usage),
+       notes = COALESCE($8, notes),
+       updated_at = NOW()
+     WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+     RETURNING *`,
+    [req.params.id, req.tenantId, status, endTime, actualStartTime, actualDuration, fuelUsage, notes]
+  );
+  if (!rows[0]) return error(res, 'Route not found', 404);
+  return success(res, toCamelRows(rows)[0]);
+});
+
+router.delete('/:id', requireTenant, async (req: TenantRequest, res) => {
+  await query(`UPDATE fleet_routes SET deleted_at = NOW() WHERE id = $1 AND tenant_id = $2`, [
+    req.params.id, req.tenantId,
+  ]);
+  return success(res, { deleted: true });
+});
+
+export default router;
