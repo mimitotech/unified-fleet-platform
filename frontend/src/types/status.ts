@@ -274,7 +274,7 @@ export const VEHICLE_TYPE_TO_API: Record<VehicleType, ApiVehicleType> = {
 // Unit Types
 // ============================================================================
 
-export type UnitType = 'vehicle' | 'generator';
+export type UnitType = 'vehicle' | 'generator' | 'machinery';
 
 export const UNIT_TYPE = {
   VEHICLE: 'vehicle' as const,

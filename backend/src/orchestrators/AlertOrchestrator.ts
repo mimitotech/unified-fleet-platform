@@ -46,19 +46,24 @@ export class AlertOrchestrator {
       [this.tenantId]
     );
 
-    const { decryptCredentials } = await import('../utils/encryption.js');
     const { createAdapter } = await import('../adapters/AdapterFactory.js');
+    const { resolveSourceCredentials } = await import('../services/integrationCredentials.js');
 
     for (const src of sources) {
-      if (src.source_type !== 'tracksolid') continue;
+      if (src.source_type !== 'tracksolid' && src.source_type !== 'wialon') continue;
       try {
-        const creds = decryptCredentials(src.credentials_encrypted);
-        const adapter = createAdapter('tracksolid', creds);
+        const creds = await resolveSourceCredentials(
+          this.tenantId,
+          src.source_type as import('@ufp/shared').SourceType,
+          src.credentials_encrypted
+        );
+        const adapter = createAdapter(src.source_type, creds);
         const alerts = await adapter.getAlerts(from, to);
         for (const alert of alerts) {
+          const sourceType = src.source_type as FleetAlert['sourceType'];
           const { rows: existing } = await query(
-            `SELECT id FROM alerts WHERE tenant_id = $1 AND source_type = 'tracksolid' AND external_id = $2`,
-            [this.tenantId, alert.externalId || alert.id]
+            `SELECT id FROM alerts WHERE tenant_id = $1 AND source_type = $2 AND external_id = $3`,
+            [this.tenantId, sourceType, alert.externalId || alert.id]
           );
           if (existing.length > 0) continue;
           await this.insertAlert({
@@ -71,12 +76,15 @@ export class AlertOrchestrator {
             longitude: alert.longitude,
             timestamp: alert.timestamp,
             videoUrl: alert.videoUrl,
-            sourceType: 'tracksolid',
+            sourceType,
             externalId: alert.externalId || alert.id,
             assetId: alert.assetId,
             acknowledged: false,
           });
           count++;
+        }
+        if (typeof adapter.disconnect === 'function') {
+          await adapter.disconnect();
         }
       } catch {
         // Skip if adapter unavailable

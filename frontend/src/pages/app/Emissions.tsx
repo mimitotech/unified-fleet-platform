@@ -6,6 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Leaf, Cloud, Gauge, AlertTriangle } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { CHART } from '@/lib/chartColors';
+import { safeArray } from '@/lib/safeArray';
 
 const complianceColors: Record<string, string> = {
   good: 'bg-success/15 text-success',
@@ -21,15 +23,15 @@ export default function Emissions() {
   return (
     <AppLayout title="Emissions" subtitle="CO₂ tracking and eco-driving compliance">
       <div className="space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="stat-strip-4">
           {isLoading ? (
-            [1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-32" />)
+            [1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-14 rounded-lg" />)
           ) : (
             <>
-              <MetricCard title="CO₂ Emissions" value={`${metrics?.co2Kg ?? 0} kg`} icon={Cloud} variant="primary" />
-              <MetricCard title="CO₂ / km" value={`${metrics?.co2PerKm ?? 0} kg`} icon={Gauge} variant="info" />
-              <MetricCard title="Fuel Used" value={`${metrics?.totalFuelLiters ?? 0} L`} icon={Leaf} variant="success" />
-              <MetricCard title="Violations" value={metrics?.violationCount ?? 0} icon={AlertTriangle} variant="destructive" />
+              <MetricCard title="CO₂ Emissions" value={`${metrics?.co2Kg ?? 0} kg`} icon={Cloud} variant="primary" size="xxs" />
+              <MetricCard title="CO₂ / km" value={`${metrics?.co2PerKm ?? 0} kg`} icon={Gauge} variant="info" size="xxs" />
+              <MetricCard title="Fuel Used" value={`${metrics?.totalFuelLiters ?? 0} L`} icon={Leaf} variant="success" size="xxs" />
+              <MetricCard title="Violations" value={metrics?.violationCount ?? 0} icon={AlertTriangle} variant="destructive" size="xxs" />
             </>
           )}
         </div>
@@ -53,7 +55,7 @@ export default function Emissions() {
                   <XAxis dataKey="vehicle" tick={{ fontSize: 11 }} />
                   <YAxis />
                   <Tooltip />
-                  <Bar dataKey="co2Kg" fill="hsl(var(--primary))" name="CO₂ (kg)" />
+                  <Bar dataKey="co2Kg" fill={CHART.brandAccent} name="CO₂ (kg)" radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -71,7 +73,7 @@ export default function Emissions() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {violations?.slice(0, 8).map((v) => (
+                {safeArray(violations).slice(0, 8).map((v) => (
                   <TableRow key={v.id}>
                     <TableCell>{v.unitName}</TableCell>
                     <TableCell className="text-sm">{v.violationType.replace(/_/g, ' ')}</TableCell>

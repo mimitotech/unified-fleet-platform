@@ -19,11 +19,11 @@ export default function Drivers() {
   return (
     <AppLayout title="Drivers" subtitle="Driver management and performance">
       <div className="space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <MetricCard title="Total Drivers" value={stats?.total ?? 0} icon={Users} variant="primary" />
-          <MetricCard title="Available" value={stats?.available ?? 0} icon={UserCheck} variant="success" />
-          <MetricCard title="Driving" value={stats?.driving ?? 0} icon={Car} variant="info" />
-          <MetricCard title="Off Duty" value={stats?.offDuty ?? 0} icon={Coffee} variant="default" />
+        <div className="stat-strip-4">
+          <MetricCard title="Total Drivers" value={stats?.total ?? 0} icon={Users} variant="primary" size="xxs" />
+          <MetricCard title="Available" value={stats?.available ?? 0} icon={UserCheck} variant="success" size="xxs" />
+          <MetricCard title="Driving" value={stats?.driving ?? 0} icon={Car} variant="info" size="xxs" />
+          <MetricCard title="Off Duty" value={stats?.offDuty ?? 0} icon={Coffee} variant="default" size="xxs" />
         </div>
 
         <div className="fleet-card">

@@ -13,6 +13,7 @@ type StatusType = VehicleStatus | DriverStatus | RouteStatus | AlertSeverity;
 
 interface StatusBadgeProps {
   status: StatusType;
+  label?: string;
   showDot?: boolean;
   size?: 'sm' | 'md' | 'lg';
   className?: string;
@@ -107,12 +108,14 @@ const dotSizes = {
   lg: 'w-2 h-2',
 };
 
-export function StatusBadge({ status, showDot = true, size = 'md', className }: StatusBadgeProps) {
+export function StatusBadge({ status, label, showDot = true, size = 'md', className }: StatusBadgeProps) {
   const config = statusConfig[status];
 
   if (!config) {
     return null;
   }
+
+  const displayLabel = label?.trim() || config.label;
 
   return (
     <span
@@ -124,7 +127,7 @@ export function StatusBadge({ status, showDot = true, size = 'md', className }: 
       )}
     >
       {showDot && <span className={cn('rounded-full', config.dotColor, dotSizes[size])} />}
-      {config.label}
+      {displayLabel}
     </span>
   );
 }

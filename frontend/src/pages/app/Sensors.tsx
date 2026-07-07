@@ -3,12 +3,16 @@ import { useAssetStatuses } from '@/hooks/useAssets';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Gauge, Thermometer, Battery } from 'lucide-react';
+import { WialonSensorsPanel } from '@/components/app/WialonLivePanels';
+import { WialonContextBanner } from '@/components/app/WialonContextBanner';
 
 export default function Sensors() {
   const { data: statuses, isLoading } = useAssetStatuses();
 
   return (
     <AppLayout title="Sensors" subtitle="Vehicle sensor readings">
+      <WialonContextBanner />
+      <WialonSensorsPanel />
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-32" />)}
@@ -27,7 +31,7 @@ export default function Sensors() {
               <div className="grid grid-cols-3 gap-4 text-center">
                 <div>
                   <Gauge className="w-5 h-5 mx-auto text-muted-foreground mb-1" />
-                  <p className="text-lg font-semibold">{s.status?.speed ?? '—'}</p>
+                  <p className="text-lg font-semibold">{s.status?.location?.speed ?? '—'}</p>
                   <p className="text-xs text-muted-foreground">km/h</p>
                 </div>
                 <div>

@@ -17,7 +17,13 @@ async function main() {
   const migrations = [
     '001_tenants.sql', '002_data_sources.sql', '003_assets.sql', '004_alerts.sql',
     '005_users.sql', '006_users_modules.sql', '007_seed_modules.sql',
-    '008_domain_tables.sql', '009_demo_domain_seed.sql',
+    '008_domain_tables.sql', '009_demo_domain_seed.sql', '010_platform_admin.sql', '011_commands_and_files.sql', '012_tenant_onboarding.sql', '013_system_roles.sql', '014_terms_acceptance.sql',
+    '015_wialon_hierarchy.sql',
+    '016_wialon_user_link.sql',
+    '017_platform_integration_centers.sql',
+    '018_wialon_center_tenant_backfill.sql',
+    '019_wialon_tenant_active_inherit.sql',
+    '020_wialon_mother_accounts.sql',
   ];
 
   // Verify connection first
@@ -55,7 +61,7 @@ Or manually:
   const adminHash = await bcrypt.hash('admin123', 10);
 
   await pool.query(
-    `INSERT INTO tenants (name, slug, primary_color) VALUES ('Demo Fleet', 'demo', '#006f45')
+    `INSERT INTO tenants (name, slug, primary_color) VALUES ('Demo Fleet', 'demo', '#004225')
      ON CONFLICT (slug) DO NOTHING`
   );
 
@@ -81,8 +87,25 @@ Or manually:
     [adminHash]
   );
 
-  console.log('Demo tenant: demo / demo@mimito.ug / demo123');
+  const superHash = await bcrypt.hash('super123', 10);
+  await pool.query(
+    `INSERT INTO users (tenant_id, email, password_hash, full_name, role)
+     VALUES (NULL, 'super@mimito.ug', $1, 'Super Admin', 'super_admin')
+     ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = 'super_admin'`,
+    [superHash]
+  );
+
+  console.log('Demo tenant: demo@mimito.ug / demo123');
   console.log('Platform admin: admin@ufp.local / admin123');
+  console.log('Super admin: super@mimito.ug / super123');
+
+  await pool.query(
+    `INSERT INTO activity_feed (tenant_id, event_type, title, description)
+     SELECT t.id, 'tenant_sync', 'Demo fleet synced', '342 vehicles from Wialon'
+     FROM tenants t WHERE t.slug = 'demo'
+     AND NOT EXISTS (SELECT 1 FROM activity_feed LIMIT 1)`
+  );
+
   await pool.end();
 }
 

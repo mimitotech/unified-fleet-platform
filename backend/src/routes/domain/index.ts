@@ -7,6 +7,7 @@ import emissionsRouter from './emissions.js';
 import surveillanceRouter from './surveillance.js';
 import geofencesRouter from './geofences.js';
 import reportsRouter from './reports.js';
+import commandsRouter from './commands.js';
 
 const router = Router();
 
@@ -18,5 +19,6 @@ router.use('/emissions', emissionsRouter);
 router.use('/surveillance', surveillanceRouter);
 router.use('/geofences', geofencesRouter);
 router.use('/reports', reportsRouter);
+router.use('/commands', commandsRouter);
 
 export default router;

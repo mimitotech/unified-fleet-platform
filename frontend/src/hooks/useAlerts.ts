@@ -1,11 +1,16 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { clientApi } from '@/lib/api';
+import { clientApi, getTenantSlug } from '@/lib/api';
+import { LIVE_POLL, pollWhenVisible } from '@/lib/liveRefresh';
+import { safeArray } from '@/lib/safeArray';
+import { notify } from '@/lib/notify';
 
 export function useAlerts(limit = 50) {
   return useQuery({
-    queryKey: ['alerts', limit],
-    queryFn: () => clientApi.getAlerts(limit),
-    refetchInterval: 60000,
+    queryKey: ['alerts', getTenantSlug() || 'default'],
+    queryFn: () => clientApi.getAlerts(100),
+    refetchInterval: pollWhenVisible(LIVE_POLL.alerts),
+    staleTime: 10_000,
+    select: (data) => safeArray(data).slice(0, limit),
   });
 }
 
@@ -13,6 +18,9 @@ export function useAcknowledgeAlert() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => clientApi.acknowledgeAlert(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['alerts'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['alerts'] });
+      notify.success('Alert acknowledged');
+    },
   });
 }

@@ -100,7 +100,7 @@ INSERT INTO geofences (tenant_id, name, type, center, radius, color, is_active)
 SELECT t.id, g.name, 'circle', g.center::jsonb, g.radius, g.color, true
 FROM tenants t
 CROSS JOIN (VALUES
-  ('Kampala Depot', '{"lat":0.3476,"lng":32.5825}', 500, '#006f45'),
+  ('Kampala Depot', '{"lat":0.3476,"lng":32.5825}', 500, '#004225'),
   ('Jinja Warehouse', '{"lat":0.4244,"lng":33.2042}', 300, '#3B82F6')
 ) AS g(name, center, radius, color)
 WHERE t.slug = 'demo'

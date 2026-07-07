@@ -1,49 +1,79 @@
 import { AppLayout } from '@/components/app/AppLayout';
-import { UnifiedMap } from '@/components/app/UnifiedMap';
-import { useAssets, useAssetStatuses } from '@/hooks/useAssets';
-import { Skeleton } from '@/components/ui/skeleton';
-import { StatusBadge } from '@/components/shared/StatusBadge';
-import type { VehicleStatus } from '@/components/shared/StatusBadge';
+import { QueryErrorBanner } from '@/components/shared/QueryErrorBanner';
+import { WialonContextBanner } from '@/components/app/WialonContextBanner';
+import { ModuleIntegrationBanner } from '@/components/shared/ModuleIntegrationBanner';
+import { MonitoringViewHeader } from '@/components/fleet/MonitoringViewHeader';
+import { FleetMapWorkspace, FleetListWorkspace } from '@/components/fleet/FleetMapWorkspace';
+import { FleetTrackWorkspace } from '@/components/fleet/FleetTrackWorkspace';
+import { MonitoringEventsView } from '@/components/monitoring/MonitoringEventsView';
+import { useMonitoringUrlState } from '@/hooks/useMonitoringUrlState';
+import { useFleetUnits } from '@/hooks/useFleetUnits';
+import { useMapSessionKey } from '@/hooks/useMapSessionKey';
+import type { FleetUnit } from '@/lib/fleetUnits';
 
 export default function Monitoring() {
-  const { data: assets, isLoading: assetsLoading } = useAssets();
-  const { data: statuses, isLoading: statusLoading } = useAssetStatuses();
+  const mapSessionKey = useMapSessionKey();
+  const { units, counts, live, statuses, isLoading, isError, refetch } = useFleetUnits();
+  const { view, unitId, setView, selectUnit } = useMonitoringUrlState();
 
-  const loading = assetsLoading || statusLoading;
+  const goMapWithUnit = (id: string) => {
+    selectUnit(id, { view: 'map' });
+  };
+
+  const openTrack = (unit: FleetUnit) => {
+    selectUnit(unit.id, { view: 'tracks' });
+  };
 
   return (
-    <AppLayout title="Monitoring" subtitle="Live fleet map and status">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
-          {loading ? <Skeleton className="h-[500px]" /> : (
-            <UnifiedMap assets={assets as never[]} statuses={statuses as never[]} height="500px" />
-          )}
-        </div>
-        <div className="fleet-card max-h-[500px] overflow-auto">
-          <h3 className="font-semibold mb-4">Fleet List</h3>
-          {loading ? (
-            <Skeleton className="h-40" />
-          ) : (
-            <ul className="space-y-2">
-              {(assets as Array<{ id: string; name: string; registrationPlate?: string; sources?: unknown[] }>)?.map((a) => {
-                const st = (statuses as Array<{ asset?: { name: string }; status?: { status: string } }>)?.find(
-                  (s) => s.asset?.name === a.name
-                );
-                return (
-                  <li key={a.id} className="flex items-center justify-between py-2 border-b border-border text-sm">
-                    <div>
-                      <p className="font-medium">{a.name}</p>
-                      <p className="text-muted-foreground text-xs">{a.registrationPlate || '—'}</p>
-                    </div>
-                    {st?.status?.status && (
-                      <StatusBadge status={st.status.status as VehicleStatus} size="sm" />
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
+    <AppLayout title="Monitoring" subtitle="Live fleet map, list, trips and events">
+      {isError && (
+        <QueryErrorBanner message="Could not load live fleet." onRetry={() => refetch()} className="mb-4" />
+      )}
+      <div className="space-y-3">
+        <WialonContextBanner compact />
+        <ModuleIntegrationBanner moduleKey="monitoring" />
+        <MonitoringViewHeader
+          mode={view}
+          onChange={setView}
+          fleetCount={counts.total}
+          live={live}
+          counts={counts.byStatus}
+        />
+
+        {view === 'map' && (
+          <FleetMapWorkspace
+            units={units}
+            statuses={statuses}
+            isLoading={isLoading}
+            mapSessionKey={mapSessionKey}
+            selectedId={unitId}
+            onSelectId={(id) => selectUnit(id, { view: 'map' })}
+            onOpenTrack={openTrack}
+          />
+        )}
+        {view === 'list' && (
+          <FleetListWorkspace
+            units={units}
+            selectedId={unitId}
+            onSelectId={(id) => selectUnit(id, { view: 'list' })}
+            onViewOnMap={(u) => goMapWithUnit(u.id)}
+            onOpenTrack={openTrack}
+          />
+        )}
+        {view === 'tracks' && (
+          <FleetTrackWorkspace
+            units={units}
+            selectedId={unitId}
+            onSelectId={(id) => selectUnit(id, { view: 'tracks' })}
+          />
+        )}
+        {view === 'violations' && (
+          <MonitoringEventsView
+            units={units}
+            unitId={unitId}
+            onViewUnitOnMap={goMapWithUnit}
+          />
+        )}
       </div>
     </AppLayout>
   );

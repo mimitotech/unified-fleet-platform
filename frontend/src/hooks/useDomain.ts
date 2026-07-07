@@ -1,8 +1,14 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { clientApi } from '@/lib/api';
+import { LIVE_POLL, pollWhenVisible } from '@/lib/liveRefresh';
+import { safeArray } from '@/lib/safeArray';
 
 export function useDrivers() {
-  return useQuery({ queryKey: ['drivers'], queryFn: () => clientApi.getDrivers() });
+  return useQuery({
+    queryKey: ['drivers'],
+    queryFn: () => clientApi.getDrivers(),
+    refetchInterval: pollWhenVisible(LIVE_POLL.drivers),
+  });
 }
 
 export function useDriverStats() {
@@ -10,7 +16,11 @@ export function useDriverStats() {
 }
 
 export function useRoutes() {
-  return useQuery({ queryKey: ['routes'], queryFn: () => clientApi.getRoutes() });
+  return useQuery({
+    queryKey: ['routes'],
+    queryFn: () => clientApi.getRoutes(),
+    refetchInterval: pollWhenVisible(LIVE_POLL.routes),
+  });
 }
 
 export function useRouteStats() {
@@ -21,16 +31,28 @@ export function useTrips(limit = 50) {
   return useQuery({ queryKey: ['trips', limit], queryFn: () => clientApi.getTrips(limit) });
 }
 
-export function useFuelTransactions() {
-  return useQuery({ queryKey: ['fuelTransactions'], queryFn: () => clientApi.getFuelTransactions() });
+export function useFuelTransactions(enabled = true) {
+  return useQuery({
+    queryKey: ['fuelTransactions'],
+    queryFn: () => clientApi.getFuelTransactions(),
+    enabled,
+  });
 }
 
 export function useFuelKpis() {
-  return useQuery({ queryKey: ['fuelKpis'], queryFn: () => clientApi.getFuelKpis() });
+  return useQuery({
+    queryKey: ['fuelKpis'],
+    queryFn: () => clientApi.getFuelKpis(),
+    refetchInterval: pollWhenVisible(LIVE_POLL.fuel),
+  });
 }
 
-export function useFuelTrend() {
-  return useQuery({ queryKey: ['fuelTrend'], queryFn: () => clientApi.getFuelTrend() });
+export function useFuelTrend(enabled = true) {
+  return useQuery({
+    queryKey: ['fuelTrend'],
+    queryFn: () => clientApi.getFuelTrend(),
+    enabled,
+  });
 }
 
 export function useWorkshopKpis() {
@@ -49,6 +71,55 @@ export function useBreakdowns() {
   return useQuery({ queryKey: ['breakdowns'], queryFn: () => clientApi.getBreakdowns() });
 }
 
+export function useCreateInspection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: clientApi.createInspection,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['inspections'] });
+      qc.invalidateQueries({ queryKey: ['workshopKpis'] });
+    },
+  });
+}
+
+export function useCreateMaintenance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: clientApi.createMaintenance,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['maintenanceLogs'] });
+      qc.invalidateQueries({ queryKey: ['workshopKpis'] });
+    },
+  });
+}
+
+export function useCreateBreakdown() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: clientApi.createBreakdown,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['breakdowns'] });
+      qc.invalidateQueries({ queryKey: ['workshopKpis'] });
+    },
+  });
+}
+
+export function useCreateGeofence() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: clientApi.createGeofence,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['geofences'] }),
+  });
+}
+
+export function useDeleteGeofence() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: clientApi.deleteGeofence,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['geofences'] }),
+  });
+}
+
 export function useEmissionsMetrics() {
   return useQuery({ queryKey: ['emissionsMetrics'], queryFn: () => clientApi.getEmissionsMetrics() });
 }
@@ -61,16 +132,33 @@ export function useEcoViolations() {
   return useQuery({ queryKey: ['ecoViolations'], queryFn: () => clientApi.getEcoViolations() });
 }
 
-export function useVideoStreams() {
-  return useQuery({ queryKey: ['videoStreams'], queryFn: () => clientApi.getVideoStreams(), refetchInterval: 30000 });
+export function useVideoStreams(enabled = true) {
+  return useQuery({
+    queryKey: ['videoStreams'],
+    queryFn: () => clientApi.getVideoStreams(),
+    enabled,
+    refetchInterval: enabled ? pollWhenVisible(LIVE_POLL.video) : false,
+    staleTime: LIVE_POLL.video,
+    placeholderData: (prev) => prev,
+    select: (d) => safeArray(d),
+  });
 }
 
-export function useSurveillanceViolations() {
-  return useQuery({ queryKey: ['surveillanceViolations'], queryFn: () => clientApi.getSurveillanceViolations() });
+export function useSurveillanceViolations(enabled = true) {
+  return useQuery({
+    queryKey: ['surveillanceViolations'],
+    queryFn: () => clientApi.getSurveillanceViolations(),
+    enabled,
+    select: (d) => safeArray(d),
+  });
 }
 
 export function useGeofences() {
-  return useQuery({ queryKey: ['geofences'], queryFn: () => clientApi.getGeofences() });
+  return useQuery({
+    queryKey: ['geofences'],
+    queryFn: () => clientApi.getGeofences(),
+    refetchInterval: pollWhenVisible(LIVE_POLL.geofences),
+  });
 }
 
 export function useReportTypes() {
@@ -98,7 +186,10 @@ export function useCreateRoute() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: clientApi.createRoute,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['routes'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['routes'] });
+      qc.invalidateQueries({ queryKey: ['routeStats'] });
+    },
   });
 }
 

@@ -1,6 +1,7 @@
 import type { Response, NextFunction } from 'express';
 import { query } from '../config/database.js';
 import type { AuthRequest } from './auth.js';
+import { isSystemRole } from '../utils/systemRoles.js';
 
 export interface TenantRequest extends AuthRequest {
   tenantId?: string;
@@ -8,15 +9,14 @@ export interface TenantRequest extends AuthRequest {
 }
 
 export async function tenantMiddleware(req: TenantRequest, res: Response, next: NextFunction) {
-  const slug =
-    (req.headers['x-tenant-slug'] as string) ||
-    req.params.tenantSlug ||
-    req.query.tenant as string;
+  if (req.tenantId) return next();
 
-  if (req.user?.role === 'platform_admin' && slug) {
+  const slugHeader = (req.headers['x-tenant-slug'] as string) || undefined;
+
+  if (isSystemRole(req.user?.role) && slugHeader) {
     const { rows } = await query<{ id: string; slug: string }>(
       `SELECT id, slug FROM tenants WHERE slug = $1 AND is_active = true`,
-      [slug]
+      [slugHeader]
     );
     if (rows[0]) {
       req.tenantId = rows[0].id;
@@ -30,7 +30,7 @@ export async function tenantMiddleware(req: TenantRequest, res: Response, next: 
     req.tenantSlug = rows[0]?.slug;
   }
 
-  if (!req.tenantId && req.user?.role !== 'platform_admin') {
+  if (!req.tenantId && !isSystemRole(req.user?.role)) {
     return res.status(400).json({ success: false, error: 'Tenant context required' });
   }
   next();

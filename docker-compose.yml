@@ -28,6 +28,11 @@ services:
       JWT_SECRET: dev-jwt-secret-change-in-production
       ENCRYPTION_KEY: dev-encryption-key-32chars!!!!!!
       PORT: 3000
+      UPLOAD_DIR: /app/uploads
+      API_PUBLIC_URL: http://localhost:3000
+      FRONTEND_URL: http://localhost:5173
+    volumes:
+      - uploads:/app/uploads
     depends_on:
       - postgres
       - redis
@@ -45,3 +50,4 @@ services:
 
 volumes:
   pgdata:
+  uploads:

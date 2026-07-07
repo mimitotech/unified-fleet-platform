@@ -3,8 +3,11 @@ import { useAlerts, useAcknowledgeAlert } from '@/hooks/useAlerts';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { EmptyState } from '@/components/shared/EmptyState';
+import { QueryErrorBanner } from '@/components/shared/QueryErrorBanner';
 import { formatDistanceToNow } from 'date-fns';
-import { Check } from 'lucide-react';
+import { Bell, Check } from 'lucide-react';
+import { WialonNotificationsPanel } from '@/components/app/WialonLivePanels';
 
 interface AlertRow {
   id: string;
@@ -17,22 +20,30 @@ interface AlertRow {
 }
 
 export default function AlertsPage() {
-  const { data: alerts, isLoading } = useAlerts(100);
+  const { data: alerts, isLoading, isError, refetch } = useAlerts(100);
   const acknowledge = useAcknowledgeAlert();
 
   return (
     <AppLayout title="Alerts" subtitle="Unified alert inbox from all sources">
+      {isError && (
+        <QueryErrorBanner message="Could not load alerts." onRetry={() => refetch()} className="mb-4" />
+      )}
+      <WialonNotificationsPanel />
       {isLoading ? (
-        <Skeleton className="h-96" />
+        <Skeleton className="h-96 rounded-xl" />
       ) : (
         <div className="space-y-3">
           {(alerts as AlertRow[])?.length === 0 && (
-            <p className="text-muted-foreground text-center py-12">No alerts yet</p>
+            <EmptyState
+              icon={Bell}
+              title="No alerts"
+              description="Your fleet is running smoothly. New alerts from all connected sources will appear here in real time."
+            />
           )}
           {(alerts as AlertRow[])?.map((alert) => (
             <div
               key={alert.id}
-              className="fleet-card flex items-start justify-between gap-4"
+              className="fleet-card-hover flex items-start justify-between gap-4"
             >
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -41,7 +52,7 @@ export default function AlertsPage() {
                     {alert.severity}
                   </Badge>
                   <Badge variant="outline">{alert.sourceType}</Badge>
-                  {alert.acknowledged && <Badge variant="outline">Acknowledged</Badge>}
+                  {alert.acknowledged && <Badge variant="outline" className="bg-success/10 text-success border-success/20">Acknowledged</Badge>}
                 </div>
                 {alert.description && (
                   <p className="text-sm text-muted-foreground">{alert.description}</p>
@@ -56,6 +67,7 @@ export default function AlertsPage() {
                   variant="outline"
                   onClick={() => acknowledge.mutate(alert.id)}
                   disabled={acknowledge.isPending}
+                  className="border-primary/20 hover:bg-primary/5"
                 >
                   <Check className="w-4 h-4 mr-1" />
                   Acknowledge

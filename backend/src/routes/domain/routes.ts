@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { query } from '../../config/database.js';
 import { requireTenant, type TenantRequest } from '../../middleware/tenant.js';
+import { requireModule, requireWriteAccess } from '../../middleware/rbac.js';
 import { success, error } from '../../utils/response.js';
 import { toCamelRows } from '../../utils/mapper.js';
 
 const router = Router();
+const mod = requireModule('routes');
 
-router.get('/', requireTenant, async (req: TenantRequest, res) => {
+router.get('/', requireTenant, mod, async (req: TenantRequest, res) => {
   const status = req.query.status as string | undefined;
   let sql = `SELECT * FROM fleet_routes WHERE tenant_id = $1 AND deleted_at IS NULL`;
   const params: unknown[] = [req.tenantId];
@@ -19,7 +21,7 @@ router.get('/', requireTenant, async (req: TenantRequest, res) => {
   return success(res, toCamelRows(rows));
 });
 
-router.get('/stats', requireTenant, async (req: TenantRequest, res) => {
+router.get('/stats', requireTenant, mod, async (req: TenantRequest, res) => {
   const { rows } = await query(
     `SELECT
        COUNT(*)::int as total,
@@ -33,7 +35,7 @@ router.get('/stats', requireTenant, async (req: TenantRequest, res) => {
   return success(res, toCamelRows(rows)[0]);
 });
 
-router.get('/trips', requireTenant, async (req: TenantRequest, res) => {
+router.get('/trips', requireTenant, mod, async (req: TenantRequest, res) => {
   const limit = parseInt(String(req.query.limit || '50'), 10);
   const { rows } = await query(
     `SELECT * FROM trip_summaries WHERE tenant_id = $1 ORDER BY departure_time DESC LIMIT $2`,
@@ -42,7 +44,7 @@ router.get('/trips', requireTenant, async (req: TenantRequest, res) => {
   return success(res, toCamelRows(rows));
 });
 
-router.post('/', requireTenant, async (req: TenantRequest, res) => {
+router.post('/', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
   const {
     name, status, assetId, assetName, assetPlate, driverId, driverName,
     startTime, distance, waypoints, eta, color, estimatedDuration, notes,
@@ -61,7 +63,7 @@ router.post('/', requireTenant, async (req: TenantRequest, res) => {
   return success(res, toCamelRows(rows)[0], 201);
 });
 
-router.patch('/:id', requireTenant, async (req: TenantRequest, res) => {
+router.patch('/:id', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
   const { status, endTime, actualStartTime, actualDuration, fuelUsage, notes } = req.body;
   const { rows } = await query(
     `UPDATE fleet_routes SET
@@ -80,7 +82,7 @@ router.patch('/:id', requireTenant, async (req: TenantRequest, res) => {
   return success(res, toCamelRows(rows)[0]);
 });
 
-router.delete('/:id', requireTenant, async (req: TenantRequest, res) => {
+router.delete('/:id', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
   await query(`UPDATE fleet_routes SET deleted_at = NOW() WHERE id = $1 AND tenant_id = $2`, [
     req.params.id, req.tenantId,
   ]);

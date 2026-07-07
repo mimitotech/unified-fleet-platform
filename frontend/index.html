@@ -3,7 +3,41 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Unified Fleet Platform</title>
+    <meta name="description" content="MAMS — Mimito Asset Management System. Unified fleet tracking across Wialon, LocoNav, and TrackSolid Pro." />
+    <title>MAMS — Mimito Asset Management System</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" sizes="any" />
+    <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" href="/favicon.ico" />
+    <link rel="dns-prefetch" href="https://maps.googleapis.com" />
+    <link rel="dns-prefetch" href="https://mt1.google.com" />
+    <link rel="dns-prefetch" href="https://a.tile.openstreetmap.org" />
+    <link rel="dns-prefetch" href="https://api.maptiler.com" />
+    <link rel="preconnect" href="https://maps.googleapis.com" crossorigin />
+    <link rel="preconnect" href="https://mt1.google.com" crossorigin />
+    <link rel="preconnect" href="https://a.tile.openstreetmap.org" crossorigin />
+    <link rel="preconnect" href="https://api.maptiler.com" crossorigin />
+    <script>
+      (function () {
+        try {
+          var slug = localStorage.getItem('ufp_tenant_slug');
+          if (!slug) return;
+          var raw = localStorage.getItem('ufp_tenant_theme_vars:' + slug);
+          if (!raw) return;
+          var vars = JSON.parse(raw);
+          var root = document.documentElement;
+          for (var k in vars) {
+            if (Object.prototype.hasOwnProperty.call(vars, k)) {
+              root.style.setProperty(k, vars[k]);
+            }
+          }
+          var tenantRaw = localStorage.getItem('ufp_tenant_branding:' + slug);
+          if (tenantRaw) {
+            var tenant = JSON.parse(tenantRaw);
+            if (tenant.name) document.title = tenant.name + ' — Fleet Management';
+          }
+        } catch (e) { /* ignore */ }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
