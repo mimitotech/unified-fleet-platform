@@ -333,7 +333,7 @@ interface GeneratorFuelLevelChartProps {
 
 export function GeneratorFuelLevelChart({ fromDate, toDate }: GeneratorFuelLevelChartProps = {}) {
   const { data: generators = [], isLoading: generatorsLoading } = useGenerators();
-  const [range, setRange] = useState<RangeOption>('14');
+  const [range, setRange] = useState<RangeOption>('7');
   // Default to "All generators" so the chart immediately shows fleet context;
   // users can drill into a single tank to see refill / drain markers.
   const [selectedId, setSelectedId] = useState<string>(ALL_GENERATORS_VALUE);
@@ -362,11 +362,12 @@ export function GeneratorFuelLevelChart({ fromDate, toDate }: GeneratorFuelLevel
   }, [hasParentRange, fromDate, toDate, range]);
 
   const {
-    data: allTransactions = [],
+    data: fuelTxData,
     isLoading: txLoading,
     error: txError,
     refetch: refetchFuel,
   } = useGeneratorFuelTransactions({ startDate, endDate });
+  const allTransactions = fuelTxData?.transactions ?? [];
 
   const {
     data: allEngineRows = [],

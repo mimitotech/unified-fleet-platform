@@ -5,7 +5,12 @@ import type { WialonClient } from '../adapters/wialonClient.js';
 import { fetchLeafRows } from './wialonFuelReport/leafRows.js';
 import { getCellNumber, getCellTimestamp, getCellValue } from './wialonFuelReport/cells.js';
 import type { WialonCell } from './wialonFuelReport/types.js';
+import { execWialonReportTables } from './wialonReportExec.js';
 import { listAllUnits } from './wialonFuelReport/templates.js';
+import {
+  scopeFromCredentials,
+  WialonReportResolverService,
+} from './WialonReportResolverService.js';
 
 export type GeneratorEngineHoursRow = {
   id: string;
@@ -75,10 +80,6 @@ function buildColumnMap(headers: string[]): Record<string, number> {
   return map;
 }
 
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 async function execReportTables(
   client: WialonClient,
   resourceId: number,
@@ -87,77 +88,13 @@ async function execReportTables(
   fromTs: number,
   toTs: number
 ) {
-  await client.request('report/cleanup_result', {}).catch(() => undefined);
-  await client.request('report/exec_report', {
+  return execWialonReportTables(client, {
     reportResourceId: resourceId,
     reportTemplateId: templateId,
     reportObjectId: groupId,
-    reportObjectSecId: 0,
-    interval: { from: fromTs, to: toTs, flags: 0 },
-    remoteExec: 1,
+    fromTs,
+    toTs,
   });
-
-  for (let attempt = 0; attempt < 120; attempt++) {
-    const statusRes = await client.request<{ status: number; error?: string }>('report/get_report_status', {});
-    const code = statusRes.status;
-    if (code === 4) break;
-    if (code === 8 || code === 16) throw new Error(statusRes.error || `Wialon report failed (${code})`);
-    await sleep(1000);
-  }
-
-  await client.request('report/apply_report_result', {}).catch(() => undefined);
-  const tablesRes = await client.request<{
-    tables?: Array<{ name: string; label: string; rows: number; header: string[] }>;
-  }>('report/get_report_tables', {});
-  return tablesRes.tables ?? [];
-}
-
-async function findGensetsGroup(client: WialonClient) {
-  for (const mask of ['*[GENSETS]*', '*GENSET*', '*']) {
-    const result = await client.request<{ items: Array<{ id: number; nm: string }> }>('core/search_items', {
-      spec: { itemsType: 'avl_unit_group', propName: 'sys_name', propValueMask: mask, sortType: 'sys_name' },
-      force: 1,
-      flags: 1,
-      from: 0,
-      to: 20,
-    });
-    const group = (result.items ?? []).find((g) => /genset|generator/i.test(g.nm)) ?? result.items?.[0];
-    if (group) return group;
-  }
-  return null;
-}
-
-async function findEngineHoursTemplates(client: WialonClient) {
-  const passes = [
-    ['engine hours report(group)', 'engine hours report (group)'],
-    ['fuel report(group)', 'fuel report (group)'],
-  ];
-  const resources = await client.request<{
-    items: Array<{ id: number; rep?: Record<string, { n: string }> }>;
-  }>('core/search_items', {
-    spec: { itemsType: 'avl_resource', propName: 'sys_name', propValueMask: '*', sortType: 'sys_name' },
-    force: 1,
-    flags: 8193,
-    from: 0,
-    to: 100,
-  });
-
-  const found: Array<{ resourceId: number; templateId: number; name: string }> = [];
-  const seen = new Set<string>();
-  for (const patterns of passes) {
-    for (const resource of resources.items ?? []) {
-      if (!resource.rep) continue;
-      for (const [templateId, tmpl] of Object.entries(resource.rep)) {
-        const name = tmpl.n?.toLowerCase() || '';
-        if (!patterns.some((p) => name.includes(p))) continue;
-        const key = `${resource.id}:${templateId}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        found.push({ resourceId: resource.id, templateId: parseInt(templateId, 10), name: tmpl.n });
-      }
-    }
-  }
-  return found;
 }
 
 function rowId(unitId: number, beginning: number, end: number): string {
@@ -222,47 +159,112 @@ export class WialonGeneratorEngineHoursService {
     }
 
     const creds = await loadTenantWialonCreds(tenantId);
+    const scope = scopeFromCredentials(tenantId, creds);
     const rows = await withWialonClient(creds, async (client) => {
-      const group = await findGensetsGroup(client);
+      const groups = await WialonReportResolverService.listUnitGroups(client, scope);
+      const group =
+        groups.find((g) => /genset|generator/i.test(g.nm)) ?? groups[0] ?? null;
       if (!group) return [];
 
-      const templates = await findEngineHoursTemplates(client);
+      const resolved = await WialonReportResolverService.findModuleTemplates(
+        client,
+        scope,
+        'engineHours',
+        { includeFallback: true }
+      );
+      const groupTemplates = resolved
+        .filter((t) => t.isGroupReport)
+        .map((t) => ({
+          resourceId: t.resourceId,
+          templateId: t.templateId,
+          name: t.templateName,
+          isGroup: true as const,
+        }));
+      const unitTemplates = resolved
+        .filter((t) => !t.isGroupReport && /engine hour/i.test(t.templateName))
+        .map((t) => ({
+          resourceId: t.resourceId,
+          templateId: t.templateId,
+          name: t.templateName,
+          isGroup: false as const,
+        }));
+      const templates = groupTemplates.length ? groupTemplates : unitTemplates;
       if (!templates.length) return [];
 
-      const units = await listAllUnits(client);
+      const units = await listAllUnits(client, scope);
       const unitNameToId = new Map(units.map((u) => [u.nm, u.id]));
+      const generatorUnits = units.filter((u) => /generator|genset|bowser/i.test(u.nm));
 
       const deduped = new Map<string, GeneratorEngineHoursRow>();
-      for (const tmpl of templates) {
-        try {
-          const tables = await execReportTables(
-            client,
-            tmpl.resourceId,
-            tmpl.templateId,
-            group.id,
-            fromTs,
-            toTs
-          );
-          for (let idx = 0; idx < tables.length; idx++) {
-            const table = tables[idx];
-            if (!isEngineHoursTable(table.header)) continue;
-            const columnMap = buildColumnMap(table.header);
-            const parsed = await parseEngineHoursTable(
+
+      if (groupTemplates.length) {
+        for (const tmpl of groupTemplates) {
+          try {
+            const tables = await execReportTables(
               client,
-              idx,
-              table.rows,
-              columnMap,
-              group.nm,
-              unitNameToId
+              tmpl.resourceId,
+              tmpl.templateId,
+              group.id,
+              fromTs,
+              toTs
             );
-            for (const row of parsed) {
-              deduped.set(row.id, row);
+            for (let idx = 0; idx < tables.length; idx++) {
+              const table = tables[idx];
+              if (!isEngineHoursTable(table.header)) continue;
+              const columnMap = buildColumnMap(table.header);
+              const parsed = await parseEngineHoursTable(
+                client,
+                idx,
+                table.rows,
+                columnMap,
+                group.nm,
+                unitNameToId
+              );
+              for (const row of parsed) {
+                deduped.set(row.id, row);
+              }
+            }
+          } catch (err) {
+            console.warn('[GeneratorEngineHours] template failed:', tmpl.name, err);
+          } finally {
+            await client.request('report/cleanup_result', {}).catch(() => undefined);
+          }
+        }
+      } else {
+        const targets = generatorUnits.length ? generatorUnits : units;
+        for (const tmpl of unitTemplates) {
+          for (const unit of targets) {
+            try {
+              const tables = await execReportTables(
+                client,
+                tmpl.resourceId,
+                tmpl.templateId,
+                unit.id,
+                fromTs,
+                toTs
+              );
+              for (let idx = 0; idx < tables.length; idx++) {
+                const table = tables[idx];
+                if (!isEngineHoursTable(table.header)) continue;
+                const columnMap = buildColumnMap(table.header);
+                const parsed = await parseEngineHoursTable(
+                  client,
+                  idx,
+                  table.rows,
+                  columnMap,
+                  unit.nm,
+                  unitNameToId
+                );
+                for (const row of parsed) {
+                  deduped.set(row.id, row);
+                }
+              }
+            } catch (err) {
+              console.warn('[GeneratorEngineHours] unit template failed:', unit.nm, err);
+            } finally {
+              await client.request('report/cleanup_result', {}).catch(() => undefined);
             }
           }
-        } catch (err) {
-          console.warn('[GeneratorEngineHours] template failed:', tmpl.name, err);
-        } finally {
-          await client.request('report/cleanup_result', {}).catch(() => undefined);
         }
       }
       return [...deduped.values()];

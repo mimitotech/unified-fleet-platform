@@ -1,13 +1,17 @@
 import { useMemo } from 'react';
 import { Zap, Clock, Fuel, Activity, Cog } from 'lucide-react';
 import { MetricCard } from '@/components/app/MetricCard';
-import { useStationaryWithReports, type StationaryFuelType } from './useStationaryFuelHooks';
-import type { EnrichedGenerator } from '@/types';
+import { useGeneratorEngineHours } from '@/services/fleet';
+import { useStationaryAssets, type StationaryFuelType } from './useStationaryFuelHooks';
+import { groupSummaryUnitIds, isWialonGroupSummary } from './fuelTransactionFilters';
+import type { EnrichedGenerator, FuelTransaction, Generator, Machinery } from '@/types';
 
 interface GeneratorKpiCardsProps {
   fromDate?: string;
   toDate?: string;
   stationaryType?: StationaryFuelType;
+  fuelTransactions?: FuelTransaction[];
+  isFuelLoading?: boolean;
 }
 
 interface KpiAggregates {
@@ -21,7 +25,16 @@ interface KpiAggregates {
   activeLoadKw: number;
 }
 
-function aggregate(generators: EnrichedGenerator[], hasRange: boolean): KpiAggregates {
+function effectiveConsumedTx(t: FuelTransaction): number {
+  if (t.fuelUsed > 0) return t.fuelUsed;
+  if (t.section === 'theft' && t.suddenFuelDrop > 0) return t.suddenFuelDrop;
+  return 0;
+}
+
+function aggregate(
+  generators: Array<Generator | Machinery | EnrichedGenerator>,
+  hasRange: boolean,
+): KpiAggregates {
   let running = 0;
   let totalRuntimeHours = 0;
   let totalFuelLitres = 0;
@@ -33,10 +46,11 @@ function aggregate(generators: EnrichedGenerator[], hasRange: boolean): KpiAggre
 
   for (const g of generators) {
     if (g.status === 'running') running += 1;
+    const enriched = g as EnrichedGenerator;
     if (hasRange) {
-      totalRuntimeHours += g.runtimeHoursPeriod ?? 0;
+      totalRuntimeHours += enriched.runtimeHoursPeriod ?? 0;
     } else {
-      totalRuntimeHours += g.totalRunningHours ?? 0;
+      totalRuntimeHours += enriched.totalRunningHours ?? 0;
     }
 
     const litres = g.fuelInfo?.level ?? g.fuel ?? 0;
@@ -74,14 +88,52 @@ export function GeneratorKpiCards({
   fromDate,
   toDate,
   stationaryType = 'generator',
+  fuelTransactions = [],
+  isFuelLoading = false,
 }: GeneratorKpiCardsProps = {}) {
   const isMachinery = stationaryType === 'machinery';
   const hasRange = Boolean(fromDate && toDate);
-  const { data: generators = [], isLoading, isReportsLoading } = useStationaryWithReports(
-    stationaryType,
+  const assetsQ = useStationaryAssets(stationaryType);
+  const engineQ = useGeneratorEngineHours(
     hasRange ? { startDate: fromDate, endDate: toDate } : undefined,
+    { enabled: hasRange },
   );
-  const k = useMemo(() => aggregate(generators as EnrichedGenerator[], hasRange), [generators, hasRange]);
+
+  const generators = useMemo(() => {
+    const base = assetsQ.data ?? [];
+    if (!hasRange) return base;
+
+    const runtimeByUnit = new Map<string, number>();
+    for (const row of engineQ.data ?? []) {
+      const key = String(row.unitId);
+      const durSec = row.end > row.beginning ? row.end - row.beginning : 0;
+      const hours = durSec > 0 ? durSec / 3600 : row.engineHours;
+      runtimeByUnit.set(key, (runtimeByUnit.get(key) ?? 0) + hours);
+    }
+
+    const summaryUnits = groupSummaryUnitIds(fuelTransactions, fromDate, toDate);
+    const consumedByUnit = new Map<string, number>();
+    for (const tx of fuelTransactions) {
+      if (tx.section !== 'consumption' && tx.section !== 'theft') continue;
+      const uid = String(tx.unitId);
+      if (isWialonGroupSummary(tx)) {
+        if (!summaryUnits.has(uid)) continue;
+        if (tx.fuelUsed > 0) consumedByUnit.set(uid, tx.fuelUsed);
+        continue;
+      }
+      if (summaryUnits.has(uid)) continue;
+      const used = effectiveConsumedTx(tx);
+      if (used > 0) consumedByUnit.set(uid, (consumedByUnit.get(uid) ?? 0) + used);
+    }
+
+    return base.map<EnrichedGenerator>((g) => ({
+      ...g,
+      runtimeHoursPeriod: runtimeByUnit.get(String(g.id)) ?? 0,
+      fuelConsumedPeriod: consumedByUnit.get(String(g.id)),
+    }));
+  }, [assetsQ.data, engineQ.data, fuelTransactions, fromDate, toDate, hasRange]);
+
+  const k = useMemo(() => aggregate(generators, hasRange), [generators, hasRange]);
 
   const label = isMachinery ? 'machinery' : 'generator';
   const activeSubtitle = k.total > 0
@@ -102,8 +154,9 @@ export function GeneratorKpiCards({
     : `${k.running} running`;
 
   const ActiveIcon = isMachinery ? Cog : Zap;
+  const isReportsLoading = isFuelLoading || engineQ.isLoading;
 
-  if (isLoading) {
+  if (assetsQ.isLoading) {
     return (
       <div className="fuel-kpi-grid">
         {[0, 1, 2, 3].map((i) => (

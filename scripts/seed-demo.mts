@@ -24,6 +24,11 @@ async function main() {
     '018_wialon_center_tenant_backfill.sql',
     '019_wialon_tenant_active_inherit.sql',
     '020_wialon_mother_accounts.sql',
+    '021_module_sources_wialon.sql',
+    '022_video_share_links.sql',
+    '023_tenant_fuel_module_config.sql',
+    '024_fuel_sync.sql',
+    '025_fuel_asset_category.sql',
   ];
 
   // Verify connection first

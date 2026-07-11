@@ -4,19 +4,29 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useSurveillanceViolations } from '@/hooks/useDomain';
+import type { SurveillanceViolation, WialonVideoClipRef } from '@/lib/api';
+import { notify } from '@/lib/notify';
 import { safeArray } from '@/lib/safeArray';
 
 type Props = {
   unitId?: number;
+  onPlayClip?: (clip: WialonVideoClipRef, label?: string) => void;
 };
 
-export function SurveillanceEventsTab({ unitId }: Props) {
-  const { data, isLoading } = useSurveillanceViolations(true);
-  const events = safeArray<Record<string, unknown>>(data).filter((v) => {
+export function SurveillanceEventsTab({ unitId, onPlayClip }: Props) {
+  const { data, isLoading } = useSurveillanceViolations(true, unitId);
+  const events = safeArray<SurveillanceViolation>(data).filter((v) => {
     if (unitId == null) return true;
-    const name = String(v.unitName || '');
-    return String(v.unitId || '') === String(unitId) || name.length > 0;
+    return String(v.unitId ?? '') === String(unitId);
   });
+
+  const playClip = (clip: WialonVideoClipRef, label?: string) => {
+    if (onPlayClip) {
+      onPlayClip(clip, label);
+      return;
+    }
+    notify.info('Select a unit', 'Choose a video unit to play clips in-app.');
+  };
 
   if (isLoading) return <Skeleton className="h-48" />;
 
@@ -24,13 +34,13 @@ export function SurveillanceEventsTab({ unitId }: Props) {
     <div className="space-y-3">
       {events.map((v, i) => {
         const videoUrl = v.videoUrl ? String(v.videoUrl) : '';
+        const clip = v.clip;
+        const title = String(v.violationType || v.title || v.type || 'Event');
         return (
           <div key={String(v.id || i)} className="flex items-start gap-3 border-b border-border pb-3 last:border-0">
             <AlertTriangle className="w-5 h-5 text-warning shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0">
-              <p className="font-medium text-sm">
-                {String(v.violationType || v.title || v.type || 'Event')}
-              </p>
+              <p className="font-medium text-sm">{title}</p>
               <p className="text-xs text-muted-foreground">
                 {[v.unitName, v.driverName].filter(Boolean).join(' · ')}
               </p>
@@ -44,7 +54,17 @@ export function SurveillanceEventsTab({ unitId }: Props) {
               <Badge variant="outline" className="capitalize">
                 {String(v.category || v.severity || 'event')}
               </Badge>
-              {videoUrl && (
+              {clip ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1"
+                  onClick={() => playClip(clip, title)}
+                >
+                  <Play className="h-3 w-3" />
+                  Clip
+                </Button>
+              ) : videoUrl ? (
                 <Button size="sm" variant="outline" className="h-7 text-xs gap-1" asChild>
                   <a href={videoUrl} target="_blank" rel="noopener noreferrer">
                     <Play className="h-3 w-3" />
@@ -52,7 +72,7 @@ export function SurveillanceEventsTab({ unitId }: Props) {
                     <ExternalLink className="h-3 w-3 opacity-60" />
                   </a>
                 </Button>
-              )}
+              ) : null}
             </div>
           </div>
         );

@@ -126,6 +126,7 @@ export type WialonFuelReportData = {
   trend: WialonFuelTrendPoint[];
   source?: string;
   needsRefresh?: boolean;
+  warming?: boolean;
   fetchedAt?: string;
 };
 

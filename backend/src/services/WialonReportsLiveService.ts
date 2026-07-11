@@ -5,6 +5,13 @@ import { WialonFuelService } from './WialonFuelService.js';
 import { fetchTripsForUnits } from './wialonLiveReportRows.js';
 import { formatFuelRowFields, mergeUnitFuel } from './wialonReportFuelMerge.js';
 import type { WialonFuelLive } from './wialonFuel.js';
+import { withWialonClient } from './WialonSessionService.js';
+import {
+  scopeFromCredentials,
+  WialonReportResolverService,
+  type ResolvedReportTemplate,
+} from './WialonReportResolverService.js';
+import type { WialonReportModule } from './wialonReportTemplateRegistry.js';
 
 async function loadLiveFuelMap(tenantId: string, unitIds: number[]) {
   const creds = await loadTenantWialonCreds(tenantId);
@@ -141,6 +148,95 @@ export class WialonReportsLiveService {
       rows: [...sensorRows, ...paramRows, ...fieldRows],
       fetchedAt: new Date().toISOString(),
       count: sensorRows.length + paramRows.length + fieldRows.length,
+    };
+  }
+
+  /** Account-scoped Wialon report templates for Reports workspace (grouped by module). */
+  static async getTemplateCatalog(tenantId: string) {
+    const creds = await loadTenantWialonCreds(tenantId);
+    const scope = scopeFromCredentials(tenantId, creds);
+
+    return withWialonClient(creds, async (client) => {
+      const templates = await WialonReportResolverService.listAllTemplates(client, scope);
+      const groups = await WialonReportResolverService.listUnitGroups(client, scope, { limit: 80 });
+
+      const byModule = new Map<WialonReportModule, ResolvedReportTemplate[]>();
+      for (const t of templates) {
+        const list = byModule.get(t.module) ?? [];
+        list.push(t);
+        byModule.set(t.module, list);
+      }
+
+      const modules = [...byModule.entries()].map(([module, items]) => ({
+        module,
+        count: items.length,
+        templates: items,
+      }));
+
+      return {
+        templates,
+        modules,
+        groups,
+        count: templates.length,
+        fetchedAt: new Date().toISOString(),
+      };
+    });
+  }
+
+  /** Resolver-assisted exec_report — picks template by module or uses explicit ids. */
+  static async runTemplateReport(
+    tenantId: string,
+    input: {
+      module?: WialonReportModule;
+      resourceId?: number;
+      templateId?: number;
+      objectId: number;
+      objectKind?: 'unit' | 'group';
+      from: number;
+      to: number;
+      maxRowsPerTable?: number;
+    }
+  ) {
+    const creds = await loadTenantWialonCreds(tenantId);
+    const scope = scopeFromCredentials(tenantId, creds);
+    const objectKind = input.objectKind ?? 'unit';
+
+    let resourceId = input.resourceId;
+    let templateId = input.templateId;
+
+    if (resourceId == null || templateId == null) {
+      if (!input.module) {
+        throw new Error('module or resourceId+templateId required');
+      }
+      const resolved = await withWialonClient(creds, async (client) =>
+        WialonReportResolverService.findModuleTemplates(client, scope, input.module!, {
+          includeFallback: true,
+        })
+      );
+      const picked = WialonReportResolverService.pickTemplate(resolved, {
+        isGroupReport: objectKind === 'group',
+        preferNonFallback: true,
+      });
+      if (!picked) {
+        throw new Error(`No Wialon report template found for module "${input.module}"`);
+      }
+      resourceId = picked.resourceId;
+      templateId = picked.templateId;
+    }
+
+    const result = await WialonLiveService.executeReport(creds, {
+      reportResourceId: resourceId,
+      reportTemplateId: templateId,
+      reportObjectId: input.objectId,
+      reportObjectSecId: 0,
+      from: input.from,
+      to: input.to,
+      maxRowsPerTable: input.maxRowsPerTable,
+    });
+
+    return {
+      ...result,
+      template: { resourceId, templateId, module: input.module ?? null, objectKind },
     };
   }
 }

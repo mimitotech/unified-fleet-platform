@@ -33,14 +33,19 @@ import {
 import { wialonFuelTransactionsToFuelTransactions } from '../transformers/fuelTransformer';
 import type { FuelAssetCategory, FuelFleetSummary, WialonFuelAssetRow } from '@/lib/fuelTypes';
 
+function formatLocalDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function defaultFuelRange(): { from: string; to: string } {
   const today = new Date();
-  const from = new Date(today);
-  from.setDate(from.getDate() - 14);
-  return {
-    from: from.toISOString().split('T')[0],
-    to: today.toISOString().split('T')[0],
-  };
+  const fmt = (d: Date) => formatLocalDate(d);
+  const to = fmt(today);
+  const from = fmt(new Date(today.getTime() - 6 * 86400000));
+  return { from, to };
 }
 
 function consumptionToEngineHours(rows: FuelTransaction[]): GeneratorEngineHours[] {
@@ -218,19 +223,14 @@ export class UfpFleetService implements IFleetService {
     category: FuelAssetCategory,
     filters?: FuelTransactionFilters,
   ): Promise<FuelTransaction[]> {
-    const unitIds = await this.unitIdsForCategory(category);
-    if (!unitIds.size) return [];
-
-    const all = await this.getFuelTransactions({
+    const { transactions } = await this.getFuelTransactionsMeta({
       ...filters,
-      includeGenerators: true,
-      includeMachinery: true,
+      assetCategory: category,
     });
-    let rows = all.filter((t) => unitIds.has(String(t.unitId)));
     if (filters?.vehicleId) {
-      rows = rows.filter((t) => String(t.unitId) === filters.vehicleId);
+      return transactions.filter((t) => String(t.unitId) === filters.vehicleId);
     }
-    return rows;
+    return transactions;
   }
 
   async getFleetStats(): Promise<FleetStats> {
@@ -290,23 +290,59 @@ export class UfpFleetService implements IFleetService {
       }));
   }
 
-  async getFuelTransactions(filters?: FuelTransactionFilters): Promise<FuelTransaction[]> {
+  async getFuelTransactionsMeta(
+    filters?: FuelTransactionFilters,
+  ): Promise<{ transactions: FuelTransaction[]; warming: boolean; needsRefresh?: boolean }> {
     const range = defaultFuelRange();
     const from = filters?.startDate ?? range.from;
     const to = filters?.endDate ?? range.to;
-    const data = await clientApi.getWialonFuelTransactions(from, to, filters?.refresh ?? false);
+    const data = await clientApi.getFuelTransactions(
+      from,
+      to,
+      filters?.refresh ?? false,
+      filters?.vehicleId ? Number(filters.vehicleId) : undefined,
+      filters?.assetCategory,
+    );
     let transactions = wialonFuelTransactionsToFuelTransactions(data.transactions);
 
     if (filters?.assetCategory) {
-      const ids = await this.unitIdsForCategory(filters.assetCategory);
-      transactions = transactions.filter((t) => ids.has(String(t.unitId)));
+      try {
+        const assets = await this.getFuelAssets();
+        const categoryAssets = assets.filter((a) => a.assetType === filters.assetCategory);
+        // Patch unit IDs from names when Wialon group rows lack IDs; trust backend category scope.
+        transactions = transactions.map((t) => {
+          if (t.unitId && categoryAssets.some((a) => String(a.unitId) === String(t.unitId))) {
+            return t;
+          }
+          const match = categoryAssets.find(
+            (a) => a.name.trim().toLowerCase() === t.unitName.trim().toLowerCase(),
+          );
+          if (match) return { ...t, unitId: Number(match.unitId) || t.unitId };
+          return t;
+        });
+      } catch {
+        // DB rows already scoped by assetCategory when possible.
+      }
     } else if (filters?.vehicleId) {
       transactions = transactions.filter((t) => String(t.unitId) === filters.vehicleId);
     } else if (!filters?.includeGenerators && !filters?.includeMachinery) {
-      const exclude = await this.nonVehicleUnitIds();
-      transactions = transactions.filter((t) => !exclude.has(String(t.unitId)));
+      try {
+        const exclude = await this.nonVehicleUnitIds();
+        transactions = transactions.filter((t) => !exclude.has(String(t.unitId)));
+      } catch {
+        // Keep vehicle rows when asset list is temporarily unavailable.
+      }
     }
 
+    const needsRefresh = Boolean(data.needsRefresh);
+    const warming = Boolean(
+      data.warming ?? (data.source === 'warming' || (needsRefresh && transactions.length === 0)),
+    );
+    return { transactions, warming: warming || needsRefresh, needsRefresh };
+  }
+
+  async getFuelTransactions(filters?: FuelTransactionFilters): Promise<FuelTransaction[]> {
+    const { transactions } = await this.getFuelTransactionsMeta(filters);
     return transactions;
   }
 

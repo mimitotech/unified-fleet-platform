@@ -26,6 +26,8 @@ export interface VehicleGroup {
   totalCost: number;
   alertCount: number;
   liveLevel?: number;
+  fuelType?: string;
+  cardNumber?: string;
 }
 
 export interface FuelTransactionsTableProps {
@@ -40,11 +42,14 @@ export interface FuelTransactionsTableProps {
   isLoading: boolean;
   onRefresh?: () => void;
   isRefreshing?: boolean;
+  isBackgroundRefreshing?: boolean;
   fromDate: string;
   toDate: string;
   todayStr: string;
   onFromDateChange: (value: string) => void;
   onToDateChange: (value: string) => void;
+  /** Visible metric columns configured per tenant */
+  visibleColumns?: string[];
 }
 
 export interface TransactionDisplayValues {

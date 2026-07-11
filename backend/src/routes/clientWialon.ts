@@ -16,7 +16,10 @@ import { WialonFleetService } from '../services/WialonFleetService.js';
 import { WialonFuelService } from '../services/WialonFuelService.js';
 import { WialonFuelManagementService } from '../services/WialonFuelManagementService.js';
 import { WialonFuelAnalyticsService } from '../services/WialonFuelAnalyticsService.js';
+import { FuelSyncService } from '../services/FuelSyncService.js';
 import { WialonFuelReportService } from '../services/WialonFuelReportService.js';
+import { WialonFuelReportCapabilityService } from '../services/WialonFuelReportCapabilityService.js';
+import { WialonFuelIntelligenceService } from '../services/WialonFuelIntelligenceService.js';
 import { WialonFuelFleetService } from '../services/WialonFuelFleetService.js';
 import { WialonReportsLiveService } from '../services/WialonReportsLiveService.js';
 import { fleetToSnapshotResponse } from '../services/wialonFleetMapper.js';
@@ -25,6 +28,7 @@ import {
   wialonSyncWarning,
 } from '../services/wialonConnectionStatus.js';
 import { WialonMotherAccountService } from '../services/WialonMotherAccountService.js';
+import { TenantFuelModuleConfigService } from '../services/TenantFuelModuleConfigService.js';
 
 const router = Router();
 
@@ -165,6 +169,47 @@ router.get('/wialon/reports/templates', requireTenant, async (req: TenantRequest
   }
 });
 
+router.get('/wialon/reports/catalog', requireTenant, async (req: TenantRequest, res) => {
+  try {
+    const data = await WialonReportsLiveService.getTemplateCatalog(req.tenantId!);
+    return success(res, data);
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
+
+router.post('/wialon/reports/run', requireTenant, async (req: TenantRequest, res) => {
+  try {
+    req.setTimeout(20 * 60 * 1000);
+    const body = req.body as Record<string, unknown>;
+    const objectId = parseInt(String(body.objectId), 10);
+    const from = parseInt(String(body.from), 10);
+    const to = parseInt(String(body.to), 10);
+    if ([objectId, from, to].some((n) => Number.isNaN(n))) {
+      return error(res, 'objectId, from, and to (unix seconds) are required');
+    }
+    const objectKind = body.objectKind === 'group' ? 'group' : 'unit';
+    const module = body.module != null ? String(body.module) : undefined;
+    const resourceId = body.resourceId != null ? parseInt(String(body.resourceId), 10) : undefined;
+    const templateId = body.templateId != null ? parseInt(String(body.templateId), 10) : undefined;
+    const maxRowsPerTable = body.maxRowsPerTable != null ? Number(body.maxRowsPerTable) : undefined;
+
+    const data = await WialonReportsLiveService.runTemplateReport(req.tenantId!, {
+      module: module as import('../services/wialonReportTemplateRegistry.js').WialonReportModule | undefined,
+      resourceId: Number.isFinite(resourceId) ? resourceId : undefined,
+      templateId: Number.isFinite(templateId) ? templateId : undefined,
+      objectId,
+      objectKind,
+      from,
+      to,
+      maxRowsPerTable: Number.isFinite(maxRowsPerTable) ? maxRowsPerTable : undefined,
+    });
+    return success(res, data);
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
+
 router.get('/wialon/notifications', requireTenant, async (req: TenantRequest, res) => {
   try {
     const creds = await requireWialonCreds(req.tenantId!);
@@ -251,7 +296,13 @@ router.get('/wialon/fuel/analytics', requireTenant, async (req: TenantRequest, r
 });
 router.post('/wialon/fuel/analytics/warm', requireTenant, async (req: TenantRequest, res) => {
   try {
-    WialonFuelAnalyticsService.warmStandardMonths(req.tenantId!);
+    const from = req.body?.from ?? req.query.from;
+    const to = req.body?.to ?? req.query.to;
+    if (from && to) {
+      FuelSyncService.warmDateRange(req.tenantId!, String(from), String(to));
+    } else {
+      void FuelSyncService.warmTenantDashboard(req.tenantId!);
+    }
     return success(res, { started: true });
   } catch (e) {
     return error(res, (e as Error).message);
@@ -264,7 +315,16 @@ router.get('/wialon/fuel/transactions', requireTenant, async (req: TenantRequest
     const from = req.query.from ? String(req.query.from) : req.query.startDate ? String(req.query.startDate) : undefined;
     const to = req.query.to ? String(req.query.to) : req.query.endDate ? String(req.query.endDate) : undefined;
     const unitId = req.query.unitId ? Number(req.query.unitId) : undefined;
-    const data = await WialonFuelReportService.getTransactions(req.tenantId!, { from, to, refresh, unitId });
+    const assetCategory = req.query.assetCategory
+      ? (String(req.query.assetCategory) as 'vehicle' | 'generator' | 'machinery')
+      : undefined;
+    const data = await WialonFuelReportService.getTransactions(req.tenantId!, {
+      from,
+      to,
+      refresh,
+      unitId,
+      assetCategory,
+    });
     return success(res, data);
   } catch (e) {
     return error(res, (e as Error).message);
@@ -320,6 +380,47 @@ router.get('/wialon/fuel/trend', requireTenant, async (req: TenantRequest, res) 
     const to = req.query.to ? String(req.query.to) : undefined;
     const refresh = req.query.refresh === 'true';
     const data = await WialonFuelReportService.getTrend(req.tenantId!, { from, to, refresh });
+    return success(res, data);
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
+router.get('/wialon/fuel/report-capabilities', requireTenant, async (req: TenantRequest, res) => {
+  try {
+    req.setTimeout(3 * 60 * 1000);
+    const data = await WialonFuelReportCapabilityService.getFuelCapabilities(req.tenantId!);
+    return success(res, data);
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
+router.get('/wialon/fuel/intelligence', requireTenant, async (req: TenantRequest, res) => {
+  try {
+    req.setTimeout(20 * 60 * 1000);
+    const from =
+      req.query.from ? String(req.query.from) : req.query.startDate ? String(req.query.startDate) : undefined;
+    const to = req.query.to ? String(req.query.to) : req.query.endDate ? String(req.query.endDate) : undefined;
+    if (!from || !to) return error(res, 'from and to are required');
+    const refresh = req.query.refresh === 'true';
+    const assetCategory = req.query.assetCategory
+      ? (String(req.query.assetCategory) as 'vehicle' | 'generator' | 'machinery')
+      : undefined;
+    const unitId = req.query.unitId ? Number(req.query.unitId) : undefined;
+    const data = await WialonFuelIntelligenceService.getFuelIntelligence(req.tenantId!, {
+      from,
+      to,
+      refresh,
+      assetCategory,
+      unitId,
+    });
+    return success(res, data);
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
+router.get('/wialon/fuel/module-config', requireTenant, async (req: TenantRequest, res) => {
+  try {
+    const data = await TenantFuelModuleConfigService.getConfig(req.tenantId!);
     return success(res, data);
   } catch (e) {
     return error(res, (e as Error).message);

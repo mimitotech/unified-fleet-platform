@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import type { FuelTransaction } from '@/types/entities';
 import type { FuelTableUnit, VehicleGroup, FuelTableFilters } from './types';
+import { aggregateUnitFuelColumns } from '../fuelColumnMetrics';
+import { filterFuelTransactionsByDate, isWialonGroupSummary } from '../fuelTransactionFilters';
 
 interface UseFuelTableDataProps {
   transactions: FuelTransaction[];
@@ -21,99 +23,65 @@ export function useFuelTableData({
   filters,
   vehicleFuelLevels,
 }: UseFuelTableDataProps): UseFuelTableDataResult {
-  const { searchTerm } = filters;
+  const { searchTerm, fromDate, toDate } = filters;
+
+  /** Rows that fall inside the selected date range (period scope for totals). */
+  const periodTransactions = useMemo(
+    () => filterFuelTransactionsByDate(transactions, fromDate, toDate),
+    [transactions, fromDate, toDate],
+  );
 
   const filteredTransactions = useMemo(() => {
-    if (searchTerm === '') return transactions;
-    return transactions.filter((t) => {
+    if (searchTerm === '') return periodTransactions;
+    return periodTransactions.filter((t) => {
       return (
         t.unitName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         t.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (t.driverName && t.driverName.toLowerCase().includes(searchTerm.toLowerCase()))
       );
     });
-  }, [transactions, searchTerm]);
+  }, [periodTransactions, searchTerm]);
 
   const vehicleGroups = useMemo((): VehicleGroup[] => {
-    const groupMap = new Map<string, VehicleGroup>();
-    const latestMainTs = new Map<string, number>();
-    const latestReserveTs = new Map<string, number>();
+    const groupMap = new Map<string, FuelTransaction[]>();
 
     for (const t of filteredTransactions) {
-      const isMainTank = t.tank === 'main';
-      const isReserveTank = t.tank === 'reserve';
-      const hasTheftAlert = t.suddenFuelDrop > 0;
-
-      let group = groupMap.get(t.unitName);
-      if (!group) {
-        group = {
-          unitName: t.unitName,
-          driverName: t.driverName,
-          transactions: [],
-          filledMain: 0,
-          filledReserve: 0,
-          filledStation: 0,
-          variance: 0,
-          usedMain: 0,
-          usedReserve: 0,
-          levelMain: 0,
-          levelReserve: 0,
-          dropMain: 0,
-          dropReserve: 0,
-          totalCost: 0,
-          alertCount: 0,
-        };
-        groupMap.set(t.unitName, group);
-      }
-
-      group.transactions.push(t);
-
-      if (isMainTank) {
-        group.filledMain += t.filled > 0 ? t.filled : 0;
-        group.usedMain += t.fuelUsed > 0 ? t.fuelUsed : 0;
-        const prevTs = latestMainTs.get(t.unitName) ?? -1;
-        if (t.timestamp > prevTs) {
-          group.levelMain = t.finalLevel;
-          latestMainTs.set(t.unitName, t.timestamp);
-        }
-        group.dropMain += t.suddenFuelDrop > 0 ? t.suddenFuelDrop : 0;
-      }
-      if (isReserveTank) {
-        group.filledReserve += t.filled > 0 ? t.filled : 0;
-        group.usedReserve += t.fuelUsed > 0 ? t.fuelUsed : 0;
-        const prevTs = latestReserveTs.get(t.unitName) ?? -1;
-        if (t.timestamp > prevTs) {
-          group.levelReserve = t.finalLevel;
-          latestReserveTs.set(t.unitName, t.timestamp);
-        }
-        group.dropReserve += t.suddenFuelDrop > 0 ? t.suddenFuelDrop : 0;
-      }
-      if (hasTheftAlert) group.alertCount++;
-      group.filledStation += t.filledStation ?? 0;
-      group.totalCost += t.totalCost ?? 0;
+      const list = groupMap.get(t.unitName) ?? [];
+      list.push(t);
+      groupMap.set(t.unitName, list);
     }
 
-    const groups = Array.from(groupMap.values());
+    const groups: VehicleGroup[] = [];
 
-    for (const group of groups) {
-      const flsFilled = group.filledMain + group.filledReserve;
-      group.variance = flsFilled > 0 || group.filledStation > 0 ? flsFilled - group.filledStation : 0;
-    }
+    for (const [unitName, unitTxs] of groupMap) {
+      const driverName = unitTxs.find((t) => t.driverName)?.driverName;
+      const liveLevel = vehicleFuelLevels?.get(unitName);
+      const cols = aggregateUnitFuelColumns(unitTxs, { fromDate, toDate, liveLevel });
 
-    groups.sort((a, b) => a.unitName.localeCompare(b.unitName));
-
-    for (const group of groups) {
-      group.transactions.sort((a, b) => b.timestamp - a.timestamp);
+      groups.push({
+        unitName,
+        driverName,
+        // Keep derived balance rows visible so expanded details explain period totals.
+        transactions: unitTxs.filter((t) => !isWialonGroupSummary(t)),
+        filledMain: cols.filledMain,
+        filledReserve: cols.filledReserve,
+        filledStation: cols.filledStation,
+        variance: cols.variance,
+        usedMain: cols.usedMain,
+        usedReserve: cols.usedReserve,
+        levelMain: cols.levelMain,
+        levelReserve: cols.levelReserve,
+        dropMain: cols.dropMain,
+        dropReserve: cols.dropReserve,
+        totalCost: cols.totalCost,
+        alertCount: cols.alertCount,
+        liveLevel: liveLevel && liveLevel > 0 ? liveLevel : undefined,
+        fuelType: cols.fuelType,
+        cardNumber: cols.cardNumber,
+      });
     }
 
     if (vehicleFuelLevels && vehicleFuelLevels.size > 0) {
-      for (const group of groups) {
-        const live = vehicleFuelLevels.get(group.unitName);
-        if (live !== undefined && live > 0) {
-          group.liveLevel = live;
-        }
-      }
-
       for (const u of units) {
         if (groupMap.has(u.name)) continue;
         const liveLevel = vehicleFuelLevels.get(u.name);
@@ -134,14 +102,19 @@ export function useFuelTableData({
           totalCost: 0,
           alertCount: 0,
           liveLevel: liveLevel && liveLevel > 0 ? liveLevel : undefined,
+          fuelType: '',
+          cardNumber: '',
         });
       }
+    }
 
-      groups.sort((a, b) => a.unitName.localeCompare(b.unitName));
+    groups.sort((a, b) => a.unitName.localeCompare(b.unitName));
+    for (const group of groups) {
+      group.transactions.sort((a, b) => b.timestamp - a.timestamp);
     }
 
     return groups;
-  }, [filteredTransactions, vehicleFuelLevels, units]);
+  }, [filteredTransactions, vehicleFuelLevels, units, fromDate, toDate]);
 
   const hasMultipleVehicles = vehicleGroups.length > 1;
 

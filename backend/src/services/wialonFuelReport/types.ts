@@ -58,6 +58,8 @@ export type DetectedTable = {
   tankColumnMaps: TankColumnMap[];
   /** Wialon unit_stats — one summary row per unit, no trip timestamps */
   isAggregateStats?: boolean;
+  /** Wialon unit_group_generic — per-unit period summary (Beginning/End, not trip Time) */
+  isGroupUnitSummary?: boolean;
 };
 
 export type TankColumnMap = {

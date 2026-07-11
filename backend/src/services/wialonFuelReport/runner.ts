@@ -1,43 +1,12 @@
+import { execWialonReportTables } from '../wialonReportExec.js';
 import type { WialonClient } from '../../adapters/wialonClient.js';
 import { getCellValue } from './cells.js';
 import { detectFuelTables } from './detect.js';
 import { fetchLeafRows } from './leafRows.js';
 import { effectiveConsumed } from './metrics.js';
-import { processAggregateStatsRow, processRow, processRowWithTankMap } from './processRows.js';
-import type { FuelReportTemplate, FuelTransaction, ReportTableMeta } from './types.js';
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-function normalizeReportTables(raw: Array<Record<string, unknown>>): ReportTableMeta[] {
-  return raw.map((meta) => {
-    const header: string[] = [];
-    const headerTypes: (string | number)[] = [];
-
-    const h = meta.header as string[] | undefined;
-    const ht = meta.header_type as (string | number)[] | undefined;
-    if (Array.isArray(h) && h.length) {
-      for (let i = 0; i < h.length; i++) {
-        header.push(String(h[i] ?? `Column ${i + 1}`));
-        if (ht?.[i] != null) headerTypes.push(ht[i] as string | number);
-      }
-    } else {
-      const cols = Number(meta.columns ?? meta.cols ?? 0);
-      for (let i = 0; i < cols; i++) {
-        header.push(`Column ${i + 1}`);
-      }
-    }
-
-    return {
-      name: String(meta.name ?? ''),
-      label: String(meta.label ?? meta.name ?? ''),
-      rows: Number(meta.rows ?? 0),
-      header,
-      headerTypes: headerTypes.length ? headerTypes : undefined,
-    };
-  });
-}
+import { processAggregateStatsRow, processRow, processRowWithTankMap, processUnitGroupSummaryRow } from './processRows.js';
+import type { FuelReportTemplate, FuelTransaction } from './types.js';
+import { buildUnitNameIndex } from './unitNames.js';
 
 async function execFuelReport(
   client: WialonClient,
@@ -45,39 +14,14 @@ async function execFuelReport(
   objectId: number,
   fromTs: number,
   toTs: number
-): Promise<ReportTableMeta[]> {
-  await client.request('report/cleanup_result', {}).catch(() => undefined);
-
-  await client.request('report/exec_report', {
+) {
+  return execWialonReportTables(client, {
     reportResourceId: template.resourceId,
     reportTemplateId: template.templateId,
     reportObjectId: objectId,
-    reportObjectSecId: 0,
-    interval: { from: fromTs, to: toTs, flags: 0 },
-    remoteExec: 1,
+    fromTs,
+    toTs,
   });
-
-  for (let attempt = 0; attempt < 120; attempt++) {
-    const statusRes = await client.request<{ status: number; error?: string }>(
-      'report/get_report_status',
-      {}
-    );
-    const code = statusRes.status;
-    if (code === 4) break;
-    if (code === 8 || code === 16) {
-      throw new Error(statusRes.error || `Wialon report failed (status ${code})`);
-    }
-    await sleep(1000);
-  }
-
-  await client.request('report/apply_report_result', {}).catch(() => undefined);
-
-  const tablesRes = await client.request<{ tables?: Array<Record<string, unknown>> }>(
-    'report/get_report_tables',
-    {}
-  );
-
-  return normalizeReportTables(tablesRes.tables ?? []);
 }
 
 /** Drop unit_stats summary rows when trip-level consumption exists for the same unit. */
@@ -138,6 +82,7 @@ export async function processGroupFuelData(
   unitNameToId: Map<string, number>
 ): Promise<FuelTransaction[]> {
   const transactions: FuelTransaction[] = [];
+  const unitIndex = buildUnitNameIndex([...unitNameToId.entries()].map(([nm, id]) => ({ id, nm })));
   try {
     const tables = await execFuelReport(client, template, group.id, fromTs, toTs);
     const detectedTables = detectFuelTables(tables);
@@ -146,8 +91,14 @@ export async function processGroupFuelData(
       const leafCells = await fetchLeafRows(client, detected.tableIndex, detected.rowCount);
       for (const cells of leafCells) {
         const unitName = unitColIdx >= 0 ? getCellValue(cells, unitColIdx) : '';
-        const unitId = unitName ? (unitNameToId.get(unitName) ?? 0) : 0;
+        const unitId = unitName ? unitIndex.resolve(unitName) : 0;
         const unit = { id: unitId, nm: unitName || 'unknown' };
+
+        if (detected.isGroupUnitSummary) {
+          const tx = processUnitGroupSummaryRow(cells, detected.columnMap, detected.headers, unit, toTs);
+          if (tx) transactions.push(tx);
+          continue;
+        }
 
         if (detected.isAggregateStats) {
           const tx = processAggregateStatsRow(cells, detected.columnMap, unit, toTs);

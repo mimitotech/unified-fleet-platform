@@ -326,8 +326,43 @@ export interface WialonVideoFile {
   storageType?: 1 | 2;
   tag?: string;
   occurredAt?: string;
-  source: 'storage' | 'message';
+  source: 'storage' | 'message' | 'report';
   messageId?: number;
+  channel?: number;
+  eventType?: string;
+}
+
+export interface WialonVideoClipRef {
+  unitId: number;
+  source: 'storage' | 'message';
+  path?: string;
+  storageType?: 1 | 2;
+  messageId?: number;
+}
+
+export interface SurveillanceShareLink {
+  token: string;
+  tenantId: string;
+  clipRef: WialonVideoClipRef;
+  label: string | null;
+  expiresAt: string;
+  shareUrl: string;
+}
+
+export interface SurveillanceViolation {
+  id?: string;
+  title?: string;
+  type?: string;
+  violationType?: string;
+  severity?: string;
+  occurredAt?: string;
+  unitId?: number | string;
+  unitName?: string;
+  driverName?: string;
+  category?: string;
+  source?: string;
+  videoUrl?: string;
+  clip?: WialonVideoClipRef;
 }
 
 export interface WialonVideoEmbedSession {
@@ -498,10 +533,52 @@ export const clientApi = {
   updateRoute: (id: string, data: Partial<FleetRoute>) =>
     api<FleetRoute>(`/api/client/routes/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
 
-  // Fuel
-  getFuelTransactions: () => api<FuelTransaction[]>('/api/client/fuel/transactions'),
-  getFuelKpis: () => api<Record<string, number>>('/api/client/fuel/kpis'),
+  // Fuel (database-backed report data; live sensors stay on Wialon endpoints)
+  getFuelTransactions: (
+    from?: string,
+    to?: string,
+    refresh = false,
+    unitId?: number,
+    assetCategory?: import('./fuelTypes').FuelAssetCategory,
+  ) => {
+    const q = new URLSearchParams();
+    if (from) q.set('from', from);
+    if (to) q.set('to', to);
+    if (refresh) q.set('refresh', 'true');
+    if (unitId != null) q.set('unitId', String(unitId));
+    if (assetCategory) q.set('assetCategory', assetCategory);
+    const qs = q.toString();
+    const days =
+      from && to
+        ? Math.max(
+            1,
+            Math.ceil(
+              (new Date(`${to}T00:00:00Z`).getTime() - new Date(`${from}T00:00:00Z`).getTime()) / 86400000,
+            ) + 1,
+          )
+        : 1;
+    const timeoutMs = refresh
+      ? 20 * 60_000
+      : days <= 1
+        ? 15_000
+        : days <= 7
+          ? 30_000
+          : 60_000;
+    return api<import('./fuelTypes').WialonFuelReportData & { fromTs: number; toTs: number; lastSyncedAt?: string | null }>(
+      `/api/client/fuel/transactions${qs ? `?${qs}` : ''}`,
+      { timeoutMs },
+    );
+  },
+  getFuelKpis: (from?: string, to?: string) => {
+    const q = new URLSearchParams();
+    if (from) q.set('from', from);
+    if (to) q.set('to', to);
+    const qs = q.toString();
+    return api<Record<string, number>>(`/api/client/fuel/kpis${qs ? `?${qs}` : ''}`);
+  },
   getFuelTrend: () => api<unknown[]>('/api/client/fuel/monthly-trend'),
+  triggerFuelDbSync: () =>
+    api<{ started: boolean }>('/api/client/fuel/sync', { method: 'POST' }),
 
   // Workshop
   getWorkshopKpis: () => api<WorkshopKpis>('/api/client/workshop/kpis'),
@@ -628,7 +705,28 @@ export const clientApi = {
       method: 'POST',
       body: JSON.stringify({ commandName, param }),
     }),
-  getSurveillanceViolations: () => api<unknown[]>('/api/client/surveillance/violations'),
+  getSurveillanceViolations: (unitId?: number) => {
+    const q = new URLSearchParams();
+    if (unitId != null) q.set('unitId', String(unitId));
+    q.set('includeClips', '1');
+    const qs = q.toString();
+    return api<SurveillanceViolation[]>(
+      `/api/client/surveillance/violations${qs ? `?${qs}` : ''}`
+    );
+  },
+  createSurveillanceShareLink: (payload: {
+    unitId: number;
+    source: 'storage' | 'message';
+    path?: string;
+    storageType?: 1 | 2;
+    messageId?: number;
+    label?: string;
+    expiresInHours?: number;
+  }) =>
+    api<SurveillanceShareLink>('/api/client/surveillance/clips/share', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 
   // Geofences
   getGeofences: () => api<Geofence[]>('/api/client/geofences'),
@@ -685,6 +783,68 @@ export const clientApi = {
       templates: Array<{ resourceId: number; resourceName: string; id: number; name: string; type?: string }>;
       count: number;
     }>('/api/client/wialon/reports/templates'),
+  getWialonReportCatalog: () =>
+    api<{
+      templates: Array<{
+        resourceId: number;
+        resourceName: string;
+        templateId: number;
+        templateName: string;
+        module: string;
+        isGroupReport: boolean;
+        fallback?: boolean;
+      }>;
+      modules: Array<{
+        module: string;
+        count: number;
+        templates: Array<{
+          resourceId: number;
+          resourceName: string;
+          templateId: number;
+          templateName: string;
+          module: string;
+          isGroupReport: boolean;
+          fallback?: boolean;
+        }>;
+      }>;
+      groups: Array<{ id: number; nm: string }>;
+      count: number;
+      fetchedAt: string;
+    }>('/api/client/wialon/reports/catalog'),
+  runWialonReport: (payload: {
+    module?: string;
+    resourceId?: number;
+    templateId?: number;
+    objectId: number;
+    objectKind?: 'unit' | 'group';
+    from: number;
+    to: number;
+    maxRowsPerTable?: number;
+  }) =>
+    api<{
+      result: Record<string, unknown>;
+      rows: unknown[];
+      tables: Array<{
+        index: number;
+        name: string;
+        label: string;
+        columns: Array<{ key: string; label: string; type?: string }>;
+        rows: Record<string, unknown>[];
+        totalRows: number;
+      }>;
+      charts: Array<{ index: number; name: string; data: unknown }>;
+      summary: {
+        tableCount: number;
+        rowCount: number;
+        chartCount: number;
+        generatedAt: string;
+        interval: { from: number; to: number };
+      };
+      template?: { resourceId: number; templateId: number; module: string | null; objectKind: string };
+    }>('/api/client/wialon/reports/run', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   getLiveReportFleetStatus: () =>
     api<{ rows: Record<string, unknown>[]; fetchedAt: string; count: number }>(
       '/api/client/wialon/reports/live/fleet-status'
@@ -908,14 +1068,164 @@ export const clientApi = {
       { timeoutMs: 20 * 60_000 }
     );
   },
-  warmWialonFuelReports: () =>
-    api<{ started: boolean }>('/api/client/wialon/fuel/analytics/warm', { method: 'POST' }),
-  getWialonFuelTransactions: (from: string, to: string, refresh = false, unitId?: number) => {
+  warmWialonFuelReports: (from?: string, to?: string) =>
+    api<{ started: boolean }>('/api/client/wialon/fuel/analytics/warm', {
+      method: 'POST',
+      body: from && to ? JSON.stringify({ from, to }) : undefined,
+    }),
+  getWialonFuelTransactions: (
+    from: string,
+    to: string,
+    refresh = false,
+    unitId?: number,
+    assetCategory?: import('./fuelTypes').FuelAssetCategory,
+  ) => {
     const q = new URLSearchParams({ from, to });
     if (refresh) q.set('refresh', 'true');
     if (unitId != null) q.set('unitId', String(unitId));
-    return api<import('./fuelTypes').WialonFuelReportData & { fromTs: number; toTs: number }>(`/api/client/wialon/fuel/transactions?${q}`, { timeoutMs: 20 * 60_000 });
+    if (assetCategory) q.set('assetCategory', assetCategory);
+    const days = Math.max(
+      1,
+      Math.ceil((new Date(`${to}T00:00:00Z`).getTime() - new Date(`${from}T00:00:00Z`).getTime()) / 86400000) + 1,
+    );
+    const timeoutMs = refresh
+      ? 20 * 60_000
+      : days <= 1
+        ? 60_000
+        : days <= 7
+          ? 90_000
+          : days <= 14
+            ? 120_000
+            : days <= 45
+              ? 8 * 60_000
+              : 20 * 60_000;
+    return api<import('./fuelTypes').WialonFuelReportData & { fromTs: number; toTs: number }>(
+      `/api/client/wialon/fuel/transactions?${q}`,
+      { timeoutMs },
+    );
   },
+  getWialonFuelReportCapabilities: () =>
+    api<{
+      tenantId: string;
+      scope: { tenantId: string; accountId?: string | number };
+      expectedReports: {
+        vehicle: { group: string; unit: string };
+        generator: { group: string; unit: string };
+      };
+      slots: Array<{
+        key: 'vehicle.group' | 'vehicle.unit' | 'generator.group' | 'generator.unit';
+        family: 'vehicle' | 'generator';
+        role: 'group' | 'unit';
+        expectedName: string;
+        available: boolean;
+        matchedName: string | null;
+        resourceId: number | null;
+        templateId: number | null;
+      }>;
+      readyCount: number;
+      missingReports: string[];
+      uniform: boolean;
+      capabilities: Array<{
+        module: string;
+        available: boolean;
+        groupTemplateCount: number;
+        unitTemplateCount: number;
+        templates: Array<{
+          resourceId: number;
+          resourceName: string;
+          templateId: number;
+          templateName: string;
+          isGroupReport: boolean;
+          fuelFamily?: string;
+        }>;
+      }>;
+      discoveredFuelTemplates?: Array<{
+        templateName: string;
+        isGroupReport: boolean;
+        fuelFamily: string | null;
+        resourceName: string;
+      }>;
+      fetchedAt: string;
+    }>('/api/client/wialon/fuel/report-capabilities'),
+  getWialonFuelIntelligence: (
+    from: string,
+    to: string,
+    refresh = false,
+    assetCategory?: import('./fuelTypes').FuelAssetCategory,
+    unitId?: number,
+  ) => {
+    const q = new URLSearchParams({ from, to });
+    if (refresh) q.set('refresh', 'true');
+    if (assetCategory) q.set('assetCategory', assetCategory);
+    if (unitId != null) q.set('unitId', String(unitId));
+    return api<{
+      from: string;
+      to: string;
+      totals: { consumed: number; filled: number; theft: number; mileage: number; runtimeHours: number };
+      groups: Array<{
+        key: string;
+        label: string;
+        consumed: number;
+        filled: number;
+        theft: number;
+        mileage: number;
+        runtimeHours: number;
+        avgConsumption: number;
+        assets: number;
+      }>;
+      assets: Array<{
+        unitId: number;
+        unitName: string;
+        assetCategory: string;
+        consumed: number;
+        filled: number;
+        theft: number;
+        mileage: number;
+        runtimeHours: number;
+        avgConsumption: number;
+        efficiencyScore: number;
+        events: number;
+      }>;
+      daily: Array<{ date: string; consumed: number; filled: number; theft: number; mileage: number; runtimeHours: number }>;
+      unitDetail: {
+        unitId: number;
+        unitName: string;
+        daily: Array<{ date: string; consumed: number; filled: number; theft: number; mileage: number; runtimeHours: number }>;
+        runtimeIntervals: Array<{ start: number; end: number; hours: number }>;
+      } | null;
+      fetchedAt: string;
+    }>(`/api/client/wialon/fuel/intelligence?${q}`, { timeoutMs: 20 * 60_000 });
+  },
+  getWialonFuelModuleConfig: () =>
+    api<{
+      tenantId: string;
+      selectedReports: Array<{
+        resourceId: number;
+        templateId: number;
+        templateName: string;
+        module?: string;
+        isGroupReport?: boolean;
+      }>;
+      visibleColumns: Array<
+        | 'filledMain'
+        | 'filledReserve'
+        | 'filledStation'
+        | 'variance'
+        | 'usedMain'
+        | 'usedReserve'
+        | 'levelMain'
+        | 'levelReserve'
+        | 'totalLevel'
+        | 'dropMain'
+        | 'dropReserve'
+        | 'totalDrop'
+        | 'totalUsed'
+        | 'fuelType'
+        | 'cost'
+        | 'cardNo'
+      >;
+      updatedAt: string | null;
+    }>('/api/client/wialon/fuel/module-config'),
   getWialonFuelOverview: (from?: string, to?: string, refresh = false) => {
     const q = new URLSearchParams();
     if (from) q.set('from', from);
@@ -1321,6 +1631,50 @@ export const adminApi = {
     api(`/api/admin/tenants/${id}/modules`, {
       method: 'PUT',
       body: JSON.stringify({ modules }),
+    }),
+  getTenantWialonReportCatalog: (id: string) =>
+    api<{
+      templates: Array<{
+        resourceId: number;
+        resourceName: string;
+        templateId: number;
+        templateName: string;
+        module: string;
+        isGroupReport: boolean;
+        fallback?: boolean;
+      }>;
+      modules: Array<{ module: string; count: number }>;
+      count: number;
+    }>(`/api/admin/tenants/${id}/wialon/reports/catalog`),
+  getFuelModuleConfig: (id: string) =>
+    api<{
+      tenantId: string;
+      selectedReports: Array<{
+        resourceId: number;
+        templateId: number;
+        templateName: string;
+        module?: string;
+        isGroupReport?: boolean;
+      }>;
+      visibleColumns: string[];
+      updatedAt: string | null;
+    }>(`/api/admin/tenants/${id}/fuel-module-config`),
+  saveFuelModuleConfig: (
+    id: string,
+    data: {
+      selectedReports: Array<{
+        resourceId: number;
+        templateId: number;
+        templateName: string;
+        module?: string;
+        isGroupReport?: boolean;
+      }>;
+      visibleColumns: string[];
+    },
+  ) =>
+    api(`/api/admin/tenants/${id}/fuel-module-config`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
     }),
 
   listTenantUsers: (id: string) => api<unknown[]>(`/api/admin/tenants/${id}/users`),

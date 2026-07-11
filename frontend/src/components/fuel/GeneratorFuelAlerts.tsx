@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { AlertTriangle, Droplets, MapPin } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Progress } from '@/components/ui/progress';
-import { useStationaryWithReports, type StationaryFuelType } from './useStationaryFuelHooks';
+import { useStationaryAssets, type StationaryFuelType } from './useStationaryFuelHooks';
 import type { Generator } from '@/types';
 import {
   FUEL_CRITICAL_THRESHOLD_PERCENT,
@@ -133,15 +133,9 @@ interface GeneratorFuelAlertsProps {
 }
 
 export function GeneratorFuelAlerts({
-  fromDate,
-  toDate,
   stationaryType = 'generator',
 }: GeneratorFuelAlertsProps = {}) {
-  const hasRange = Boolean(fromDate && toDate);
-  const { data: generators = [] } = useStationaryWithReports(
-    stationaryType,
-    hasRange ? { startDate: fromDate, endDate: toDate } : undefined,
-  );
+  const { data: generators = [] } = useStationaryAssets(stationaryType);
   const buckets = useMemo(() => buildBuckets(generators), [generators]);
 
   if (buckets.length === 0) return null;

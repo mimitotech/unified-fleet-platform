@@ -1,100 +1,220 @@
 import type { WialonClient } from '../../adapters/wialonClient.js';
 import type { FuelReportTemplate } from './types.js';
+import type { FuelAssetCategory } from '../wialonAssetCategory.js';
+import {
+  CANONICAL_FUEL_REPORTS,
+  type FuelReportFamily,
+} from '../wialonReportTemplateRegistry.js';
+import {
+  WialonReportResolverService,
+  type ResolvedReportTemplate,
+  type WialonReportScope,
+  wialonReportScopeKey,
+} from '../WialonReportResolverService.js';
 
-const TEMPLATE_CACHE_TTL = 3600000;
-let templatesCache: {
-  groupTemplate: FuelReportTemplate | null;
-  unitTemplate: FuelReportTemplate | null;
-  timestamp: number;
-} = { groupTemplate: null, unitTemplate: null, timestamp: 0 };
+export type { WialonReportScope };
+export { CANONICAL_FUEL_REPORTS };
 
-let fleetGroupsCache: { groups: Array<{ id: number; nm: string }>; timestamp: number } = {
-  groups: [],
-  timestamp: 0,
-};
-
-export function invalidateFuelReportCaches() {
-  templatesCache = { groupTemplate: null, unitTemplate: null, timestamp: 0 };
-  fleetGroupsCache = { groups: [], timestamp: 0 };
+/** @deprecated Use WialonReportResolverService.invalidate */
+export function invalidateFuelReportCaches(scope?: WialonReportScope): void {
+  WialonReportResolverService.invalidate(scope);
 }
 
-export async function findFleetGroups(client: WialonClient): Promise<Array<{ id: number; nm: string }>> {
-  const now = Date.now();
-  if (fleetGroupsCache.groups.length && now - fleetGroupsCache.timestamp < TEMPLATE_CACHE_TTL) {
-    return fleetGroupsCache.groups;
-  }
-  const result = await client.request<{ items: Array<{ id: number; nm: string }> }>('core/search_items', {
-    spec: { itemsType: 'avl_unit_group', propName: 'sys_name', propValueMask: '*', sortType: 'sys_name' },
-    force: 1,
-    flags: 1,
-    from: 0,
-    to: 50,
-  });
-  const groups = result.items ?? [];
-  fleetGroupsCache = { groups, timestamp: now };
-  return groups;
+function toFuelTemplate(resolved: ResolvedReportTemplate | null): FuelReportTemplate | null {
+  if (!resolved) return null;
+  return {
+    resourceId: resolved.resourceId,
+    templateId: resolved.templateId,
+    templateName: resolved.templateName,
+    isGroupReport: resolved.isGroupReport,
+  };
 }
 
-export async function findFuelReportTemplates(client: WialonClient): Promise<{
-  groupTemplate: FuelReportTemplate | null;
-  unitTemplate: FuelReportTemplate | null;
-}> {
-  const now = Date.now();
-  if (now - templatesCache.timestamp < TEMPLATE_CACHE_TTL) {
-    return { groupTemplate: templatesCache.groupTemplate, unitTemplate: templatesCache.unitTemplate };
+function normalizeTemplateName(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/** Exact / near-exact match against a canonical report title. */
+function matchesCanonical(name: string, canonical: string): boolean {
+  const n = normalizeTemplateName(name);
+  const c = normalizeTemplateName(canonical);
+  if (n === c) return true;
+  // Allow optional spaces around parentheses: "Fuel Report (Group)" vs "Fuel Report(Group)"
+  const loose = (s: string) => s.replace(/\s*\(\s*/g, '(').replace(/\s*\)\s*/g, ')');
+  return loose(n) === loose(c);
+}
+
+function fuelFamilyForCategory(category?: FuelAssetCategory): FuelReportFamily {
+  if (category === 'generator' || category === 'machinery') return 'generator';
+  return 'vehicle';
+}
+
+/**
+ * Score a template for the requested group/unit + asset category.
+ * Prefer exact canonical names; then same family; never cross family when better exists.
+ */
+function scoreFuelTemplate(
+  template: ResolvedReportTemplate,
+  opts: { isGroupReport: boolean; assetCategory?: FuelAssetCategory },
+): number {
+  if (template.isGroupReport !== opts.isGroupReport) return -1;
+
+  const name = template.templateName;
+  const family = fuelFamilyForCategory(opts.assetCategory);
+  const canonical = CANONICAL_FUEL_REPORTS[family][opts.isGroupReport ? 'group' : 'unit'];
+  const otherFamily: FuelReportFamily = family === 'vehicle' ? 'generator' : 'vehicle';
+  const otherCanonical =
+    CANONICAL_FUEL_REPORTS[otherFamily][opts.isGroupReport ? 'group' : 'unit'];
+
+  let score = 0;
+
+  if (matchesCanonical(name, canonical)) {
+    score += 200;
+  } else if (matchesCanonical(name, otherCanonical)) {
+    // Wrong family for this request — last resort only
+    score += 10;
+  } else if (family === 'vehicle') {
+    if (/fuel report\s*\(group\)/i.test(name) && opts.isGroupReport) score += 100;
+    else if (/fuel report\s*\(unit\)/i.test(name) && !opts.isGroupReport) score += 100;
+    else if (/fuel fillings report\s*\(group\)/i.test(name) && opts.isGroupReport) score += 70;
+    else if (/fuel fillings report\s*\(units?\)/i.test(name) && !opts.isGroupReport) score += 65;
+    else if (/fuel/i.test(name) && !/usage|genset|generator/i.test(name)) score += 35;
+  } else {
+    // generator / machinery
+    if (/fuel usage report\s*\(gensets?\)/i.test(name) && opts.isGroupReport) score += 100;
+    else if (/fuel usage report\s*\(units?\)/i.test(name) && !opts.isGroupReport) score += 100;
+    else if (/fuel fillings report\s*\(group\)/i.test(name) && opts.isGroupReport) score += 68;
+    else if (/fuel fillings report\s*\(units?\)/i.test(name) && !opts.isGroupReport) score += 65;
+    else if (/genset|generator|bowser/i.test(name) && /fuel/i.test(name)) score += 55;
+    else if (/fuel usage/i.test(name)) score += 40;
   }
 
-  const GROUP_PATTERNS = ['fuel report(group)', 'fuel report (group)'];
-  const UNIT_PATTERNS = ['fuel report(unit)', 'fuel report (unit)'];
-  let groupTemplate: FuelReportTemplate | null = null;
-  let unitTemplate: FuelReportTemplate | null = null;
+  if (template.fuelFamily === family) score += 25;
+  if (template.fuelFamily === otherFamily) score -= 40;
+  if (template.fallback) score -= 25;
+  if (template.canonicalName && matchesCanonical(name, template.canonicalName)) score += 15;
 
-  const resources = await client.request<{
-    items: Array<{ id: number; nm: string; rep?: Record<string, { n: string }> }>;
-  }>('core/search_items', {
-    spec: { itemsType: 'avl_resource', propName: 'sys_name', propValueMask: '*', sortType: 'sys_name' },
-    force: 1,
-    flags: 8193,
-    from: 0,
-    to: 50,
-  });
+  return score;
+}
 
-  for (const resource of resources.items || []) {
-    if (!resource.rep) continue;
-    for (const [templateId, tmpl] of Object.entries(resource.rep)) {
-      const name = tmpl.n?.toLowerCase() || '';
-      if (!groupTemplate && GROUP_PATTERNS.some((p) => name.includes(p))) {
-        groupTemplate = {
-          resourceId: resource.id,
-          templateId: parseInt(templateId, 10),
-          templateName: tmpl.n,
-          isGroupReport: true,
-        };
-      }
-      if (!unitTemplate && UNIT_PATTERNS.some((p) => name.includes(p))) {
-        unitTemplate = {
-          resourceId: resource.id,
-          templateId: parseInt(templateId, 10),
-          templateName: tmpl.n,
-          isGroupReport: false,
-        };
-      }
-      if (groupTemplate && unitTemplate) break;
+function pickFuelTemplate(
+  templates: ResolvedReportTemplate[],
+  opts: { isGroupReport: boolean; assetCategory?: FuelAssetCategory },
+): ResolvedReportTemplate | null {
+  let best: ResolvedReportTemplate | null = null;
+  let bestScore = -1;
+  for (const t of templates) {
+    const score = scoreFuelTemplate(t, opts);
+    if (score > bestScore) {
+      bestScore = score;
+      best = t;
     }
-    if (groupTemplate && unitTemplate) break;
   }
-
-  templatesCache = { groupTemplate, unitTemplate, timestamp: now };
-  return { groupTemplate, unitTemplate };
+  return bestScore > 0 ? best : null;
 }
 
-export async function listAllUnits(client: WialonClient, maxUnits = 500): Promise<Array<{ id: number; nm: string }>> {
-  const result = await client.request<{ items: Array<{ id: number; nm: string }> }>('core/search_items', {
-    spec: { itemsType: 'avl_unit', propName: 'sys_name', propValueMask: '*', sortType: 'sys_name' },
-    force: 1,
-    flags: 1,
-    from: 0,
-    to: maxUnits,
+export async function findFuelReportTemplates(
+  client: WialonClient,
+  scope: WialonReportScope,
+  opts?: { assetCategory?: FuelAssetCategory },
+): Promise<{
+  groupTemplate: FuelReportTemplate | null;
+  unitTemplate: FuelReportTemplate | null;
+  family: FuelReportFamily;
+  expected: { group: string; unit: string };
+}> {
+  const family = fuelFamilyForCategory(opts?.assetCategory);
+  const templates = await WialonReportResolverService.findModuleTemplates(client, scope, 'fuel', {
+    includeFallback: true,
   });
-  return result.items ?? [];
+
+  const groupTemplate = toFuelTemplate(
+    pickFuelTemplate(templates, { isGroupReport: true, assetCategory: opts?.assetCategory }),
+  );
+  const unitTemplate = toFuelTemplate(
+    pickFuelTemplate(templates, { isGroupReport: false, assetCategory: opts?.assetCategory }),
+  );
+  return {
+    groupTemplate,
+    unitTemplate,
+    family,
+    expected: CANONICAL_FUEL_REPORTS[family],
+  };
+}
+
+/**
+ * Resolve all four canonical fuel slots for capability / onboarding surfaces.
+ */
+export async function resolveCanonicalFuelSlots(
+  client: WialonClient,
+  scope: WialonReportScope,
+): Promise<{
+  vehicle: { group: FuelReportTemplate | null; unit: FuelReportTemplate | null };
+  generator: { group: FuelReportTemplate | null; unit: FuelReportTemplate | null };
+  expected: typeof CANONICAL_FUEL_REPORTS;
+}> {
+  const templates = await WialonReportResolverService.findModuleTemplates(client, scope, 'fuel', {
+    includeFallback: true,
+  });
+  return {
+    vehicle: {
+      group: toFuelTemplate(pickFuelTemplate(templates, { isGroupReport: true, assetCategory: 'vehicle' })),
+      unit: toFuelTemplate(pickFuelTemplate(templates, { isGroupReport: false, assetCategory: 'vehicle' })),
+    },
+    generator: {
+      group: toFuelTemplate(
+        pickFuelTemplate(templates, { isGroupReport: true, assetCategory: 'generator' }),
+      ),
+      unit: toFuelTemplate(
+        pickFuelTemplate(templates, { isGroupReport: false, assetCategory: 'generator' }),
+      ),
+    },
+    expected: CANONICAL_FUEL_REPORTS,
+  };
+}
+
+const FLEET_GROUP_RE = /vehicle|truck|fleet|lorry|bus|\[veh\]|cars?/i;
+const STATIONARY_GROUP_RE =
+  /generator|genset|gen\s*set|bowser|machinery|plant|power|stationary|gensets?/i;
+
+export async function findFleetGroups(
+  client: WialonClient,
+  scope: WialonReportScope,
+  opts?: { assetCategory?: FuelAssetCategory },
+): Promise<Array<{ id: number; nm: string }>> {
+  const all = await WialonReportResolverService.listUnitGroups(client, scope, { limit: 200 });
+  if (!all.length) return [];
+
+  if (opts?.assetCategory === 'generator' || opts?.assetCategory === 'machinery') {
+    const stationary = all.filter((g) => STATIONARY_GROUP_RE.test(g.nm));
+    return stationary.length ? stationary : all;
+  }
+
+  if (opts?.assetCategory === 'vehicle') {
+    const fleet = all.filter((g) => FLEET_GROUP_RE.test(g.nm));
+    // Prefer non-genset groups when both exist
+    const nonGenset = fleet.filter((g) => !STATIONARY_GROUP_RE.test(g.nm));
+    if (nonGenset.length) return nonGenset;
+    if (fleet.length) return fleet;
+    const withoutStationary = all.filter((g) => !STATIONARY_GROUP_RE.test(g.nm));
+    return withoutStationary.length ? withoutStationary : all;
+  }
+
+  const fleet = all.filter((g) => FLEET_GROUP_RE.test(g.nm) && !STATIONARY_GROUP_RE.test(g.nm));
+  if (fleet.length) return fleet;
+  const stationary = all.filter((g) => STATIONARY_GROUP_RE.test(g.nm));
+  if (stationary.length) return stationary;
+  return all;
+}
+
+export async function listAllUnits(
+  client: WialonClient,
+  scope: WialonReportScope,
+  maxUnits = 500,
+): Promise<Array<{ id: number; nm: string }>> {
+  return WialonReportResolverService.listUnits(client, scope, maxUnits);
+}
+
+export function fuelScopeKey(scope: WialonReportScope): string {
+  return wialonReportScopeKey(scope);
 }

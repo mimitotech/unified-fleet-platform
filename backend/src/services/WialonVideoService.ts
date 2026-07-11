@@ -46,7 +46,17 @@ export type WialonVideoFile = {
   storageType?: 1 | 2;
   tag?: string;
   occurredAt?: string;
+  source: 'storage' | 'message' | 'report';
+  messageId?: number;
+  channel?: number;
+  eventType?: string;
+};
+
+export type WialonVideoClipRef = {
+  unitId: number;
   source: 'storage' | 'message';
+  path?: string;
+  storageType?: 1 | 2;
   messageId?: number;
 };
 
@@ -65,6 +75,69 @@ const VIDEO_CACHE_TTL_MS = 120_000;
 const VIDEO_REDIS_TTL_SEC = 120;
 const memoryCache = new Map<string, { data: WialonVideoUnit[]; expires: number }>();
 const inflight = new Map<string, Promise<WialonVideoUnit[]>>();
+
+/** Best-effort timestamp from MDVR filename or path segment (YYYYMMDDHHmmss, ISO-like, unix). */
+function parseOccurredAtFromName(name: string): string | undefined {
+  const base = name.split('/').pop() || name;
+  const unix = base.match(/\b(1[0-9]{9,12})\b/);
+  if (unix) {
+    const n = Number(unix[1]);
+    if (n > 1_000_000_000_000) return new Date(n).toISOString();
+    if (n > 1_000_000_000) return new Date(n * 1000).toISOString();
+  }
+
+  const iso = base.match(
+    /(20\d{2})[-_]?(\d{2})[-_]?(\d{2})[-_T]?(\d{2})[-_:]?(\d{2})[-_:]?(\d{2})/
+  );
+  if (iso) {
+    const d = new Date(
+      Date.UTC(
+        Number(iso[1]),
+        Number(iso[2]) - 1,
+        Number(iso[3]),
+        Number(iso[4]),
+        Number(iso[5]),
+        Number(iso[6])
+      )
+    );
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+
+  const compact = base.match(/\b(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\b/);
+  if (compact) {
+    const yy = Number(compact[1]);
+    const year = yy >= 70 ? 1900 + yy : 2000 + yy;
+    const d = new Date(
+      Date.UTC(
+        year,
+        Number(compact[2]) - 1,
+        Number(compact[3]),
+        Number(compact[4]),
+        Number(compact[5]),
+        Number(compact[6])
+      )
+    );
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+
+  return undefined;
+}
+
+function inDateRange(iso: string | undefined, fromMs: number, toMs: number): boolean {
+  if (!iso) return true;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return true;
+  return t >= fromMs && t <= toMs;
+}
+
+function messageEventLabel(p?: Record<string, unknown>): { tag?: string; eventType?: string; channel?: number } {
+  if (!p) return {};
+  const channelRaw = p.channel ?? p.cam ?? p.camera;
+  const channel = channelRaw != null ? Number(channelRaw) : undefined;
+  const eventType = String(p.event ?? p.type ?? p.name ?? '').trim() || undefined;
+  const tag = eventType || (channel ? `Camera ${channel}` : undefined);
+  return { tag, eventType, channel: Number.isFinite(channel) ? channel : undefined };
+}
 
 /** Wialon Hosting: flag bit 1 = live stream, bit 2 = auto-save on events. */
 function parseCamerasFromSettings(
@@ -379,6 +452,8 @@ export class WialonVideoService {
                 const path = prefix ? `${prefix}/${node.n}` : node.n;
                 if (node.c) walk(node.c as Array<{ n: string; s?: number; c?: unknown[] }>, path);
                 else if (node.s != null) {
+                  const occurredAt = parseOccurredAtFromName(path) ?? parseOccurredAtFromName(node.n);
+                  if (!inDateRange(occurredAt, from, to)) continue;
                   files.push({
                     id: `file-${storageType}-${path}`,
                     name: node.n,
@@ -387,6 +462,7 @@ export class WialonVideoService {
                     storageType,
                     source: 'storage',
                     tag: 'storage',
+                    occurredAt,
                   });
                 }
               }
@@ -415,14 +491,21 @@ export class WialonVideoService {
             m.tp === 'video' ||
             (m.p && Object.keys(m.p).some((k) => /video|file|media|photo/i.test(k)));
           if (!hasVideo) continue;
+          const occurredAt = new Date(m.t * 1000).toISOString();
+          if (!inDateRange(occurredAt, from, to)) continue;
+          const meta = messageEventLabel(m.p);
           files.push({
             id: `msg-${m.id ?? m.t}`,
-            name: `Video message ${new Date(m.t * 1000).toLocaleString()}`,
-            occurredAt: new Date(m.t * 1000).toISOString(),
+            name: meta.eventType
+              ? `${meta.eventType} · ${new Date(m.t * 1000).toLocaleString()}`
+              : `Video message ${new Date(m.t * 1000).toLocaleString()}`,
+            occurredAt,
             path: '',
             source: 'message',
             messageId: m.id,
-            tag: 'message',
+            tag: meta.tag || 'message',
+            channel: meta.channel,
+            eventType: meta.eventType,
           });
         }
         await client.request('messages/unload', {}).catch(() => undefined);
@@ -589,5 +672,17 @@ export class WialonVideoService {
       contentType: this.mimeFromPath(path),
       fileName,
     };
+  }
+
+  static async readClip(
+    credentials: WialonCredentialsInput,
+    clip: WialonVideoClipRef
+  ): Promise<{ data: Buffer; contentType: string; fileName: string }> {
+    if (clip.source === 'message') {
+      if (clip.messageId == null) throw new Error('messageId is required');
+      return this.readMessageVideoFile(credentials, clip.unitId, clip.messageId);
+    }
+    if (!clip.path) throw new Error('path is required for storage clips');
+    return this.readStorageFile(credentials, clip.unitId, clip.storageType ?? 2, clip.path);
   }
 }

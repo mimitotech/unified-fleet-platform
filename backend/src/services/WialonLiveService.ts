@@ -283,17 +283,23 @@ export class WialonLiveService {
         await sleep(1000);
       }
 
-      const result = await client.request<Record<string, unknown>>('report/apply_report_result', {});
+      const result = await client.request<{
+        reportResult?: { tables?: Array<Record<string, unknown>> };
+        tables?: Array<Record<string, unknown>>;
+      }>('report/apply_report_result', {});
 
       const tablesOut: WialonReportTableResult[] = [];
       const chartsOut: WialonReportChartResult[] = [];
 
       try {
-        const tablesRes = await client.request<{
-          tables?: Array<Record<string, unknown>>;
-        }>('report/get_report_tables', {});
-
-        const tables = tablesRes.tables || [];
+        const embedded = result.reportResult?.tables ?? result.tables ?? [];
+        let tables: Array<Record<string, unknown>> = embedded;
+        if (!tables.length) {
+          const tablesRes = await client.request<{
+            tables?: Array<Record<string, unknown>>;
+          }>('report/get_report_tables', {});
+          tables = tablesRes.tables ?? [];
+        }
         for (let tableIndex = 0; tableIndex < tables.length; tableIndex++) {
           const meta = tables[tableIndex];
           const totalRows = Number(meta.rows ?? 0);

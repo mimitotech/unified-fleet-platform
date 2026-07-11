@@ -7,12 +7,14 @@ import { FleetMapWorkspace, FleetListWorkspace } from '@/components/fleet/FleetM
 import { FleetTrackWorkspace } from '@/components/fleet/FleetTrackWorkspace';
 import { MonitoringEventsView } from '@/components/monitoring/MonitoringEventsView';
 import { useMonitoringUrlState } from '@/hooks/useMonitoringUrlState';
+import { useFleetAssetProfile } from '@/hooks/useFleetAssetProfile';
 import { useFleetUnits } from '@/hooks/useFleetUnits';
 import { useMapSessionKey } from '@/hooks/useMapSessionKey';
 import type { FleetUnit } from '@/lib/fleetUnits';
 
 export default function Monitoring() {
   const mapSessionKey = useMapSessionKey();
+  const assetProfile = useFleetAssetProfile();
   const { units, counts, live, statuses, isLoading, isError, refetch } = useFleetUnits();
   const { view, unitId, setView, selectUnit } = useMonitoringUrlState();
 
@@ -25,7 +27,16 @@ export default function Monitoring() {
   };
 
   return (
-    <AppLayout title="Monitoring" subtitle="Live fleet map, list, trips and events">
+    <AppLayout
+      title="Monitoring"
+      subtitle={
+        assetProfile.isGeneratorOnly
+          ? 'Live generator map, list, runtime and events'
+          : assetProfile.isMixed
+            ? 'Live asset map, list, trips and events'
+            : 'Live fleet map, list, trips and events'
+      }
+    >
       {isError && (
         <QueryErrorBanner message="Could not load live fleet." onRetry={() => refetch()} className="mb-4" />
       )}
@@ -38,6 +49,7 @@ export default function Monitoring() {
           fleetCount={counts.total}
           live={live}
           counts={counts.byStatus}
+          assetProfile={assetProfile}
         />
 
         {view === 'map' && (

@@ -18,18 +18,20 @@ export type MonitoringEventRow = {
   type?: string;
 };
 
-export function useMonitoringEvents(limit = 80) {
-  const alertsQ = useAlerts(limit);
+export function useMonitoringEvents(limit = 80, enabled = true) {
+  const alertsQ = useAlerts(limit, enabled);
   const ecoQ = useQuery({
     queryKey: ['ecoViolations'],
     queryFn: () => clientApi.getEcoViolations(),
-    refetchInterval: pollWhenVisible(LIVE_POLL.alerts),
+    enabled,
+    refetchInterval: enabled ? pollWhenVisible(LIVE_POLL.alerts) : false,
     staleTime: 30_000,
   });
   const videoQ = useQuery({
     queryKey: ['surveillanceViolations'],
     queryFn: () => clientApi.getSurveillanceViolations(),
-    refetchInterval: pollWhenVisible(LIVE_POLL.video),
+    enabled,
+    refetchInterval: enabled ? pollWhenVisible(LIVE_POLL.video) : false,
     staleTime: 30_000,
   });
 

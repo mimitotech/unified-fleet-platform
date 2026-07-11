@@ -174,3 +174,69 @@ export function reportsByCategory(): Map<string, LiveReportDef[]> {
   }
   return map;
 }
+
+export type WialonReportModuleKey =
+  | 'fuel'
+  | 'engineHours'
+  | 'trips'
+  | 'geofence'
+  | 'driver'
+  | 'events'
+  | 'emissions';
+
+export type WialonCatalogTemplate = {
+  resourceId: number;
+  resourceName: string;
+  templateId: number;
+  templateName: string;
+  module: WialonReportModuleKey;
+  isGroupReport: boolean;
+  fallback?: boolean;
+};
+
+export const WIALON_MODULE_LABELS: Record<WialonReportModuleKey, string> = {
+  fuel: 'Fuel',
+  engineHours: 'Engine hours',
+  trips: 'Trips',
+  geofence: 'Geofence',
+  driver: 'Driver',
+  events: 'Events & safety',
+  emissions: 'Emissions',
+};
+
+export const WIALON_MODULE_ORDER: WialonReportModuleKey[] = [
+  'fuel',
+  'trips',
+  'engineHours',
+  'geofence',
+  'driver',
+  'events',
+  'emissions',
+];
+
+export function templateReportKey(resourceId: number, templateId: number): string {
+  return `tpl:${resourceId}:${templateId}`;
+}
+
+export function parseTemplateReportKey(key: string): { resourceId: number; templateId: number } | null {
+  if (!key.startsWith('tpl:')) return null;
+  const [, resourceId, templateId] = key.split(':');
+  const r = parseInt(resourceId, 10);
+  const t = parseInt(templateId, 10);
+  if (Number.isNaN(r) || Number.isNaN(t)) return null;
+  return { resourceId: r, templateId: t };
+}
+
+export function catalogTemplatesByModule(
+  templates: WialonCatalogTemplate[]
+): Map<WialonReportModuleKey, WialonCatalogTemplate[]> {
+  const map = new Map<WialonReportModuleKey, WialonCatalogTemplate[]>();
+  for (const mod of WIALON_MODULE_ORDER) map.set(mod, []);
+  for (const t of templates) {
+    const mod = t.module in WIALON_MODULE_LABELS ? t.module : 'events';
+    const list = map.get(mod) ?? [];
+    list.push(t);
+    map.set(mod, list);
+  }
+  return map;
+}

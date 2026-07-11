@@ -6,6 +6,7 @@ import {
   buildDailySummaries,
   buildLedgerFromTransactions,
 } from './wialonFuelLedger.js';
+import { missingConsumption } from './wialonFuelReport/metrics.js';
 import { supplementTransactionsWithUnitReports } from './wialonFuelUnitReportSupplement.js';
 import {
   buildAnalytics,
@@ -20,9 +21,10 @@ import {
 } from './wialonFuelAnalytics.js';
 import type { FuelTransaction } from './wialonFuelReport/types.js';
 import { effectiveConsumed } from './wialonFuelReport/metrics.js';
+import { filterTransactionsByDateRange } from './wialonFuelReport/rangeFilter.js';
 
 const MONTH_TTL_MS = 24 * 60 * 60 * 1000;
-const CACHE_VERSION = 'v3';
+const CACHE_VERSION = 'v6';
 
 const monthMemory = new Map<string, { rows: FuelTransaction[]; expires: number }>();
 const monthInflight = new Map<string, Promise<FuelTransaction[]>>();
@@ -35,8 +37,8 @@ function redisMonthKey(tenantId: string, yyyyMm: string) {
   return `fuel:month:${CACHE_VERSION}:${tenantId}:${yyyyMm}`;
 }
 
-function missingConsumption(list: FuelTransaction[]) {
-  return !list.some((r) => r.section === 'consumption' && effectiveConsumed(r) > 0);
+function unitHasConsumption(list: FuelTransaction[], unitId: number): boolean {
+  return list.some((r) => r.unitId === unitId && r.section === 'consumption' && effectiveConsumed(r) > 0);
 }
 
 export class WialonFuelAnalyticsService {
@@ -77,22 +79,60 @@ export class WialonFuelAnalyticsService {
       })
     );
 
-    const fromTs = Math.floor(new Date(from + 'T00:00:00Z').getTime() / 1000);
-    const toTs = Math.floor(new Date(to + 'T23:59:59Z').getTime() / 1000);
-    const deduped = new Map<string, FuelTransaction>();
-    for (const r of allRows) {
-      if (r.timestamp && (r.timestamp < fromTs || r.timestamp > toTs)) continue;
-      deduped.set(r.id, r);
-    }
-    return [...deduped.values()].sort((a, b) => b.timestamp - a.timestamp);
+    return filterTransactionsByDateRange(allRows, from, to);
   }
 
   /** Optional background warm — does not block analytics reads. */
   static warmStandardMonths(tenantId: string): void {
-    void this.ensureMonth(tenantId, currentMonthKey(), false);
+    void this.ensureMonth(tenantId, currentMonthKey(), false).catch(() => undefined);
     const d = new Date();
     const prev = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1));
-    void this.ensureMonth(tenantId, prev.toISOString().slice(0, 7), false);
+    void this.ensureMonth(tenantId, prev.toISOString().slice(0, 7), false).catch(() => undefined);
+  }
+
+  /** Warm all calendar months overlapping a date range (non-blocking). */
+  static warmDateRange(tenantId: string, from: string, to: string): void {
+    for (const m of monthsInRange(from, to)) {
+      void this.ensureMonth(tenantId, m, false).catch(() => undefined);
+    }
+  }
+
+  static isRangeWarming(tenantId: string, from: string, to: string): boolean {
+    for (const m of monthsInRange(from, to)) {
+      if (monthInflight.has(`${monthCacheKey(tenantId, m)}:fetch`)) return true;
+    }
+    return false;
+  }
+
+  /** Wait for background month cache (first load after restart). */
+  static async waitForRangeCache(
+    tenantId: string,
+    from: string,
+    to: string,
+    maxMs = 200_000
+  ): Promise<FuelTransaction[]> {
+    const months = monthsInRange(from, to);
+    const inflight = months
+      .map((m) => monthInflight.get(`${monthCacheKey(tenantId, m)}:fetch`))
+      .filter(Boolean) as Promise<FuelTransaction[]>[];
+
+    if (inflight.length) {
+      await Promise.race([
+        Promise.all(inflight),
+        new Promise((r) => setTimeout(r, maxMs)),
+      ]);
+      const rows = await this.loadCachedRowsOnly(tenantId, from, to);
+      if (rows.length) return rows;
+    }
+
+    const deadline = Date.now() + maxMs;
+    while (Date.now() < deadline) {
+      const rows = await this.loadCachedRowsOnly(tenantId, from, to);
+      if (rows.length > 0) return rows;
+      if (!this.isRangeWarming(tenantId, from, to)) break;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    return this.loadCachedRowsOnly(tenantId, from, to);
   }
 
   static async getAnalytics(
@@ -160,7 +200,7 @@ export class WialonFuelAnalyticsService {
       month: resolved.month,
       fuelPricePerLiter: 0,
       source,
-      isWarming: false,
+      isWarming: source === 'warming' || this.isRangeWarming(tenantId, resolved.from, resolved.to),
       warmedMonths,
       fetchedAt: new Date().toISOString(),
       fleetUnits,
@@ -237,30 +277,27 @@ export class WialonFuelAnalyticsService {
     const monthResults = await Promise.all(
       months.map((m) => this.ensureMonth(tenantId, m, refresh))
     );
+    let anyWarming = false;
     for (let i = 0; i < months.length; i++) {
       const { rows, source } = monthResults[i];
+      if (source === 'warming') anyWarming = true;
       if (rows.length) warmedMonths.push(months[i]);
       if (source === 'wialon') anyWialon = true;
       if (source === 'cache') anyCache = true;
       allRows.push(...rows);
     }
 
-    const fromTs = Math.floor(new Date(from + 'T00:00:00Z').getTime() / 1000);
-    const toTs = Math.floor(new Date(to + 'T23:59:59Z').getTime() / 1000);
-    const deduped = new Map<string, FuelTransaction>();
-    for (const r of allRows) {
-      if (r.timestamp && (r.timestamp < fromTs || r.timestamp > toTs)) continue;
-      deduped.set(r.id, r);
-    }
-    const rows = [...deduped.values()].sort((a, b) => b.timestamp - a.timestamp);
+    const rows = filterTransactionsByDateRange(allRows, from, to);
 
-    const source: FuelAnalyticsResult['source'] = anyWialon
-      ? 'wialon'
-      : anyCache
-        ? rows.length
-          ? 'cache'
-          : 'partial'
-        : 'none';
+    let source: FuelAnalyticsResult['source'] = anyWarming
+      ? 'warming'
+      : anyWialon
+        ? 'wialon'
+        : anyCache
+          ? rows.length
+            ? 'cache'
+            : 'partial'
+          : 'none';
 
     return { rows, source, warmedMonths };
   }
@@ -269,7 +306,7 @@ export class WialonFuelAnalyticsService {
     tenantId: string,
     yyyyMm: string,
     refresh: boolean
-  ): Promise<{ rows: FuelTransaction[]; source: 'cache' | 'wialon' | 'none' }> {
+  ): Promise<{ rows: FuelTransaction[]; source: 'cache' | 'wialon' | 'none' | 'warming' }> {
     const memKey = monthCacheKey(tenantId, yyyyMm);
     const now = Date.now();
 
@@ -291,18 +328,26 @@ export class WialonFuelAnalyticsService {
 
     const inflightKey = `${memKey}:fetch`;
     if (monthInflight.has(inflightKey)) {
-      const rows = await monthInflight.get(inflightKey)!;
+      if (refresh) {
+        const rows = await monthInflight.get(inflightKey)!;
+        return { rows, source: rows.length ? 'wialon' : 'none' };
+      }
+      return { rows: [], source: 'warming' };
+    }
+
+    const fetchPromise = this.fetchAndCacheMonth(tenantId, yyyyMm).catch((err) => {
+      console.error(`[FuelAnalytics] Month fetch failed for ${tenantId} ${yyyyMm}:`, err);
+      return [] as FuelTransaction[];
+    });
+    monthInflight.set(inflightKey, fetchPromise);
+    fetchPromise.finally(() => monthInflight.delete(inflightKey));
+
+    if (refresh) {
+      const rows = await fetchPromise;
       return { rows, source: rows.length ? 'wialon' : 'none' };
     }
 
-    const fetchPromise = this.fetchAndCacheMonth(tenantId, yyyyMm);
-    monthInflight.set(inflightKey, fetchPromise);
-    try {
-      const rows = await fetchPromise;
-      return { rows, source: rows.length ? 'wialon' : 'none' };
-    } finally {
-      fetchPromise.finally(() => monthInflight.delete(inflightKey));
-    }
+    return { rows: [], source: 'warming' };
   }
 
   /** Fetch one calendar month from Wialon reports, enrich once, cache for 24h. */
@@ -374,7 +419,10 @@ export class WialonFuelAnalyticsService {
       }
       if (!unitIds.length) return;
 
-      if (!missingConsumption(initialRows) && initialRows.length > 0) return;
+      if (!missingConsumption(initialRows) && initialRows.length > 0) {
+        const unitsMissing = unitIds.filter((id) => !unitHasConsumption(initialRows, id));
+        if (!unitsMissing.length) return;
+      }
 
       let rows =
         initialRows.length > 0

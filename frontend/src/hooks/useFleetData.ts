@@ -56,6 +56,8 @@ export interface FleetDataResult {
   isLoading: boolean;
   isVehiclesLoading: boolean;
   isFuelLoading: boolean;
+  isFuelWarming: boolean;
+  isFuelBackgroundRefreshing?: boolean;
   isReady: boolean;
 
   // Error states
@@ -88,10 +90,13 @@ export function useFleetData(options?: FleetDataOptions): FleetDataResult {
   const fuelTransactionsQuery = useFuelTransactions({
     startDate,
     endDate,
+    assetCategory: 'vehicle',
   });
 
   const vehicles = vehiclesQuery.data ?? [];
-  const fuelTransactions = fuelTransactionsQuery.data ?? [];
+  const fuelTransactions = fuelTransactionsQuery.data?.transactions ?? [];
+  const isFuelWarming = fuelTransactionsQuery.data?.warming ?? false;
+  const isFuelBackgroundRefreshing = false;
   
   // -------------------------------------------------------------------------
   // Computed: Vehicle fuel level map (by ID)
@@ -193,7 +198,7 @@ export function useFleetData(options?: FleetDataOptions): FleetDataResult {
   // Loading and ready states
   // -------------------------------------------------------------------------
   const isVehiclesLoading = vehiclesQuery.isLoading;
-  const isFuelLoading = fuelTransactionsQuery.isLoading;
+  const isFuelLoading = fuelTransactionsQuery.isFetching || fuelTransactionsQuery.isLoading;
   const isLoading = isVehiclesLoading || isFuelLoading;
 
   // Ready when both queries have completed (even with empty data for 1 vehicle)
@@ -213,6 +218,8 @@ export function useFleetData(options?: FleetDataOptions): FleetDataResult {
     isLoading,
     isVehiclesLoading,
     isFuelLoading,
+    isFuelWarming,
+    isFuelBackgroundRefreshing,
     isReady,
 
     // Error states

@@ -15,7 +15,8 @@
     "dev:frontend": "npm run dev -w frontend",
     "db:migrate": "bash scripts/seed-db.sh",
     "db:ensure-users": "node --import tsx scripts/ensure-login-users.mts",
-    "setup": "bash scripts/setup.sh"
+    "setup": "bash scripts/setup.sh",
+    "verify:fuel": "node --import tsx scripts/verify-fuel-structure.mts"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

@@ -1,5 +1,6 @@
 import { Map, List, Route, AlertTriangle, Activity, Pause, Power, MapPin } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import type { FleetAssetProfile } from '@/hooks/useFleetAssetProfile';
 
 export type MonitoringViewMode = 'map' | 'list' | 'tracks' | 'violations';
 
@@ -23,6 +24,7 @@ type Props = {
   fleetCount: number;
   live?: boolean;
   counts?: StatusCounts;
+  assetProfile?: FleetAssetProfile;
 };
 
 const kpiItems: { key: keyof StatusCounts; label: string; icon: typeof Activity; className: string }[] = [
@@ -32,14 +34,23 @@ const kpiItems: { key: keyof StatusCounts; label: string; icon: typeof Activity;
   { key: 'offline', label: 'Offline', icon: MapPin, className: 'text-muted-foreground' },
 ];
 
-export function MonitoringViewHeader({ mode, onChange, fleetCount, live, counts }: Props) {
+export function MonitoringViewHeader({ mode, onChange, fleetCount, live, counts, assetProfile }: Props) {
+  const centerTitle = assetProfile?.isGeneratorOnly
+    ? 'Generator Monitoring'
+    : assetProfile?.isMixed
+      ? 'Asset Monitoring Center'
+      : 'Fleet Monitoring Center';
+  const countLabel = assetProfile?.isGeneratorOnly
+    ? `${fleetCount} generator${fleetCount === 1 ? '' : 's'} tracked`
+    : `${fleetCount} ${assetProfile?.unitLabelPlural ?? 'units'} tracked`;
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-lg font-semibold tracking-tight">Asset Monitoring Center</h2>
+          <h2 className="text-lg font-semibold tracking-tight">{centerTitle}</h2>
           <p className="text-sm text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span>{fleetCount} units tracked</span>
+            <span>{countLabel}</span>
             {live && (
               <span className="inline-flex items-center gap-1 text-status-moving font-medium">
                 <span className="w-1.5 h-1.5 rounded-full bg-status-moving animate-pulse" />

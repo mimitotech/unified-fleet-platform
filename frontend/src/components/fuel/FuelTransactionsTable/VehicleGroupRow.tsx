@@ -16,6 +16,7 @@ interface VehicleGroupRowProps {
   isExpanded: boolean;
   onToggle: () => void;
   onTransactionClick: (t: FuelTransaction) => void;
+  visibleColumns?: string[];
 }
 
 export function VehicleGroupRow({
@@ -23,6 +24,7 @@ export function VehicleGroupRow({
   isExpanded,
   onToggle,
   onTransactionClick,
+  visibleColumns,
 }: VehicleGroupRowProps) {
   const groupMetrics = vehicleGroupToDisplayValues(group);
 
@@ -68,7 +70,7 @@ export function VehicleGroupRow({
         <td className={fuelTd}>
           <span className="text-xs text-muted-foreground italic">Multiple locations</span>
         </td>
-        <FuelTransactionMetricCells v={groupMetrics} />
+        <FuelTransactionMetricCells v={groupMetrics} visibleColumns={visibleColumns} variant="periodTotal" />
       </tr>
 
       {isExpanded &&
@@ -97,7 +99,7 @@ export function VehicleGroupRow({
                   {t.location || '—'}
                 </span>
               </td>
-              <FuelTransactionMetricCells v={v} />
+              <FuelTransactionMetricCells v={v} visibleColumns={visibleColumns} />
             </tr>
           );
         })}

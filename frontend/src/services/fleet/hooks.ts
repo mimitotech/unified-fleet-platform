@@ -252,16 +252,17 @@ export function useRefreshGeneratorEngineHours() {
  */
 export function useGeneratorFuelTransactions(
   filters?: FuelTransactionFilters,
-  options?: Partial<UseQueryOptions<FuelTransaction[]>>,
+  options?: Partial<UseQueryOptions<FuelTransactionsQueryData>>,
 ) {
   const isReady = useFleetReady();
-  return useQuery({
-    queryKey: fleetQueryKeys.generatorFuelTransactionsList(filters),
-    queryFn: () => getFleetService().getGeneratorFuelTransactions(filters),
-    enabled: isReady && (options?.enabled !== false),
-    staleTime: 60_000,
-    ...options,
-  });
+  return useQuery(
+    fuelTransactionsQueryOptions(
+      fleetQueryKeys.generatorFuelTransactionsList(filters),
+      { ...filters, assetCategory: 'generator' },
+      isReady && options?.enabled !== false,
+      options,
+    ),
+  );
 }
 
 /**
@@ -329,7 +330,7 @@ export function useGeneratorsWithReports(range?: {
     // the first known refuel/drain address acts as the unit's "current location"
     // for display in Generators by Site.
     const initialLocationByUnit = new Map<string, { ts: number; location: string }>();
-    for (const tx of fuelQuery.data ?? []) {
+    for (const tx of fuelQuery.data?.transactions ?? []) {
       const key = String(tx.unitId);
       const current = fuelByUnit.get(key) ?? { consumed: 0, filled: 0, drained: 0 };
       const activity = getGeneratorFuelActivity(tx, engineIntervalsByUnit);
@@ -427,16 +428,17 @@ export function useMachinery(options?: Partial<UseQueryOptions<Machinery[]>>) {
 
 export function useMachineryFuelTransactions(
   filters?: FuelTransactionFilters,
-  options?: Partial<UseQueryOptions<FuelTransaction[]>>,
+  options?: Partial<UseQueryOptions<FuelTransactionsQueryData>>,
 ) {
   const isReady = useFleetReady();
-  return useQuery({
-    queryKey: fleetQueryKeys.machineryFuelTransactionsList(filters),
-    queryFn: () => getFleetService().getMachineryFuelTransactions(filters),
-    enabled: isReady && (options?.enabled !== false),
-    staleTime: 60_000,
-    ...options,
-  });
+  return useQuery(
+    fuelTransactionsQueryOptions(
+      fleetQueryKeys.machineryFuelTransactionsList(filters),
+      { ...filters, assetCategory: 'machinery' },
+      isReady && options?.enabled !== false,
+      options,
+    ),
+  );
 }
 
 export function useMachineryWithReports(range?: {
@@ -461,7 +463,7 @@ export function useMachineryWithReports(range?: {
 
     const engineByUnit = buildGeneratorEngineIntervalsByUnit(engineHoursQuery.data ?? []);
     const fuelByUnit = new Map<string, { consumed: number; filled: number; drained: number }>();
-    for (const tx of fuelQuery.data ?? []) {
+    for (const tx of fuelQuery.data?.transactions ?? []) {
       const uid = String(tx.unitId);
       const row = fuelByUnit.get(uid) ?? { consumed: 0, filled: 0, drained: 0 };
       const activity = getGeneratorFuelActivity(tx, engineByUnit.get(uid) ?? []);
@@ -588,24 +590,52 @@ export function useFuelAlerts(hours: number = 24) {
 /**
  * Fetch fuel transactions with optional filtering
  */
-export function useFuelTransactions(filters?: FuelTransactionFilters) {
-  const isReady = useFleetReady();
-  return useQuery({
-    queryKey: fleetQueryKeys.fuelTransactionsList(filters),
-    queryFn: () => getFleetService().getFuelTransactions(filters),
-    enabled: isReady,
+export type FuelTransactionsQueryData = {
+  transactions: FuelTransaction[];
+  warming: boolean;
+  needsRefresh?: boolean;
+};
+
+async function fetchFuelTransactionsMeta(
+  filters?: FuelTransactionFilters,
+): Promise<FuelTransactionsQueryData> {
+  const svc = getFleetService();
+  if (svc.getFuelTransactionsMeta) {
+    return svc.getFuelTransactionsMeta(filters);
+  }
+  const transactions = await svc.getFuelTransactions(filters);
+  return { transactions, warming: false, needsRefresh: false };
+}
+
+function fuelTransactionsQueryOptions(
+  queryKey: readonly unknown[],
+  filters: FuelTransactionFilters | undefined,
+  enabled: boolean,
+  extra?: Partial<UseQueryOptions<FuelTransactionsQueryData>>,
+) {
+  return {
+    queryKey,
+    queryFn: () => fetchFuelTransactionsMeta(filters),
+    enabled,
     staleTime: 60_000,
     gcTime: 30 * 60_000,
     retry: 1,
     refetchOnWindowFocus: false,
-    placeholderData: (prev) => prev,
-    refetchInterval: (query) => {
-      const rows = query.state.data;
-      if (rows && rows.length > 0) return false;
+    refetchInterval: (query: { state: { data?: FuelTransactionsQueryData; status: string } }) => {
+      const d = query.state.data;
       if (query.state.status === 'error') return false;
-      return 30_000;
+      if (!d?.transactions?.length) return 10_000;
+      return 60_000;
     },
-  });
+    ...extra,
+  };
+}
+
+export function useFuelTransactions(filters?: FuelTransactionFilters) {
+  const isReady = useFleetReady();
+  return useQuery(
+    fuelTransactionsQueryOptions(fleetQueryKeys.fuelTransactionsList(filters), filters, isReady),
+  );
 }
 
 /**
@@ -616,18 +646,25 @@ export function useRefreshFuelTransactions() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (range?: { startDate?: string; endDate?: string }) => {
-      // Fetch with refresh=true to bypass cache; propagate any selected date
-      // range so the edge function narrows the Wialon report window.
-      return getFleetService().getFuelTransactions({
+    mutationFn: async (range?: {
+      startDate?: string;
+      endDate?: string;
+      assetCategory?: import('@/lib/fuelTypes').FuelAssetCategory;
+    }) => {
+      return fetchFuelTransactionsMeta({
         refresh: true,
         startDate: range?.startDate,
         endDate: range?.endDate,
+        assetCategory: range?.assetCategory,
       });
     },
     onSuccess: (data, variables) => {
       const filters = variables
-        ? { startDate: variables.startDate, endDate: variables.endDate }
+        ? {
+            startDate: variables.startDate,
+            endDate: variables.endDate,
+            assetCategory: variables.assetCategory,
+          }
         : undefined;
       queryClient.setQueryData(fleetQueryKeys.fuelTransactionsList(filters), data);
       queryClient.invalidateQueries({ queryKey: fleetQueryKeys.fuel() });

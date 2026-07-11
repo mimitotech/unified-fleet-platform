@@ -27,7 +27,7 @@ export function FuelKpiCards({ kpis, fuelTransactions = [], isLoading }: FuelKpi
 
   const suddenDropAlerts = useMemo((): SuddenDropAlert[] => {
     return fuelTransactions
-      .filter((t) => t.suddenFuelDrop > 0)
+      .filter((t) => t.section === 'theft' && t.suddenFuelDrop > 0)
       .map((t) => ({
         id: t.id,
         unitName: t.unitName,

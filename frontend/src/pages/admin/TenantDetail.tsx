@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -32,6 +33,7 @@ import { UserAccessEditor } from '@/components/admin/UserAccessEditor';
 import { PortalLinksCard } from '@/components/admin/PortalLinksCard';
 import { WialonUserImportCard } from '@/components/admin/WialonUserImportCard';
 import { defaultModulesForRole } from '@/lib/userAccess';
+import { FUEL_TABLE_COLUMN_DEFS } from '@/lib/fuelModuleConfig';
 
 type Tenant = Record<string, unknown>;
 type Usage = { vehicles_used?: number; users_used?: number };
@@ -59,6 +61,18 @@ export default function TenantDetail() {
   const { data: modules } = useQuery({
     queryKey: ['adminModules', id],
     queryFn: () => adminApi.getModules(id!),
+    enabled: isValidId,
+  });
+
+  const { data: reportCatalog } = useQuery({
+    queryKey: ['tenantWialonReportCatalog', id],
+    queryFn: () => adminApi.getTenantWialonReportCatalog(id!),
+    enabled: isValidId,
+  });
+
+  const { data: fuelModuleConfig } = useQuery({
+    queryKey: ['tenantFuelModuleConfig', id],
+    queryFn: () => adminApi.getFuelModuleConfig(id!),
     enabled: isValidId,
   });
 
@@ -140,6 +154,10 @@ export default function TenantDetail() {
 
   // API keys
   const [newKeyName, setNewKeyName] = useState('');
+  const [selectedFuelReports, setSelectedFuelReports] = useState<
+    Array<{ resourceId: number; templateId: number; templateName: string; module?: string; isGroupReport?: boolean }>
+  >([]);
+  const [visibleFuelColumns, setVisibleFuelColumns] = useState<string[]>([]);
 
   useEffect(() => {
     if (t) {
@@ -190,6 +208,16 @@ export default function TenantDetail() {
     const baseFromMeta = meta?.baseUrl as string | undefined;
     if (baseFromMeta) setWialonBaseUrl(baseFromMeta);
   }, [integrations]);
+
+  useEffect(() => {
+    if (!fuelModuleConfig) return;
+    const cfg = fuelModuleConfig as {
+      selectedReports?: Array<{ resourceId: number; templateId: number; templateName: string; module?: string; isGroupReport?: boolean }>;
+      visibleColumns?: string[];
+    };
+    setSelectedFuelReports(cfg.selectedReports ?? []);
+    setVisibleFuelColumns(cfg.visibleColumns ?? FUEL_TABLE_COLUMN_DEFS.map((c) => c.key));
+  }, [fuelModuleConfig]);
 
   const saveGeneral = useMutation({
     mutationFn: () => withToast(adminApi.updateTenant(id!, general), {
@@ -512,7 +540,41 @@ export default function TenantDetail() {
     },
   });
 
+  const saveFuelModuleConfig = useMutation({
+    mutationFn: () =>
+      withToast(
+        adminApi.saveFuelModuleConfig(id!, {
+          selectedReports: selectedFuelReports,
+          visibleColumns: visibleFuelColumns,
+        }),
+        {
+          loading: 'Saving Fuel module config...',
+          success: 'Fuel module config saved',
+        },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tenantFuelModuleConfig', id] });
+    },
+  });
+
   const backups = (backupsData as { backups: Array<Record<string, unknown>>; settings: Record<string, unknown> }) || { backups: [], settings: {} };
+  const fuelTemplates = ((reportCatalog as { templates?: Array<Record<string, unknown>> } | undefined)?.templates || [])
+    .filter((t) => String(t.module || '').toLowerCase() === 'fuel');
+
+  const toggleFuelReport = (report: { resourceId: number; templateId: number; templateName: string; module?: string; isGroupReport?: boolean }) => {
+    const key = `${report.resourceId}:${report.templateId}`;
+    setSelectedFuelReports((prev) => {
+      const exists = prev.some((p) => `${p.resourceId}:${p.templateId}` === key);
+      if (exists) return prev.filter((p) => `${p.resourceId}:${p.templateId}` !== key);
+      return [...prev, report];
+    });
+  };
+
+  const toggleFuelColumn = (key: string) => {
+    setVisibleFuelColumns((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+    );
+  };
 
   if (id === 'new') {
     return <Navigate to="/admin/tenants/new" replace />;
@@ -558,6 +620,7 @@ export default function TenantDetail() {
           <TabsTrigger value="integrations">Integrations</TabsTrigger>
           <TabsTrigger value="branding">Branding</TabsTrigger>
           <TabsTrigger value="modules">Modules</TabsTrigger>
+          <TabsTrigger value="fuel-module">Fuel Module</TabsTrigger>
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="migration">Migration</TabsTrigger>
           <TabsTrigger value="backup">Backup</TabsTrigger>
@@ -648,6 +711,84 @@ export default function TenantDetail() {
             </CardContent>
           </Card>
           <LoadingButton loading={saveGeneral.isPending} onClick={() => saveGeneral.mutate()}>Save Changes</LoadingButton>
+        </TabsContent>
+
+        {/* FUEL MODULE */}
+        <TabsContent value="fuel-module" className="mt-4 space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Fuel reports visibility</CardTitle>
+              <CardDescription>
+                Select which Wialon fuel reports this client sees in Fuel module.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {!fuelTemplates.length && (
+                <p className="text-sm text-muted-foreground">
+                  No fuel reports found in this tenant Wialon catalog yet.
+                </p>
+              )}
+              {fuelTemplates.map((t) => {
+                const resourceId = Number(t.resourceId);
+                const templateId = Number(t.templateId);
+                const checked = selectedFuelReports.some(
+                  (r) => r.resourceId === resourceId && r.templateId === templateId,
+                );
+                return (
+                  <label
+                    key={`${resourceId}:${templateId}`}
+                    className="flex items-start gap-3 rounded-md border border-border/60 p-2.5 cursor-pointer"
+                  >
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={() =>
+                        toggleFuelReport({
+                          resourceId,
+                          templateId,
+                          templateName: String(t.templateName || ''),
+                          module: String(t.module || 'fuel'),
+                          isGroupReport: Boolean(t.isGroupReport),
+                        })
+                      }
+                    />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{String(t.templateName || '')}</p>
+                      <p className="text-xs text-muted-foreground">
+                        Resource: {String(t.resourceName || t.resourceId)} · {Boolean(t.isGroupReport) ? 'Group' : 'Unit'}
+                      </p>
+                    </div>
+                  </label>
+                );
+              })}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Fuel usage table columns</CardTitle>
+              <CardDescription>
+                Choose the columns this client needs. Hidden columns are removed from Fuel Usage table.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+              {FUEL_TABLE_COLUMN_DEFS.map((c) => (
+                <label
+                  key={c.key}
+                  className="flex items-center gap-2 rounded-md border border-border/60 px-2.5 py-2 cursor-pointer"
+                >
+                  <Checkbox
+                    checked={visibleFuelColumns.includes(c.key)}
+                    onCheckedChange={() => toggleFuelColumn(c.key)}
+                  />
+                  <span className="text-sm">{c.label}</span>
+                </label>
+              ))}
+            </CardContent>
+          </Card>
+
+          <LoadingButton loading={saveFuelModuleConfig.isPending} onClick={() => saveFuelModuleConfig.mutate()}>
+            Save Fuel Module Configuration
+          </LoadingButton>
         </TabsContent>
 
         {/* INTEGRATIONS */}

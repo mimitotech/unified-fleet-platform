@@ -63,7 +63,7 @@ export function useLiveReportData(
     staleTime: 5_000,
   });
 
-  const eventsQ = useMonitoringEvents(100);
+  const eventsQ = useMonitoringEvents(100, enabled && reportId === 'events');
 
   const data = useMemo((): LiveReportTableData => {
     if (!reportId || !def) return { rows: [] };

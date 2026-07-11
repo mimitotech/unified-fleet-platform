@@ -130,7 +130,7 @@ export type FuelAnalyticsResult = {
   ledgerPreview: FuelLedgerEntry[];
   transactionCount: number;
   fetchedAt: string;
-  source: 'cache' | 'wialon' | 'partial' | 'none';
+  source: 'cache' | 'wialon' | 'partial' | 'none' | 'warming';
   isWarming: boolean;
   warmedMonths: string[];
 };

@@ -15,6 +15,8 @@ import { WialonHierarchyService } from '../services/WialonHierarchyService.js';
 import { isWialonTenantConnected } from '../services/wialonConnectionStatus.js';
 import { loadTenantWialonCreds, getTenantWialonRow } from '../services/tenantWialonCredentials.js';
 import { WialonUserProvisionService } from '../services/WialonUserProvisionService.js';
+import { WialonReportsLiveService } from '../services/WialonReportsLiveService.js';
+import { TenantFuelModuleConfigService } from '../services/TenantFuelModuleConfigService.js';
 import {
   assertCanManageClientUser,
   filterClientUserIdsForAdmin,
@@ -815,6 +817,44 @@ router.get('/tenants/:id/modules', async (req, res) => {
     [req.params.id]
   );
   return success(res, rows);
+});
+
+router.get('/tenants/:id/wialon/reports/catalog', async (req, res) => {
+  try {
+    const data = await WialonReportsLiveService.getTemplateCatalog(String(req.params.id));
+    return success(res, data);
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
+
+router.get('/tenants/:id/fuel-module-config', async (req, res) => {
+  try {
+    const config = await TenantFuelModuleConfigService.getConfig(String(req.params.id));
+    return success(res, config);
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
+
+router.put('/tenants/:id/fuel-module-config', async (req: AuthRequest, res) => {
+  try {
+    const config = await TenantFuelModuleConfigService.saveConfig(String(req.params.id), {
+      selectedReports: req.body?.selectedReports,
+      visibleColumns: req.body?.visibleColumns,
+    });
+    await AuditService.log({
+      tenantId: String(req.params.id),
+      userId: req.user?.id,
+      userEmail: req.user?.email,
+      action: 'fuel_module_config.update',
+      resourceType: 'tenant_fuel_module_config',
+      resourceId: String(req.params.id),
+    });
+    return success(res, config);
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
 });
 
 router.put('/tenants/:id/modules', async (req: AuthRequest, res) => {

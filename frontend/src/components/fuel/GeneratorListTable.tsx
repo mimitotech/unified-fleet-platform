@@ -100,7 +100,7 @@ export function GeneratorListTable({
   const dailyByUnit = useMemo<Map<string, GeneratorDailyFuel[]>>(() => {
     if (!hasRange) return new Map();
     return buildGeneratorDailyFuelByUnit({
-      transactions: reportsQuery.fuelQuery.data ?? [],
+      transactions: reportsQuery.fuelQuery.data?.transactions ?? [],
       engineHours: reportsQuery.engineHoursQuery.data ?? [],
       fromDate,
       toDate,

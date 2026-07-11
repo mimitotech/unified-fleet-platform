@@ -4,11 +4,12 @@ import { LIVE_POLL, pollWhenVisible } from '@/lib/liveRefresh';
 import { safeArray } from '@/lib/safeArray';
 import { notify } from '@/lib/notify';
 
-export function useAlerts(limit = 50) {
+export function useAlerts(limit = 50, enabled = true) {
   return useQuery({
     queryKey: ['alerts', getTenantSlug() || 'default'],
     queryFn: () => clientApi.getAlerts(100),
-    refetchInterval: pollWhenVisible(LIVE_POLL.alerts),
+    enabled,
+    refetchInterval: enabled ? pollWhenVisible(LIVE_POLL.alerts) : false,
     staleTime: 10_000,
     select: (data) => safeArray(data).slice(0, limit),
   });

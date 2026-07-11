@@ -10,9 +10,9 @@ import type { EnrichedGenerator, EnrichedMachinery, Generator, Machinery } from 
 
 export type StationaryFuelType = 'generator' | 'machinery';
 
-export function useStationaryAssets(type: StationaryFuelType = 'generator') {
-  const generators = useGenerators({ enabled: type === 'generator' });
-  const machinery = useMachinery({ enabled: type === 'machinery' });
+export function useStationaryAssets(type: StationaryFuelType = 'generator', enabled = true) {
+  const generators = useGenerators({ enabled: enabled && type === 'generator' });
+  const machinery = useMachinery({ enabled: enabled && type === 'machinery' });
   return type === 'generator' ? generators : machinery;
 }
 
@@ -28,9 +28,10 @@ export function useStationaryWithReports(
 export function useStationaryFuelTransactions(
   type: StationaryFuelType = 'generator',
   filters?: { startDate?: string; endDate?: string },
+  enabled = true,
 ) {
-  const gen = useGeneratorFuelTransactions(filters, { enabled: type === 'generator' });
-  const mch = useMachineryFuelTransactions(filters, { enabled: type === 'machinery' });
+  const gen = useGeneratorFuelTransactions(filters, { enabled: enabled && type === 'generator' });
+  const mch = useMachineryFuelTransactions(filters, { enabled: enabled && type === 'machinery' });
   return type === 'generator' ? gen : mch;
 }
 

@@ -251,6 +251,9 @@ export interface IFleetService {
 
   // --- Fuel Transactions ---
   getFuelTransactions(filters?: FuelTransactionFilters): Promise<FuelTransaction[]>;
+  getFuelTransactionsMeta?(
+    filters?: FuelTransactionFilters,
+  ): Promise<{ transactions: FuelTransaction[]; warming: boolean; needsRefresh?: boolean }>;
   getFuelKpis(): Promise<FuelKpiData>;
   getFuelByVehicle(): Promise<FuelByVehicle[]>;
   getMonthlyFuelTrend(): Promise<MonthlyFuelTrend[]>;

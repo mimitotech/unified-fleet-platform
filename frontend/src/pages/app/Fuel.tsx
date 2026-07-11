@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AppLayout } from '@/components/app/AppLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -7,7 +7,6 @@ import { VehiclesFuelTab, GeneratorsFuelTab, MachineryFuelTab } from '@/componen
 import { WialonContextBanner } from '@/components/app/WialonContextBanner';
 import { useWialonContext } from '@/hooks/useWialon';
 import { useFuelFleetSummary } from '@/services/fleet';
-import { clientApi } from '@/lib/api';
 import { getDefaultDateRange } from '@/components/fuel/FuelTransactionsTable/utils';
 
 type FuelTab = 'vehicles' | 'generators' | 'machinery';
@@ -18,6 +17,20 @@ export default function Fuel() {
   const { connected } = useWialonContext();
   const [searchParams, setSearchParams] = useSearchParams();
   const { data: fleetSummary } = useFuelFleetSummary();
+  const { fromDate: defaultFromDate, toDate: defaultToDate, todayStr } = getDefaultDateRange();
+  const [fromDate, setFromDate] = useState(defaultFromDate);
+  const [toDate, setToDate] = useState(defaultToDate);
+
+  const fuelRangeProps = useMemo(
+    () => ({
+      fromDate,
+      toDate,
+      todayStr,
+      onFromDateChange: setFromDate,
+      onToDateChange: setToDate,
+    }),
+    [fromDate, toDate, todayStr],
+  );
 
   const availableTabs = useMemo<FuelTab[]>(() => {
     if (!fleetSummary) return ALL_TABS;
@@ -52,19 +65,6 @@ export default function Fuel() {
   );
 
   useEffect(() => {
-    if (!connected) return;
-    void clientApi.warmWialonFuelReports().catch(() => undefined);
-  }, [connected]);
-
-  useEffect(() => {
-    if (!connected) return;
-    if (activeTab === 'generators' || activeTab === 'machinery') {
-      const { fromDate, toDate } = getDefaultDateRange();
-      void clientApi.getWialonGeneratorEngineHours(fromDate, toDate).catch(() => undefined);
-    }
-  }, [connected, activeTab]);
-
-  useEffect(() => {
     if (!availableTabs.includes(activeTab)) {
       handleTabChange(availableTabs[0] ?? 'vehicles');
     }
@@ -72,14 +72,14 @@ export default function Fuel() {
 
   if (!connected) {
     return (
-      <AppLayout title="Fuel Management" subtitle="Track fuel consumption, efficiency, and costs">
+      <AppLayout title="Fuel" subtitle="Live sensors and Wialon fuel reports">
         <WialonContextBanner />
       </AppLayout>
     );
   }
 
   return (
-    <AppLayout title="Fuel Management" subtitle="Track fuel consumption, efficiency, and costs">
+    <AppLayout title="Fuel" subtitle="Live sensors and Wialon fuel reports">
       <div className="fuel-page space-y-4 min-w-0 max-w-full">
         <WialonContextBanner compact />
         <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-3">
@@ -115,17 +115,17 @@ export default function Fuel() {
 
           {availableTabs.includes('vehicles') && (
             <TabsContent value="vehicles" className="mt-0 min-w-0 max-w-full focus-visible:outline-none">
-              <VehiclesFuelTab />
+              <VehiclesFuelTab {...fuelRangeProps} />
             </TabsContent>
           )}
           {availableTabs.includes('generators') && (
             <TabsContent value="generators" className="mt-0 min-w-0 max-w-full focus-visible:outline-none">
-              <GeneratorsFuelTab />
+              <GeneratorsFuelTab {...fuelRangeProps} />
             </TabsContent>
           )}
           {availableTabs.includes('machinery') && (
             <TabsContent value="machinery" className="mt-0 min-w-0 max-w-full focus-visible:outline-none">
-              <MachineryFuelTab />
+              <MachineryFuelTab {...fuelRangeProps} />
             </TabsContent>
           )}
         </Tabs>

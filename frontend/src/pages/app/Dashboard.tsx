@@ -4,14 +4,14 @@ import { FleetMapPanel } from '@/components/map/FleetMapPanel';
 import { useMapSessionKey } from '@/hooks/useMapSessionKey';
 import { AnimatedPage, PageLoader } from '@/components/shared/PageLoader';
 import { QueryErrorBanner } from '@/components/shared/QueryErrorBanner';
+import { useFleetAssetProfile } from '@/hooks/useFleetAssetProfile';
 import { useDashboardKpis } from '@/hooks/useAssets';
 import { useFleetUnits } from '@/hooks/useFleetUnits';
 import { useAlerts } from '@/hooks/useAlerts';
 import { UnitTypeIcon } from '@/components/fleet/UnitTypeIcon';
 import { StatusBadge } from '@/components/shared/StatusBadge';
-import {
-  Activity, Truck, MapPin, AlertTriangle, Users, Route, Fuel, Wrench,
-  Video, BarChart3,
+import { Activity, Truck, MapPin, AlertTriangle, Users, Route, Fuel, Wrench,
+  Video, BarChart3, Zap,
 } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -23,6 +23,7 @@ import { safeArray } from '@/lib/safeArray';
 
 export default function Dashboard() {
   const mapSessionKey = useMapSessionKey();
+  const assetProfile = useFleetAssetProfile();
   const { data: kpis, isLoading: kpisLoading, isError, refetch } = useDashboardKpis();
   const { units, live, statuses, isLoading: fleetLoading } = useFleetUnits();
   const { data: alerts } = useAlerts(8);
@@ -33,14 +34,14 @@ export default function Dashboard() {
 
   if (showLoader) {
     return (
-      <AppLayout title="Dashboard" subtitle="Fleet operations overview">
+      <AppLayout title="Dashboard" subtitle={assetProfile.subtitle}>
         <PageLoader />
       </AppLayout>
     );
   }
 
   return (
-    <AppLayout title="Dashboard" subtitle="Fleet operations overview">
+    <AppLayout title="Dashboard" subtitle={assetProfile.subtitle}>
       {isError && (
         <QueryErrorBanner message="Could not load dashboard data." onRetry={() => refetch()} className="mb-4" />
       )}
@@ -52,12 +53,27 @@ export default function Dashboard() {
           </p>
         )}
         <div className="stat-strip">
-          <MetricCard title="Vehicles" value={kpis?.totalVehicles ?? 0} icon={Truck} variant="primary" size="xxs" />
+          <MetricCard
+            title={assetProfile.primaryLabel}
+            value={assetProfile.total}
+            icon={assetProfile.isGeneratorOnly ? Zap : Truck}
+            variant="primary"
+            size="xxs"
+          />
           <MetricCard title="Active" value={kpis?.activeVehicles ?? 0} icon={Activity} variant="success" size="xxs" />
-          <MetricCard title="Moving" value={kpis?.moving ?? 0} icon={MapPin} variant="info" size="xxs" />
+          {!assetProfile.isGeneratorOnly && (
+            <MetricCard title="Moving" value={kpis?.moving ?? 0} icon={MapPin} variant="info" size="xxs" />
+          )}
+          {assetProfile.isGeneratorOnly && assetProfile.generators > 0 && (
+            <MetricCard title="Onsite" value={assetProfile.generators} icon={Zap} variant="info" size="xxs" />
+          )}
           <MetricCard title="Alerts" value={kpis?.criticalAlerts ?? 0} icon={AlertTriangle} variant="destructive" size="xxs" />
-          <MetricCard title="Drivers" value={kpis?.activeDrivers ?? 0} icon={Users} variant="default" size="xxs" />
-          <MetricCard title="Routes" value={kpis?.activeRoutes ?? 0} icon={Route} variant="warning" size="xxs" />
+          {!assetProfile.isGeneratorOnly && (
+            <>
+              <MetricCard title="Drivers" value={kpis?.activeDrivers ?? 0} icon={Users} variant="default" size="xxs" />
+              <MetricCard title="Routes" value={kpis?.activeRoutes ?? 0} icon={Route} variant="warning" size="xxs" />
+            </>
+          )}
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 min-h-[65vh]">
@@ -77,7 +93,7 @@ export default function Dashboard() {
             <div className="fleet-card flex-1 overflow-auto max-h-[32vh] xl:max-h-none">
               <div className="flex items-center justify-between mb-3 sticky top-0 bg-card/95 backdrop-blur py-1 z-10">
                 <h3 className="font-semibold text-sm">
-                  Fleet ({units?.length ?? 0})
+                  {assetProfile.primaryLabel} ({units?.length ?? 0})
                   {live && <span className="ml-1.5 text-status-moving text-xs font-normal">● Live</span>}
                 </h3>
                 <Link to="/app/monitoring?view=list" className="text-xs text-primary hover:underline">Full list</Link>

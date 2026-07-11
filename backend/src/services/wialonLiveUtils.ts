@@ -162,6 +162,90 @@ export async function searchUnitsForAccount(
   return [];
 }
 
+function billingScopedSpecs(
+  itemsType: 'avl_unit_group' | 'avl_resource',
+  accountId: string
+): Array<Record<string, unknown>> {
+  return [
+    {
+      itemsType,
+      propName: 'sys_billing_account_guid',
+      propValueMask: accountId,
+      sortType: 'sys_name',
+      propType: 'property',
+    },
+    {
+      itemsType,
+      propName: 'sys_billing_account_guid',
+      propValueMask: accountId,
+      sortType: 'sys_name',
+      propType: 'accounttree',
+    },
+    {
+      itemsType,
+      propName: 'sys_name',
+      propValueMask: '*',
+      sortType: 'sys_name',
+    },
+  ];
+}
+
+function filterByBillingAccount(items: WialonSearchItem[], accountId: number, wildcard: boolean) {
+  if (!wildcard) return items;
+  return items.filter((item) => Number(item.bact) === accountId);
+}
+
+/** Unit groups with billing-account fallbacks (matches unit search behaviour). */
+export async function searchGroupsForAccount(
+  client: WialonClient,
+  accountId: number,
+  limit = 200
+): Promise<WialonSearchItem[]> {
+  const specs = billingScopedSpecs('avl_unit_group', String(accountId));
+  let lastErr: Error | undefined;
+
+  for (const spec of specs) {
+    try {
+      const items = await searchAll(client, spec, 1);
+      const wildcard = spec.propValueMask === '*';
+      const filtered = filterByBillingAccount(items, accountId, wildcard);
+      if (filtered.length) return filtered.slice(0, limit);
+      if (items.length && !wildcard) return items.slice(0, limit);
+    } catch (err) {
+      lastErr = err as Error;
+    }
+  }
+
+  if (lastErr) throw lastErr;
+  return [];
+}
+
+/** avl_resource items (report templates) with billing-account fallbacks. */
+export async function searchResourcesForAccount(
+  client: WialonClient,
+  accountId: number,
+  flags = 8193,
+  limit = 200
+): Promise<WialonSearchItem[]> {
+  const specs = billingScopedSpecs('avl_resource', String(accountId));
+  let lastErr: Error | undefined;
+
+  for (const spec of specs) {
+    try {
+      const items = await searchAll(client, spec, flags);
+      const wildcard = spec.propValueMask === '*';
+      const filtered = filterByBillingAccount(items, accountId, wildcard);
+      if (filtered.length) return filtered.slice(0, limit);
+      if (items.length && !wildcard) return items.slice(0, limit);
+    } catch (err) {
+      lastErr = err as Error;
+    }
+  }
+
+  if (lastErr) throw lastErr;
+  return [];
+}
+
 /** Minimal flags search — fast path for surveillance video unit discovery. */
 export async function searchUnitsBasicForAccount(
   client: WialonClient,

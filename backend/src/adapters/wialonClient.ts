@@ -1,4 +1,5 @@
 import { formatWialonError } from './wialonUtils.js';
+import { withWialonLoginGate } from '../services/wialonLoginGate.js';
 
 export interface WialonSessionUser {
   id: number;
@@ -63,32 +64,37 @@ export class WialonClient {
 
   async connect(): Promise<WialonLoginResponse> {
     if (!this.token) throw new Error('Wialon token not configured');
+    if (this.sessionId) return this.loginMeta!;
 
-    const loginParams: Record<string, unknown> = { token: this.token };
-    if (this.operateAs !== undefined && this.operateAs !== null && String(this.operateAs).trim() !== '') {
-      const as = this.operateAs;
-      loginParams.operateAs = typeof as === 'number' ? as : String(as).trim();
-    }
+    return withWialonLoginGate(async () => {
+      if (this.sessionId && this.loginMeta) return this.loginMeta;
 
-    const params = new URLSearchParams({
-      svc: 'token/login',
-      params: JSON.stringify(loginParams),
+      const loginParams: Record<string, unknown> = { token: this.token };
+      if (this.operateAs !== undefined && this.operateAs !== null && String(this.operateAs).trim() !== '') {
+        const as = this.operateAs;
+        loginParams.operateAs = typeof as === 'number' ? as : String(as).trim();
+      }
+
+      const params = new URLSearchParams({
+        svc: 'token/login',
+        params: JSON.stringify(loginParams),
+      });
+      const res = await fetch(`${this.baseUrl}?${params}`);
+      if (!res.ok) {
+        throw new Error(`Wialon login HTTP ${res.status} — check WIALON_API_URL (${this.baseUrl})`);
+      }
+      const data = (await res.json()) as WialonLoginResponse & { error?: number; reason?: string };
+      if (data.error) {
+        throw new Error(`Wialon login failed: ${formatWialonError(data.error, data.reason)}`);
+      }
+      if (!data.eid) {
+        throw new Error('Wialon login failed: no session id returned');
+      }
+      this.sessionId = data.eid;
+      this.sessionUser = data.user || null;
+      this.loginMeta = data;
+      return data;
     });
-    const res = await fetch(`${this.baseUrl}?${params}`);
-    if (!res.ok) {
-      throw new Error(`Wialon login HTTP ${res.status} — check WIALON_API_URL (${this.baseUrl})`);
-    }
-    const data = (await res.json()) as WialonLoginResponse & { error?: number; reason?: string };
-    if (data.error) {
-      throw new Error(`Wialon login failed: ${formatWialonError(data.error, data.reason)}`);
-    }
-    if (!data.eid) {
-      throw new Error('Wialon login failed: no session id returned');
-    }
-    this.sessionId = data.eid;
-    this.sessionUser = data.user || null;
-    this.loginMeta = data;
-    return data;
   }
 
   async request<T>(svc: string, params: Record<string, unknown>): Promise<T> {

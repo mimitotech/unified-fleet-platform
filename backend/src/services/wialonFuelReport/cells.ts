@@ -35,6 +35,17 @@ export function getCellTimestamp(cells: WialonCell[], idx: number): number {
   return 0;
 }
 
+/** Time column as display string — handles Wialon text and Unix timestamp cells. */
+export function getCellTimeString(cells: WialonCell[], idx: number): string {
+  const text = getCellValue(cells, idx).trim();
+  if (text) return text;
+  const ts = getCellTimestamp(cells, idx);
+  if (ts > 0) {
+    return new Date(ts * 1000).toISOString().replace('T', ' ').slice(0, 19);
+  }
+  return '';
+}
+
 export function getCellCoordinates(cells: WialonCell[], idx: number): { lat: number; lng: number } | null {
   if (idx < 0 || idx >= cells.length) return null;
   const cell = cells[idx];

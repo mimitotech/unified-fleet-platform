@@ -229,6 +229,11 @@ export function applyBalanceConsumption(
   const supplements: FuelTransaction[] = [];
 
   for (const [unitId, unitRows] of byUnit) {
+    const hasSummary = unitRows.some(
+      (r) => r.section === 'consumption' && r.sensor === 'wialon_group_summary' && effectiveConsumed(r) > 0
+    );
+    if (hasSummary) continue;
+
     const consumedFromReports = unitRows
       .filter((r) => r.section === 'consumption')
       .reduce((s, r) => s + effectiveConsumed(r), 0);

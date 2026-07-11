@@ -35,10 +35,11 @@ export function FuelTrendChart({ transactions, isLoading }: FuelTrendChartProps)
   const chartData = useMemo(() => {
     if (!transactions.length) return [];
 
-    // Filter for filling and consumption transactions
-    const relevantTransactions = transactions.filter(
-      t => t.section === 'filling' || t.section === 'consumption'
-    );
+    const relevantTransactions = transactions.filter((t) => {
+      if (t.section === 'filling' || t.section === 'consumption') return true;
+      if (t.sensor === 'wialon_group_summary' && (t.fuelUsed > 0 || t.filled > 0)) return true;
+      return false;
+    });
 
     if (!relevantTransactions.length) return [];
 
@@ -56,6 +57,12 @@ export function FuelTrendChart({ transactions, isLoading }: FuelTrendChartProps)
       // Add fuel filled (from filling section)
       if (tx.section === 'filling' && tx.filled > 0) {
         weeklyData[weekKey].fuelFilled += tx.filled;
+      }
+
+      if (tx.sensor === 'wialon_group_summary') {
+        if (tx.filled > 0) weeklyData[weekKey].fuelFilled += tx.filled;
+        if (tx.fuelUsed > 0) weeklyData[weekKey].fuelConsumed += tx.fuelUsed;
+        return;
       }
 
       // Add fuel consumed and mileage (from consumption section)

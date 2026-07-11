@@ -8,18 +8,82 @@ import {
   findFuelReportTemplates,
   invalidateFuelReportCaches,
   listAllUnits,
+  type WialonReportScope,
 } from './wialonFuelReport/templates.js';
+import { scopeFromCredentials, WialonReportResolverService } from './WialonReportResolverService.js';
+import type { FuelAssetCategory } from './wialonAssetCategory.js';
+import { isWialonGenerator, isWialonMachinery, isWialonVehicle } from './wialonAssetCategory.js';
+import type { FuelGroupMembership } from './wialonFuelAssetGroups.js';
+import { loadFuelGroupMembership } from './wialonFuelAssetGroups.js';
 import type { FuelTransaction } from './wialonFuelReport/types.js';
-import { effectiveConsumed, effectiveFilled, effectiveTheft } from './wialonFuelReport/metrics.js';
+import { WialonFuelFleetService } from './WialonFuelFleetService.js';
+import { applyBalanceConsumption } from './wialonFuelLedger.js';
+import { missingConsumption, effectiveConsumed } from './wialonFuelReport/metrics.js';
+import { supplementTransactionsWithUnitReports } from './wialonFuelUnitReportSupplement.js';
+import { dedupeFuelTransactions } from './wialonFuelReport/dedupe.js';
+import { patchTransactionUnitIds, buildUnitNameIndex } from './wialonFuelReport/unitNames.js';
+import {
+  filterTransactionsByDateRange,
+  isCompleteMonthSpan,
+} from './wialonFuelReport/rangeFilter.js';
+import { computeFuelKpis, monthlyFuelTrend, splitDateRangeByDays } from './fuelTransactionAggregates.js';
+import { CacheService } from './CacheService.js';
 
-const CACHE_TTL_MS = 10 * 60 * 1000;
-const txCache = new Map<string, { rows: FuelTransaction[]; expires: number }>();
-
-function cacheKey(tenantId: string, fromTs: number, toTs: number, unitId?: number) {
-  return `${tenantId}:${fromTs}:${toTs}:${unitId ?? 'all'}`;
+function computeKpis(rows: FuelTransaction[], fromDate?: string, toDate?: string) {
+  return computeFuelKpis(rows, fromDate, toDate);
 }
 
-function parseDateRange(fromParam?: string, toParam?: string, days = 30) {
+function monthlyTrend(rows: FuelTransaction[]) {
+  return monthlyFuelTrend(rows);
+}
+
+function splitRangeByDays(fromDate: string, toDate: string, chunkDays: number) {
+  return splitDateRangeByDays(fromDate, toDate, chunkDays);
+}
+
+function unitHasConsumption(rows: FuelTransaction[], unitId: number): boolean {
+  return rows.some((r) => r.unitId === unitId && r.section === 'consumption' && effectiveConsumed(r) > 0);
+}
+
+const rangeCacheSvc = new CacheService();
+const RANGE_CACHE_VERSION = 'v7';
+const CACHE_TTL_MS = 30 * 60 * 1000;
+const RANGE_REDIS_TTL_SEC = 86400;
+
+const txCache = new Map<string, { rows: FuelTransaction[]; expires: number; fetchedAt: number }>();
+const exactRangeInflight = new Map<string, Promise<FuelTransaction[]>>();
+
+function cacheKey(
+  tenantId: string,
+  fromTs: number,
+  toTs: number,
+  unitId?: number,
+  assetCategory?: FuelAssetCategory
+) {
+  return `${tenantId}:${fromTs}:${toTs}:${unitId ?? 'all'}:${assetCategory ?? 'all'}`;
+}
+
+function rangeRedisKey(
+  tenantId: string,
+  fromTs: number,
+  toTs: number,
+  unitId?: number,
+  assetCategory?: FuelAssetCategory
+) {
+  return `fuel:range:${RANGE_CACHE_VERSION}:${tenantId}:${fromTs}:${toTs}:${unitId ?? 'all'}:${assetCategory ?? 'all'}`;
+}
+
+function exactRangeInflightKey(
+  tenantId: string,
+  fromDate: string,
+  toDate: string,
+  unitId?: number,
+  assetCategory?: FuelAssetCategory
+) {
+  return `${tenantId}:${fromDate}:${toDate}:${unitId ?? 'all'}:${assetCategory ?? 'all'}`;
+}
+
+function parseDateRange(fromParam?: string, toParam?: string, days = 1) {
   const toDate = toParam ? new Date(toParam) : new Date();
   const fromDate = fromParam ? new Date(fromParam) : new Date(toDate.getTime() - days * 86400000);
   if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
@@ -30,46 +94,15 @@ function parseDateRange(fromParam?: string, toParam?: string, days = 30) {
   return { fromTs: Math.floor(fromDate.getTime() / 1000), toTs: Math.floor(toDate.getTime() / 1000) };
 }
 
-function computeKpis(rows: FuelTransaction[]) {
-  const consumption = rows.filter((r) => r.section === 'consumption');
-  const filling = rows.filter((r) => r.section === 'filling');
-  const theft = rows.filter((r) => r.section === 'theft');
-  const totalFilled = filling.reduce((a, r) => a + effectiveFilled(r), 0);
-  const totalConsumed = consumption.reduce((a, r) => a + effectiveConsumed(r), 0);
-  const totalMileage = consumption.filter((r) => r.tank === 'main').reduce((a, r) => a + (r.mileage || 0), 0);
-  const theftEvents = theft.length;
-  const avgConsumption = totalMileage > 0 ? Math.round((totalConsumed / totalMileage) * 1000) / 10 : 0;
-  return {
-    totalFilled: Math.round(totalFilled * 10) / 10,
-    totalConsumed: Math.round(totalConsumed * 10) / 10,
-    totalMileage: Math.round(totalMileage * 10) / 10,
-    avgConsumption,
-    theftEvents,
-    vehiclesTracked: new Set(rows.map((r) => r.unitId).filter(Boolean)).size,
-    consumptionCount: consumption.length,
-    fillingCount: filling.length,
-    theftCount: theft.length,
-  };
-}
-
-function monthlyTrend(rows: FuelTransaction[]) {
-  const byMonth = new Map<string, { filled: number; consumed: number }>();
-  for (const r of rows) {
-    if (!r.timestamp) continue;
-    const month = new Date(r.timestamp * 1000).toISOString().slice(0, 7);
-    const row = byMonth.get(month) ?? { filled: 0, consumed: 0 };
-    if (r.section === 'filling') row.filled += effectiveFilled(r);
-    if (r.section === 'consumption') row.consumed += effectiveConsumed(r);
-    if (r.section === 'theft') row.consumed += effectiveTheft(r);
-    byMonth.set(month, row);
-  }
-  return [...byMonth.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([month, v]) => ({ month, filled: Math.round(v.filled * 10) / 10, consumed: Math.round(v.consumed * 10) / 10 }));
-}
-
 function dateFromTs(ts: number) {
   return new Date(ts * 1000).toISOString().slice(0, 10);
+}
+
+function diffDaysInclusive(fromDate: string, toDate: string): number {
+  const from = new Date(`${fromDate}T00:00:00Z`).getTime();
+  const to = new Date(`${toDate}T00:00:00Z`).getTime();
+  if (!Number.isFinite(from) || !Number.isFinite(to) || to < from) return 1;
+  return Math.floor((to - from) / 86400000) + 1;
 }
 
 async function mapWithConcurrency<T, R>(
@@ -87,29 +120,98 @@ async function mapWithConcurrency<T, R>(
   return out;
 }
 
+function buildTransactionsResponse(
+  transactions: FuelTransaction[],
+  fromDate: string,
+  toDate: string,
+  fromTs: number,
+  toTs: number,
+  source: 'cache' | 'wialon' | 'warming',
+  warming: boolean,
+  needsRefresh: boolean
+) {
+  return {
+    transactions,
+    kpis: computeKpis(transactions, fromDate, toDate),
+    trend: monthlyTrend(transactions),
+    fromTs,
+    toTs,
+    source,
+    needsRefresh,
+    warming,
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
+function unitsForAssetCategory(
+  allUnits: Array<{ id: number; nm: string }>,
+  assetCategory?: FuelAssetCategory,
+  membership?: FuelGroupMembership,
+): Array<{ id: number; nm: string }> {
+  if (!assetCategory) return allUnits;
+  return allUnits.filter((u) => {
+    const input = { name: u.nm, unitId: u.id, groupMembership: membership };
+    if (assetCategory === 'generator') return isWialonGenerator(input);
+    if (assetCategory === 'machinery') return isWialonMachinery(input);
+    return isWialonVehicle(input);
+  });
+}
+
+function isStationaryCategory(assetCategory?: FuelAssetCategory): boolean {
+  return assetCategory === 'generator' || assetCategory === 'machinery';
+}
+
 export class WialonFuelReportService {
   /** Direct Wialon report fetch — used by month cache warming only. */
   static async fetchFromWialon(
     tenantId: string,
-    opts: { from?: string; to?: string; unitId?: number; days?: number }
+    opts: {
+      from?: string;
+      to?: string;
+      unitId?: number;
+      days?: number;
+      refresh?: boolean;
+      assetCategory?: FuelAssetCategory;
+    }
   ): Promise<FuelTransaction[]> {
     const { fromTs, toTs } = parseDateRange(opts.from, opts.to, opts.days);
+    const spanDays = Math.max(1, Math.ceil((toTs - fromTs + 1) / 86400));
+    const groupConcurrency = spanDays > 60 ? 3 : spanDays > 21 ? 4 : 6;
+    const unitConcurrency = spanDays > 60 ? 4 : spanDays > 21 ? 6 : 8;
+    const stationaryUnitConcurrency = 2;
     const creds = await loadTenantWialonCreds(tenantId);
+    const scope: WialonReportScope = scopeFromCredentials(tenantId, creds);
     const rows = await withWialonClient(creds, async (client: WialonClient) => {
-      const { groupTemplate, unitTemplate } = await findFuelReportTemplates(client);
+      const { groupTemplate, unitTemplate, expected } = await findFuelReportTemplates(client, scope, {
+        assetCategory: opts.assetCategory,
+      });
       if (!groupTemplate && !unitTemplate) {
+        const catalog = await WialonReportResolverService.listAllTemplates(client, scope, 40);
+        const fuelNames = catalog
+          .filter((t) => /fuel/i.test(t.templateName))
+          .map((t) => t.templateName);
         throw new Error(
-          'No Wialon fuel report templates found. Configure "Fuel Report(Group)" and/or "Fuel Report(Unit)" in Wialon resources.'
+          fuelNames.length
+            ? `No matching Wialon fuel report templates for this account. Expected "${expected.group}" and/or "${expected.unit}". Found: ${fuelNames.join(', ')}.`
+            : `No Wialon fuel report templates found. Create "${expected.group}" and "${expected.unit}" on this billing account in Wialon.`
         );
       }
 
-      const allUnits = await listAllUnits(client);
-      const unitNameToId = new Map(allUnits.map((u) => [u.nm, u.id]));
-      let transactions: FuelTransaction[] = [];
+      console.info(
+        `[FuelReport] tenant=${tenantId} category=${opts.assetCategory ?? 'all'} group=${groupTemplate?.templateName ?? '—'} unit=${unitTemplate?.templateName ?? '—'}`,
+      );
 
+      const allUnits = await listAllUnits(client, scope);
+      const membership = await loadFuelGroupMembership(client, tenantId);
+      const unitNameToId = new Map(allUnits.map((u) => [u.nm, u.id]));
+      const unitIndex = buildUnitNameIndex(allUnits);
+      let transactions: FuelTransaction[] = [];
+      const stationary = isStationaryCategory(opts.assetCategory);
+
+      // Group reports carry per-unit period summaries for gensets; always run when available.
       if (groupTemplate) {
-        const groups = await findFleetGroups(client);
-        const groupTxBatches = await mapWithConcurrency(groups, 2, async (group) => {
+        const groups = await findFleetGroups(client, scope, { assetCategory: opts.assetCategory });
+        const groupTxBatches = await mapWithConcurrency(groups, groupConcurrency, async (group) => {
           try {
             return await processGroupFuelData(client, group, groupTemplate, fromTs, toTs, unitNameToId);
           } catch (err) {
@@ -120,123 +222,303 @@ export class WialonFuelReportService {
         for (const groupTxs of groupTxBatches) transactions.push(...groupTxs);
       }
 
-      if (unitTemplate && opts.unitId) {
-        const unit = allUnits.find((u) => u.id === opts.unitId);
-        if (unit) {
-          try {
-            const unitTxs = await processUnitFuelData(client, unit, unitTemplate, fromTs, toTs);
-            transactions.push(...unitTxs);
-          } catch (err) {
-            console.error(`[FuelReport] Unit "${unit.nm}" failed:`, err);
+      let targetUnits = opts.unitId
+        ? allUnits.filter((u) => u.id === opts.unitId)
+        : allUnits;
+
+      if (!opts.unitId && opts.assetCategory) {
+        const categoryUnits = unitsForAssetCategory(allUnits, opts.assetCategory, membership);
+        if (categoryUnits.length) {
+          targetUnits = categoryUnits;
+        } else if (groupTemplate && transactions.length) {
+          const scopedUnitIds = new Set(
+            transactions
+              .map((t) => t.unitId)
+              .filter((id): id is number => Number.isFinite(id) && id > 0),
+          );
+          if (scopedUnitIds.size > 0) {
+            targetUnits = allUnits.filter((u) => scopedUnitIds.has(u.id));
           }
         }
+      }
+
+      // Stationary assets need unit-level fillings/drains in addition to group summaries.
+      const runUnitReports = Boolean(
+        unitTemplate && (opts.unitId || !groupTemplate || stationary),
+      );
+      if (runUnitReports) {
+        const concurrency = stationary ? stationaryUnitConcurrency : unitConcurrency;
+        const unitBatches = await mapWithConcurrency(targetUnits, concurrency, async (unit) => {
+          try {
+            return await processUnitFuelData(client, unit, unitTemplate!, fromTs, toTs);
+          } catch (err) {
+            console.error(`[FuelReport] Unit "${unit.nm}" failed:`, err);
+            return [] as FuelTransaction[];
+          }
+        });
+        for (const unitTxs of unitBatches) transactions.push(...unitTxs);
       }
 
       if (opts.unitId) {
         transactions = transactions.filter((t) => t.unitId === opts.unitId);
       }
 
-      transactions = transactions.filter(
-        (t) => !t.timestamp || t.timestamp <= 0 || (t.timestamp >= fromTs && t.timestamp <= toTs)
-      );
+      patchTransactionUnitIds(transactions, unitIndex);
+
+      const unitIds = opts.unitId ? [opts.unitId] : targetUnits.map((u) => u.id);
+      const needsSupplement = unitIds.some((id) => !unitHasConsumption(transactions, id));
+      if (needsSupplement && unitTemplate && !stationary) {
+        try {
+          transactions = await supplementTransactionsWithUnitReports(
+            tenantId,
+            transactions,
+            fromTs,
+            toTs,
+            unitIds,
+            opts.assetCategory,
+          );
+        } catch (err) {
+          console.error('[FuelReport] Unit report supplement failed:', err);
+        }
+      }
+
+      transactions = dedupeFuelTransactions(transactions);
+      const fromDateStr = opts.from || dateFromTs(fromTs);
+      const toDateStr = opts.to || dateFromTs(toTs);
+      transactions = filterTransactionsByDateRange(transactions, fromDateStr, toDateStr);
       transactions = enrichTransactionsWithTankLevels(transactions);
       transactions.sort((a, b) => b.timestamp - a.timestamp);
       return transactions;
     });
-    return rows;
+    return this.enrichWithBalanceConsumption(tenantId, rows);
   }
 
-  /** Fetch fuel transactions for a date range (month cache + short-lived range cache). */
-  static async getTransactions(
+  /** Opening + filled − closing when Wialon only exposes fillings (e.g. Fillings Report). */
+  private static async enrichWithBalanceConsumption(
     tenantId: string,
-    opts: { from?: string; to?: string; refresh?: boolean; unitId?: number; days?: number }
-  ) {
-    const { fromTs, toTs } = parseDateRange(opts.from, opts.to, opts.days);
-    const key = cacheKey(tenantId, fromTs, toTs, opts.unitId);
-    const now = Date.now();
-    const fromDate = opts.from || dateFromTs(fromTs);
-    const toDate = opts.to || dateFromTs(toTs);
-
-    if (!opts.refresh) {
-      const cached = txCache.get(key);
-      if (cached && cached.expires > now && cached.rows.length) {
-        return {
-          transactions: cached.rows,
-          kpis: computeKpis(cached.rows),
-          trend: monthlyTrend(cached.rows),
-          fromTs,
-          toTs,
-          source: 'cache' as const,
-          needsRefresh: false,
-          fetchedAt: new Date().toISOString(),
-        };
-      }
-
-      const { WialonFuelAnalyticsService } = await import('./WialonFuelAnalyticsService.js');
-      const partial = await WialonFuelAnalyticsService.loadCachedRowsOnly(tenantId, fromDate, toDate);
-      if (partial.length > 0) {
-        let transactions = partial;
-        if (opts.unitId) {
-          transactions = transactions.filter((t) => t.unitId === opts.unitId);
-        }
-        transactions = enrichTransactionsWithTankLevels(transactions);
-        txCache.set(key, { rows: transactions, expires: now + CACHE_TTL_MS });
-
-        void WialonFuelAnalyticsService.loadTransactionRows(
-          tenantId,
-          fromDate,
-          toDate,
-          false
-        ).then(({ rows }) => {
-          if (!rows.length) return;
-          let enriched = rows;
-          if (opts.unitId) enriched = enriched.filter((t) => t.unitId === opts.unitId);
-          enriched = enrichTransactionsWithTankLevels(enriched);
-          txCache.set(key, { rows: enriched, expires: Date.now() + CACHE_TTL_MS });
-        });
-
-        return {
-          transactions,
-          kpis: computeKpis(transactions),
-          trend: monthlyTrend(transactions),
-          fromTs,
-          toTs,
-          source: 'cache' as const,
-          needsRefresh: true,
-          fetchedAt: new Date().toISOString(),
-        };
-      }
-    } else {
-      invalidateFuelReportCaches();
+    rows: FuelTransaction[],
+  ): Promise<FuelTransaction[]> {
+    if (!rows.length || !missingConsumption(rows)) return rows;
+    let liveFuelByUnit: Map<number, number> | undefined;
+    try {
+      const fleet = await WialonFuelFleetService.listAssets(tenantId);
+      liveFuelByUnit = new Map(
+        fleet.assets
+          .filter((a) => a.fuelLiters != null && a.fuelLiters >= 0)
+          .map((a) => [a.unitId, a.fuelLiters as number]),
+      );
+    } catch {
+      liveFuelByUnit = undefined;
     }
+    return applyBalanceConsumption(rows, liveFuelByUnit);
+  }
 
-    const { WialonFuelAnalyticsService } = await import('./WialonFuelAnalyticsService.js');
-    const { rows: loaded, source: loadSource } = await WialonFuelAnalyticsService.loadTransactionRows(
-      tenantId,
-      fromDate,
-      toDate,
-      opts.refresh ?? false
+  private static startExactRangeFetch(
+    tenantId: string,
+    fromDate: string,
+    toDate: string,
+    opts: { unitId?: number; refresh?: boolean; assetCategory?: FuelAssetCategory }
+  ): Promise<FuelTransaction[]> {
+    const inflightKey = exactRangeInflightKey(tenantId, fromDate, toDate, opts.unitId, opts.assetCategory);
+    const existing = exactRangeInflight.get(inflightKey);
+    if (existing && !opts.refresh) return existing;
+
+    const promise = this.fetchAndPersistRange(tenantId, fromDate, toDate, opts).finally(() =>
+      exactRangeInflight.delete(inflightKey)
     );
-    let transactions = loaded;
+    exactRangeInflight.set(inflightKey, promise);
+    return promise;
+  }
+
+  private static async fetchAndPersistRange(
+    tenantId: string,
+    fromDate: string,
+    toDate: string,
+    opts: { unitId?: number; refresh?: boolean; assetCategory?: FuelAssetCategory }
+  ): Promise<FuelTransaction[]> {
+    const { fromTs, toTs } = parseDateRange(fromDate, toDate);
+    const spanDays = diffDaysInclusive(fromDate, toDate);
+    let rows: FuelTransaction[];
+    if (spanDays > 31 && !opts.unitId) {
+      const chunks = splitRangeByDays(fromDate, toDate, 14);
+      const chunkRows = await mapWithConcurrency(chunks, 2, async (chunk) =>
+        this.fetchFromWialon(tenantId, {
+          from: chunk.from,
+          to: chunk.to,
+          refresh: opts.refresh,
+          assetCategory: opts.assetCategory,
+        }).catch(() => [] as FuelTransaction[])
+      );
+      rows = chunkRows.flat();
+    } else {
+      rows = await this.fetchFromWialon(tenantId, {
+        from: fromDate,
+        to: toDate,
+        unitId: opts.unitId,
+        refresh: opts.refresh,
+        assetCategory: opts.assetCategory,
+      });
+    }
+    let transactions = rows;
     if (opts.unitId) {
       transactions = transactions.filter((t) => t.unitId === opts.unitId);
     }
     transactions = enrichTransactionsWithTankLevels(transactions);
-
     if (transactions.length) {
-      txCache.set(key, { rows: transactions, expires: now + CACHE_TTL_MS });
+      const now = Date.now();
+      const key = cacheKey(tenantId, fromTs, toTs, opts.unitId, opts.assetCategory);
+      txCache.set(key, { rows: transactions, expires: now + CACHE_TTL_MS, fetchedAt: now });
+      await rangeCacheSvc
+        .set(rangeRedisKey(tenantId, fromTs, toTs, opts.unitId, opts.assetCategory), transactions, RANGE_REDIS_TTL_SEC)
+        .catch(() => undefined);
+    }
+    return transactions;
+  }
+
+  private static async readRangeCacheRows(
+    tenantId: string,
+    fromTs: number,
+    toTs: number,
+    unitId?: number,
+    assetCategory?: FuelAssetCategory
+  ): Promise<FuelTransaction[] | null> {
+    const redis = await rangeCacheSvc
+      .get<FuelTransaction[]>(rangeRedisKey(tenantId, fromTs, toTs, unitId, assetCategory))
+      .catch(() => null);
+    return redis?.length ? redis : null;
+  }
+
+  /** Non-blocking background warm for a dashboard date range. */
+  static warmRangeInBackground(
+    tenantId: string,
+    opts: {
+      from: string;
+      to: string;
+      unitId?: number;
+      assetCategory?: FuelAssetCategory;
+      refresh?: boolean;
+    }
+  ): void {
+    const fromDate = opts.from;
+    const toDate = opts.to;
+    const completeSpan = isCompleteMonthSpan(fromDate, toDate);
+
+    void import('./WialonFuelAnalyticsService.js').then(({ WialonFuelAnalyticsService }) => {
+      WialonFuelAnalyticsService.warmDateRange(tenantId, fromDate, toDate);
+    });
+
+    if (completeSpan && !opts.refresh) return;
+
+    const inflightKey = exactRangeInflightKey(tenantId, fromDate, toDate, opts.unitId, opts.assetCategory);
+    if (exactRangeInflight.has(inflightKey)) return;
+
+    void this.startExactRangeFetch(tenantId, fromDate, toDate, {
+      unitId: opts.unitId,
+      refresh: opts.refresh,
+      assetCategory: opts.assetCategory,
+    }).catch(() => undefined);
+  }
+
+  /** Fetch fuel transactions — always returns fully-fetched data (no warming response). */
+  static async getTransactions(
+    tenantId: string,
+    opts: {
+      from?: string;
+      to?: string;
+      refresh?: boolean;
+      unitId?: number;
+      days?: number;
+      assetCategory?: FuelAssetCategory;
+    }
+  ) {
+    const { fromTs, toTs } = parseDateRange(opts.from, opts.to, opts.days);
+    const key = cacheKey(tenantId, fromTs, toTs, opts.unitId, opts.assetCategory);
+    const now = Date.now();
+    const fromDate = opts.from || dateFromTs(fromTs);
+    const toDate = opts.to || dateFromTs(toTs);
+
+    if (opts.refresh) {
+      const creds = await loadTenantWialonCreds(tenantId);
+      invalidateFuelReportCaches(scopeFromCredentials(tenantId, creds));
+      txCache.delete(key);
+      await rangeCacheSvc
+        .del(rangeRedisKey(tenantId, fromTs, toTs, opts.unitId, opts.assetCategory))
+        .catch(() => undefined);
+
+      const rows = await this.startExactRangeFetch(tenantId, fromDate, toDate, {
+        unitId: opts.unitId,
+        refresh: true,
+        assetCategory: opts.assetCategory,
+      });
+      return buildTransactionsResponse(rows, fromDate, toDate, fromTs, toTs, 'wialon', false, false);
     }
 
-    return {
-      transactions,
-      kpis: computeKpis(transactions),
-      trend: monthlyTrend(transactions),
+    const mem = txCache.get(key);
+    if (mem && mem.expires > now && mem.rows.length) {
+      return buildTransactionsResponse(mem.rows, fromDate, toDate, fromTs, toTs, 'cache', false, false);
+    }
+
+    const redisRows = await this.readRangeCacheRows(
+      tenantId,
       fromTs,
       toTs,
-      source: loadSource === 'wialon' ? ('wialon' as const) : ('cache' as const),
-      needsRefresh: false,
-      fetchedAt: new Date().toISOString(),
-    };
+      opts.unitId,
+      opts.assetCategory
+    );
+    if (redisRows?.length) {
+      txCache.set(key, { rows: redisRows, expires: now + CACHE_TTL_MS, fetchedAt: now });
+      return buildTransactionsResponse(
+        redisRows,
+        fromDate,
+        toDate,
+        fromTs,
+        toTs,
+        'cache',
+        false,
+        false
+      );
+    }
+
+    const completeSpan = isCompleteMonthSpan(fromDate, toDate);
+    if (!completeSpan || opts.assetCategory) {
+      const exactRows = await this.startExactRangeFetch(tenantId, fromDate, toDate, {
+        unitId: opts.unitId,
+        refresh: false,
+        assetCategory: opts.assetCategory,
+      });
+      return buildTransactionsResponse(exactRows, fromDate, toDate, fromTs, toTs, 'wialon', false, false);
+    }
+
+    const { WialonFuelAnalyticsService } = await import('./WialonFuelAnalyticsService.js');
+    let { rows, source } = await WialonFuelAnalyticsService.loadTransactionRows(tenantId, fromDate, toDate, false);
+    if (source === 'warming' || rows.length === 0) {
+      const forced = await WialonFuelAnalyticsService.loadTransactionRows(tenantId, fromDate, toDate, true);
+      rows = forced.rows;
+      source = forced.source;
+    }
+
+    let transactions = rows;
+    if (opts.unitId) {
+      transactions = transactions.filter((t) => t.unitId === opts.unitId);
+    }
+    transactions = enrichTransactionsWithTankLevels(transactions);
+    if (transactions.length) {
+      txCache.set(key, { rows: transactions, expires: now + CACHE_TTL_MS, fetchedAt: now });
+      await rangeCacheSvc
+        .set(rangeRedisKey(tenantId, fromTs, toTs, opts.unitId, opts.assetCategory), transactions, RANGE_REDIS_TTL_SEC)
+        .catch(() => undefined);
+    }
+
+    return buildTransactionsResponse(
+      transactions,
+      fromDate,
+      toDate,
+      fromTs,
+      toTs,
+      source === 'wialon' ? 'wialon' : 'cache',
+      false,
+      false
+    );
   }
 
   static async getOverview(tenantId: string, opts: { from?: string; to?: string; refresh?: boolean }) {

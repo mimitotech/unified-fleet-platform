@@ -25,7 +25,7 @@ import {
   AlertTriangle, FileVideo, List, Play, Video, VideoOff, Radio, MapPin,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { clientApi, type WialonVideoFile, type WialonVideoUnit } from '@/lib/api';
+import { clientApi, type WialonVideoClipRef, type WialonVideoFile, type WialonVideoUnit } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { safeArray } from '@/lib/safeArray';
 import {
@@ -176,6 +176,39 @@ export default function Surveillance() {
       setFileBlobUrl(URL.createObjectURL(blob));
     } catch (e) {
       notify.error('Could not load file', (e as Error).message);
+      setFilePreview(null);
+    } finally {
+      setFileLoading(false);
+    }
+  };
+
+  const openClipPreview = async (clip: WialonVideoClipRef, label?: string) => {
+    const unitId = clip.unitId;
+    const pseudoFile: WialonVideoFile = {
+      id: `clip-${clip.messageId ?? clip.path}`,
+      name: label || 'Event clip',
+      path: clip.path || '',
+      source: clip.source,
+      messageId: clip.messageId,
+      storageType: clip.storageType,
+    };
+    setFileLoading(true);
+    setFilePreview(pseudoFile);
+    try {
+      if (fileBlobUrl) URL.revokeObjectURL(fileBlobUrl);
+      let blob: Blob;
+      if (clip.source === 'message' && clip.messageId != null) {
+        blob = await clientApi.fetchSurveillanceMessageVideoBlob(unitId, clip.messageId);
+      } else if (clip.source === 'storage' && clip.path) {
+        blob = await clientApi.fetchSurveillanceFileBlob(unitId, clip.path, clip.storageType ?? 2);
+      } else {
+        notify.info('Unavailable', 'This clip cannot be played in-app.');
+        setFilePreview(null);
+        return;
+      }
+      setFileBlobUrl(URL.createObjectURL(blob));
+    } catch (e) {
+      notify.error('Could not load clip', (e as Error).message);
       setFilePreview(null);
     } finally {
       setFileLoading(false);
@@ -410,7 +443,7 @@ export default function Surveillance() {
                   </TabsContent>
 
                   <TabsContent value="events" className="fleet-card mt-4 p-4">
-                    <SurveillanceEventsTab unitId={activeUnit.id} />
+                    <SurveillanceEventsTab unitId={activeUnit.id} onPlayClip={openClipPreview} />
                   </TabsContent>
                 </Tabs>
               </>

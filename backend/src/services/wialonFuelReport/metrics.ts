@@ -16,20 +16,20 @@ export function deriveFuelUsed(
 /** Derive fill volume from level rise when the filled column is empty. */
 export function deriveFilled(filled: number, initialLevel: number, finalLevel: number): number {
   if (filled > 0) return filled;
-  if (finalLevel > initialLevel && initialLevel >= 0) {
+  if (initialLevel > 0 && finalLevel > initialLevel) {
     return finalLevel - initialLevel;
   }
   return filled;
 }
 
-/** Derive theft/drain volume from level drop when the sudden drop column is empty. */
+/** Derive theft/drain volume from level drop only when both levels are present. */
 export function deriveSuddenFuelDrop(
   suddenFuelDrop: number,
   initialLevel: number,
   finalLevel: number
 ): number {
   if (suddenFuelDrop > 0) return suddenFuelDrop;
-  if (initialLevel > 0 && finalLevel >= 0 && initialLevel > finalLevel) {
+  if (initialLevel > 0 && finalLevel > 0 && initialLevel > finalLevel) {
     return initialLevel - finalLevel;
   }
   return suddenFuelDrop;
@@ -75,4 +75,9 @@ export function effectiveConsumed(r: FuelTransaction): number {
 export function effectiveTheft(r: FuelTransaction): number {
   if (r.section !== 'theft') return 0;
   return deriveSuddenFuelDrop(r.suddenFuelDrop, r.initialLevel, r.finalLevel);
+}
+
+/** True when no unit has report-reported consumption (balance fill may still apply). */
+export function missingConsumption(list: FuelTransaction[]): boolean {
+  return !list.some((r) => r.section === 'consumption' && effectiveConsumed(r) > 0);
 }

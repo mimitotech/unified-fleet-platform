@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { formatDistanceToNow } from 'date-fns';
-import { Download, Play } from 'lucide-react';
+import { Download, Link2, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,11 +23,12 @@ export function SurveillanceFilesTab({ unit, onPreview }: Props) {
     return d.toISOString().slice(0, 10);
   });
   const [toLocal, setToLocal] = useState(() => new Date().toISOString().slice(0, 10));
+  const [sharingId, setSharingId] = useState<string | null>(null);
 
-  const fromSec = Math.floor(new Date(`${fromLocal}T00:00:00`).getTime() / 1000);
-  const toSec = Math.floor(new Date(`${toLocal}T23:59:59`).getTime() / 1000);
+  const fromMs = new Date(`${fromLocal}T00:00:00`).getTime();
+  const toMs = new Date(`${toLocal}T23:59:59`).getTime();
 
-  const { data: files, isLoading } = useSurveillanceUnitFiles(unit.id, fromSec, toSec);
+  const { data: files, isLoading } = useSurveillanceUnitFiles(unit.id, fromMs, toMs);
   const fileList = safeArray<WialonVideoFile>(files);
 
   const downloadFile = async (file: WialonVideoFile) => {
@@ -45,6 +46,28 @@ export function SurveillanceFilesTab({ unit, onPreview }: Props) {
       URL.revokeObjectURL(url);
     } catch (e) {
       notify.error('Download failed', (e as Error).message);
+    }
+  };
+
+  const shareFile = async (file: WialonVideoFile) => {
+    if (file.source === 'storage' && !file.path) return;
+    if (file.source === 'message' && file.messageId == null) return;
+    setSharingId(file.id);
+    try {
+      const link = await clientApi.createSurveillanceShareLink({
+        unitId: unit.id,
+        source: file.source === 'message' ? 'message' : 'storage',
+        path: file.path || undefined,
+        storageType: file.storageType,
+        messageId: file.messageId,
+        label: file.name,
+      });
+      await navigator.clipboard.writeText(link.shareUrl);
+      notify.success('Share link copied', 'Link expires in 72 hours by default.');
+    } catch (e) {
+      notify.error('Share failed', (e as Error).message);
+    } finally {
+      setSharingId(null);
     }
   };
 
@@ -69,7 +92,7 @@ export function SurveillanceFilesTab({ unit, onPreview }: Props) {
               <div className="min-w-0">
                 <p className="font-medium text-sm truncate">{f.name}</p>
                 <p className="text-xs text-muted-foreground">
-                  {f.tag || f.source}
+                  {f.eventType || f.tag || f.source}
                   {f.occurredAt
                     ? ` · ${formatDistanceToNow(new Date(f.occurredAt), { addSuffix: true })}`
                     : ''}
@@ -78,18 +101,25 @@ export function SurveillanceFilesTab({ unit, onPreview }: Props) {
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <Badge variant="outline">{f.source}</Badge>
-                {f.source === 'storage' && f.path ? (
+                {(f.source === 'storage' && f.path) || (f.source === 'message' && f.messageId != null) ? (
                   <>
                     <Button size="sm" variant="outline" onClick={() => onPreview(f)}>
                       <Play className="h-3.5 w-3.5" />
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => downloadFile(f)}>
-                      <Download className="h-3.5 w-3.5" />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={sharingId === f.id}
+                      onClick={() => shareFile(f)}
+                      title="Copy share link"
+                    >
+                      <Link2 className="h-3.5 w-3.5" />
                     </Button>
                   </>
-                ) : f.source === 'message' && f.messageId != null ? (
-                  <Button size="sm" variant="outline" onClick={() => onPreview(f)}>
-                    <Play className="h-3.5 w-3.5" />
+                ) : null}
+                {f.source === 'storage' && f.path ? (
+                  <Button size="sm" variant="ghost" onClick={() => downloadFile(f)}>
+                    <Download className="h-3.5 w-3.5" />
                   </Button>
                 ) : null}
               </div>

@@ -160,7 +160,7 @@ function buildDailyData(
 
   // Fuel rows: bucket Consumed (incl. engine-on Sudden Fuel Drops + drains
   // folded in to mirror the Generators table) and Filled by event timestamp.
-  for (const tx of fuelRows) {
+  for (const tx of fuelRows ?? []) {
     const activity = getGeneratorFuelActivity(tx, engineIntervalsByUnit);
     const day = format(new Date(tx.timestamp * 1000), 'yyyy-MM-dd');
     const bucket = map.get(day);
@@ -207,7 +207,7 @@ export function GeneratorRuntimeTrendChart({
   stationaryType = 'generator',
 }: GeneratorRuntimeTrendChartProps = {}) {
   const { data: generators = [], isLoading: generatorsLoading } = useStationaryAssets(stationaryType);
-  const [range, setRange] = useState<RangeOption>('14');
+  const [range, setRange] = useState<RangeOption>('7');
   // Default to the aggregate "All generators" view; users can drill into a
   // single unit via the selector when they need per-generator detail.
   const [selectedId, setSelectedId] = useState<string>(ALL_GENERATORS_VALUE);
@@ -248,11 +248,12 @@ export function GeneratorRuntimeTrendChart({
   // Generator-only fuel transactions for the same range — used for the L/h
   // efficiency overlay (fuelUsed per day).
   const {
-    data: allFuelRows = [],
+    data: fuelMeta,
     isLoading: fuelLoading,
     error: fuelError,
     refetch: refetchFuel,
   } = useStationaryFuelTransactions(stationaryType, { startDate: startStr, endDate: endStr });
+  const allFuelRows = fuelMeta?.transactions ?? [];
 
   const selectedGenerator = useMemo(
     () => (isAllSelected ? undefined : generators.find((g) => g.id === selectedId)),

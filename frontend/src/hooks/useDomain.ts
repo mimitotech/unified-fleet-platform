@@ -34,7 +34,10 @@ export function useTrips(limit = 50) {
 export function useFuelTransactions(enabled = true) {
   return useQuery({
     queryKey: ['fuelTransactions'],
-    queryFn: () => clientApi.getFuelTransactions(),
+    queryFn: async () => {
+      const data = await clientApi.getFuelTransactions();
+      return data.transactions ?? [];
+    },
     enabled,
   });
 }
@@ -144,10 +147,10 @@ export function useVideoStreams(enabled = true) {
   });
 }
 
-export function useSurveillanceViolations(enabled = true) {
+export function useSurveillanceViolations(enabled = true, unitId?: number) {
   return useQuery({
-    queryKey: ['surveillanceViolations'],
-    queryFn: () => clientApi.getSurveillanceViolations(),
+    queryKey: ['surveillanceViolations', unitId],
+    queryFn: () => clientApi.getSurveillanceViolations(unitId),
     enabled,
     select: (d) => safeArray(d),
   });

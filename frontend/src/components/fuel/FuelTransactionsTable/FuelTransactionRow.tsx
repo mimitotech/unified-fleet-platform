@@ -10,9 +10,15 @@ interface FuelTransactionRowProps {
   transaction: FuelTransaction;
   onClick: () => void;
   isNested?: boolean;
+  visibleColumns?: string[];
 }
 
-export function FuelTransactionRow({ transaction: t, onClick, isNested = false }: FuelTransactionRowProps) {
+export function FuelTransactionRow({
+  transaction: t,
+  onClick,
+  isNested = false,
+  visibleColumns,
+}: FuelTransactionRowProps) {
   const v = getTransactionDisplayValues(t);
 
   return (
@@ -46,7 +52,7 @@ export function FuelTransactionRow({ transaction: t, onClick, isNested = false }
           {t.location || '—'}
         </span>
       </td>
-      <FuelTransactionMetricCells v={v} />
+      <FuelTransactionMetricCells v={v} visibleColumns={visibleColumns} />
     </tr>
   );
 }

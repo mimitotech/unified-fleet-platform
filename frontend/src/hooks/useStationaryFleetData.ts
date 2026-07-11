@@ -11,6 +11,7 @@ export interface StationaryFleetDataOptions {
   stationaryType?: StationaryFuelType;
   startDate?: string;
   endDate?: string;
+  enabled?: boolean;
 }
 
 export interface StationaryFleetDataResult {
@@ -21,6 +22,8 @@ export interface StationaryFleetDataResult {
   isLoading: boolean;
   isUnitsLoading: boolean;
   isFuelLoading: boolean;
+  isFuelWarming: boolean;
+  isFuelBackgroundRefreshing?: boolean;
   fuelError: Error | null;
   refetchFuel: () => void;
 }
@@ -46,13 +49,15 @@ function buildFuelLevelByName(units: Array<Generator | Machinery>): Map<string, 
 }
 
 export function useStationaryFleetData(options?: StationaryFleetDataOptions): StationaryFleetDataResult {
-  const { stationaryType = 'generator', startDate, endDate } = options ?? {};
+  const { stationaryType = 'generator', startDate, endDate, enabled = true } = options ?? {};
 
-  const unitsQuery = useStationaryAssets(stationaryType);
-  const fuelQuery = useStationaryFuelTransactions(stationaryType, { startDate, endDate });
+  const unitsQuery = useStationaryAssets(stationaryType, enabled);
+  const fuelQuery = useStationaryFuelTransactions(stationaryType, { startDate, endDate }, enabled);
 
   const units = unitsQuery.data ?? [];
-  const fuelTransactions = fuelQuery.data ?? [];
+  const fuelTransactions = fuelQuery.data?.transactions ?? [];
+  const isFuelWarming = fuelQuery.data?.warming ?? false;
+  const isFuelBackgroundRefreshing = false;
 
   const unitFuelMapByName = useMemo(() => buildFuelLevelByName(units), [units]);
 
@@ -71,9 +76,11 @@ export function useStationaryFleetData(options?: StationaryFleetDataOptions): St
     tableUnits,
     fuelTransactions,
     unitFuelMapByName,
-    isLoading: unitsQuery.isLoading || fuelQuery.isLoading,
+    isLoading: unitsQuery.isLoading || fuelQuery.isLoading || fuelQuery.isFetching,
     isUnitsLoading: unitsQuery.isLoading,
-    isFuelLoading: fuelQuery.isLoading,
+    isFuelLoading: fuelQuery.isFetching || fuelQuery.isLoading,
+    isFuelWarming,
+    isFuelBackgroundRefreshing,
     fuelError: fuelQuery.error ?? null,
     refetchFuel: () => {
       void fuelQuery.refetch();

@@ -48,7 +48,7 @@ export function GeneratorDrainAlerts({ fromDate, toDate }: GeneratorDrainAlertsP
   const reportsQuery = useGeneratorsWithReports(
     hasRange ? { startDate: fromDate, endDate: toDate } : undefined,
   );
-  const rangeTransactions = hasRange ? (reportsQuery.fuelQuery.data ?? []) : [];
+  const rangeTransactions = hasRange ? (reportsQuery.fuelQuery.data?.transactions ?? []) : [];
   const engineHoursRows = hasRange ? (reportsQuery.engineHoursQuery.data ?? []) : [];
 
   const generatorIds = useMemo(

@@ -26,11 +26,13 @@ export function FuelTransactionsTable({
   isLoading,
   onRefresh,
   isRefreshing,
+  isBackgroundRefreshing,
   fromDate,
   toDate,
   todayStr,
   onFromDateChange,
   onToDateChange,
+  visibleColumns,
 }: FuelTransactionsTableProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedVehicles, setExpandedVehicles] = useState<Set<string>>(new Set());
@@ -173,15 +175,21 @@ export function FuelTransactionsTable({
         onOpenFuelPerTrip={() => setIsFuelPerTripOpen(true)}
         onRefresh={onRefresh}
         isRefreshing={isRefreshing}
+        isBackgroundRefreshing={isBackgroundRefreshing}
       />
 
       <div className="fuel-usage-scroll mt-3 w-full max-w-full min-w-0">
         <table className="fuel-compact-table w-max min-w-[1520px]">
-          <FuelTableColumnHeaders unitColumnLabel={unitLabel} />
+          <FuelTableColumnHeaders unitColumnLabel={unitLabel} visibleColumns={visibleColumns} />
           <tbody>
             {!hasMultipleVehicles &&
               filteredTransactions.map((t) => (
-                <FuelTransactionRow key={t.id} transaction={t} onClick={() => openTransactionDetail(t)} />
+                <FuelTransactionRow
+                  key={t.id}
+                  transaction={t}
+                  onClick={() => openTransactionDetail(t)}
+                  visibleColumns={visibleColumns}
+                />
               ))}
 
             {hasMultipleVehicles &&
@@ -192,6 +200,7 @@ export function FuelTransactionsTable({
                   isExpanded={expandedVehicles.has(group.unitName)}
                   onToggle={() => toggleVehicle(group.unitName)}
                   onTransactionClick={openTransactionDetail}
+                  visibleColumns={visibleColumns}
                 />
               ))}
           </tbody>

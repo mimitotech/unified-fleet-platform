@@ -3,6 +3,7 @@ import { Satellite, Settings, ChevronRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useWialonContext } from '@/hooks/useWialon';
+import { useFleetAssetProfile } from '@/hooks/useFleetAssetProfile';
 import { cn } from '@/lib/utils';
 
 type Props = {
@@ -12,6 +13,7 @@ type Props = {
 
 export function WialonContextBanner({ className, compact }: Props) {
   const { connected, configured, tierName, counts, ctx, isLoading } = useWialonContext();
+  const assetProfile = useFleetAssetProfile();
 
   if (isLoading || !configured) return null;
 
@@ -71,7 +73,9 @@ export function WialonContextBanner({ className, compact }: Props) {
         {!compact && (
           <>
             {unitCount != null && (
-              <span className="text-xs text-muted-foreground">{unitCount} units on this account</span>
+              <span className="text-xs text-muted-foreground">
+                {unitCount} {assetProfile.unitLabelPlural} on this account
+              </span>
             )}
             {!((ctx?.sessionMeta as { scopedAccountId?: number } | undefined)?.scopedAccountId) &&
               accountCount != null &&
