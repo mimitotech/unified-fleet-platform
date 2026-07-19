@@ -60,10 +60,10 @@ export default function AdminTenantsPage() {
       setName('');
       const tenant = data as { id?: string };
       if (tenant?.id) {
-        notify.success('Tenant created', 'Configure integrations on the next screen');
+        notify.success('Client created', 'Configure integrations on the next screen');
         navigate(`/admin/tenants/${tenant.id}`);
       } else {
-        notify.error('Create failed', 'Server did not return a tenant id');
+        notify.error('Create failed', 'Server did not return a client id');
       }
     },
     onError: (err) => notify.error('Create failed', (err as Error).message),
@@ -83,20 +83,20 @@ export default function AdminTenantsPage() {
 
   return (
     <AdminLayout
-      title={`Tenants (${result?.total ?? 0})`}
-      subtitle="Multi-tenant control"
+      title={`Clients (${result?.total ?? 0})`}
+      subtitle="Client accounts and module control"
       actions={
         <Link to="/admin/tenants/new">
-          <Button size="sm"><Plus className="w-4 h-4 mr-1" />New Tenant</Button>
+          <Button size="sm"><Plus className="w-4 h-4 mr-1" />New Client</Button>
         </Link>
       }
     >
       <div className="space-y-6">
         <Card>
-          <CardHeader><CardTitle>Create Tenant</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Create Client</CardTitle></CardHeader>
           <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-end sm:flex-wrap">
             <div className="max-w-xs flex-1">
-              <Input placeholder="Tenant name" value={name} onChange={(e) => setName(e.target.value)} />
+              <Input placeholder="Client name" value={name} onChange={(e) => setName(e.target.value)} />
               {name.trim() && (
                 <p className="text-xs text-muted-foreground mt-1">
                   Slug: <code>{generatedSlug}</code>
@@ -108,7 +108,7 @@ export default function AdminTenantsPage() {
         </Card>
 
         <div className="flex flex-wrap gap-2 items-center">
-          <Input placeholder="Search tenants..." value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-xs" />
+          <Input placeholder="Search clients..." value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-xs" />
           <Select value={status} onValueChange={setStatus}>
             <SelectTrigger className="w-36"><SelectValue placeholder="Status" /></SelectTrigger>
             <SelectContent>
@@ -145,7 +145,7 @@ export default function AdminTenantsPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-8" />
-                    <TableHead>Tenant</TableHead>
+                    <TableHead>Client</TableHead>
                     {superView && <TableHead>Manager</TableHead>}
                     <TableHead>Vehicles</TableHead>
                     <TableHead>Users</TableHead>
@@ -177,7 +177,7 @@ export default function AdminTenantsPage() {
                         <TableCell>
                           <Badge variant={(STATUS_COLORS[st] || 'outline') as 'default'}>{st}</Badge>
                         </TableCell>
-                        <TableCell>{String(t.enabled_modules ?? 0)}/{String(t.total_modules ?? 14)}</TableCell>
+                        <TableCell>{String(t.enabled_modules ?? 0)}/{String(t.total_modules ?? 13)}</TableCell>
                         <TableCell>
                           <span className="font-mono text-xs">{String(t.integration_codes || '—')}</span>
                         </TableCell>

@@ -306,7 +306,7 @@ export function FuelTransactionsTable({
               <Fuel className="w-10 h-10 mx-auto opacity-30" />
               <p className="font-medium">No fuel transactions detected</p>
               <p className="text-sm max-w-md mx-auto">
-                Transactions are populated from Wialon fuel level sensors (auto-detected fillings, consumption, and
+                Transactions are populated from fuel level sensors (auto-detected fillings, consumption, and
                 sudden drops).
               </p>
             </div>

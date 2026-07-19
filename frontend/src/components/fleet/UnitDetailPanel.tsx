@@ -152,7 +152,7 @@ export function UnitDetailPanel({
       {loadingAsset && (
         <div className="absolute inset-x-0 top-0 z-20 flex items-center gap-2 px-3 py-2 bg-primary/8 border-b border-primary/20 text-xs text-primary backdrop-blur-sm">
           <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
-          <span>Loading asset data from Wialon…</span>
+          <span>Loading asset data…</span>
         </div>
       )}
       {/* Header */}
@@ -346,7 +346,7 @@ export function UnitDetailPanel({
           {detailPending && wialonId && (
             <p className="text-xs text-muted-foreground flex items-center gap-1">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Loading Wialon data…
+              Loading data…
             </p>
           )}
         </div>

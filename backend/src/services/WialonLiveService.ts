@@ -18,6 +18,8 @@ import {
 } from './wialonCommandParse.js';
 import {
   accountIdFrom,
+  activeUnitNameSet,
+  filterActiveWialonUnits,
   resourceSearchSpec,
   routeSearchSpec,
   searchAll,
@@ -37,6 +39,9 @@ import { loadWialonHwTypes, resolveHwName } from './wialonHwTypes.js';
 import { wialonReverseGeocodeFull } from './wialonGeocode.js';
 import {
   columnsFromTableMeta,
+  flattenReportRows,
+  filterParsedReportRowsToActiveUnits,
+  filterRawReportRowsToActiveUnits,
   inferColumnsFromRows,
   parseWialonReportRow,
   type WialonReportChartResult,
@@ -115,7 +120,7 @@ export class WialonLiveService {
       const items =
         accountId != null && !Number.isNaN(Number(accountId))
           ? await searchUnitsBasicForAccount(client, Number(accountId), limit)
-          : await searchAll(client, unitSearchSpec(accountId), MIN_FLAGS);
+          : filterActiveWialonUnits(await searchAll(client, unitSearchSpec(accountId), MIN_FLAGS));
       return items.slice(0, limit).map((u) => ({
         id: u.id,
         name: u.nm,
@@ -137,7 +142,9 @@ export class WialonLiveService {
       const items =
         accountId != null && !Number.isNaN(Number(accountId))
           ? await searchUnitsForAccount(client, Number(accountId), limit)
-          : await searchAll(client, unitSearchSpec(accountId), WIALON_UNIT_FLAGS);
+          : filterActiveWialonUnits(
+              await searchAll(client, unitSearchSpec(accountId), WIALON_UNIT_FLAGS),
+            );
       const sliced = items.slice(0, limit);
       const ids = sliced.map((u) => u.id);
 
@@ -264,59 +271,175 @@ export class WialonLiveService {
     const batchSize = 500;
 
     return withWialonClient(credentials, async (client) => {
-      await client.request('report/exec_report', {
+      await client.request('report/cleanup_result', {}).catch(() => undefined);
+
+      // Active units for this billing account — used to strip deactivated/removed assets from results.
+      let activeNames = new Set<string>();
+      const accountId = accountIdFrom(credentials);
+      try {
+        if (accountId && Number.isFinite(Number(accountId))) {
+          const activeUnits = await searchUnitsForAccount(client, Number(accountId), 10_000);
+          activeNames = activeUnitNameSet(activeUnits);
+        } else {
+          const all = filterActiveWialonUnits(
+            await searchAll(client, unitSearchSpec(undefined), WIALON_UNIT_FLAGS),
+          );
+          activeNames = activeUnitNameSet(all);
+        }
+      } catch {
+        activeNames = new Set();
+      }
+
+      const execParams = {
         reportResourceId: input.reportResourceId,
         reportTemplateId: input.reportTemplateId,
         reportObjectId: input.reportObjectId,
         reportObjectSecId: input.reportObjectSecId ?? 0,
         interval: { from: input.from, to: input.to, flags: 0 },
-        remoteExec: 1,
-      });
+      };
 
-      for (let attempt = 0; attempt < 120; attempt++) {
-        const statusRes = await client.request<{ status: number; error?: string }>('report/get_report_status', {});
-        const code = statusRes.status;
-        if (code === 4) break;
-        if (code === 8 || code === 16) {
-          throw new Error(statusRes.error || `Wialon report failed (status ${code})`);
-        }
-        await sleep(1000);
-      }
-
-      const result = await client.request<{
+      let result: {
         reportResult?: { tables?: Array<Record<string, unknown>> };
         tables?: Array<Record<string, unknown>>;
-      }>('report/apply_report_result', {});
+      } = {};
+
+      // Prefer sync exec (remoteExec:0) — often finishes in one round-trip for moderate reports.
+      let ready = false;
+      try {
+        result = await client.request<typeof result>('report/exec_report', {
+          ...execParams,
+          remoteExec: 0,
+        });
+        const syncTables = result.reportResult?.tables ?? result.tables ?? [];
+        if (syncTables.length || result.reportResult) ready = true;
+      } catch {
+        ready = false;
+      }
+
+      if (!ready) {
+        await client.request('report/cleanup_result', {}).catch(() => undefined);
+        await client.request('report/exec_report', { ...execParams, remoteExec: 1 });
+        for (let attempt = 0; attempt < 90; attempt++) {
+          const statusRes = await client.request<{ status: number; error?: string }>(
+            'report/get_report_status',
+            {},
+          );
+          const code = statusRes.status;
+          if (code === 4) {
+            ready = true;
+            break;
+          }
+          if (code === 8 || code === 16) {
+            throw new Error(statusRes.error || `Wialon report failed (status ${code})`);
+          }
+          await sleep(attempt < 20 ? 200 : attempt < 40 ? 400 : 800);
+        }
+        if (!ready) throw new Error('Wialon report timed out before completion');
+        result = await client.request<typeof result>('report/apply_report_result', {});
+      }
 
       const tablesOut: WialonReportTableResult[] = [];
       const chartsOut: WialonReportChartResult[] = [];
+      const fetchRowBatches = async (
+        tableIndex: number,
+        fetchTo: number,
+        svc: 'report/select_result_rows' | 'report/get_result_rows',
+        level?: number,
+      ): Promise<unknown[]> => {
+        const ranges: Array<{ from: number; to: number }> = [];
+        for (let indexFrom = 0; indexFrom < fetchTo; indexFrom += batchSize) {
+          ranges.push({
+            from: indexFrom,
+            to: Math.min(indexFrom + batchSize - 1, fetchTo - 1),
+          });
+        }
+
+        const out: unknown[] = [];
+        const concurrency = 4;
+        for (let i = 0; i < ranges.length; i += concurrency) {
+          const chunk = ranges.slice(i, i + concurrency);
+          const batches = await Promise.all(
+            chunk.map(({ from, to }) =>
+              client.request<unknown>(
+                svc,
+                svc === 'report/select_result_rows'
+                  ? {
+                      tableIndex,
+                      config: {
+                        type: 'range',
+                        data: {
+                          from,
+                          to,
+                          level: Math.max(level ?? 1, 1),
+                          flat: 1,
+                          rawValues: 1,
+                        },
+                      },
+                    }
+                  : { tableIndex, indexFrom: from, indexTo: to },
+              ),
+            ),
+          );
+          for (const rowData of batches) {
+            const batch = Array.isArray(rowData)
+              ? rowData
+              : Array.isArray((rowData as { rows?: unknown[] })?.rows)
+                ? (rowData as { rows: unknown[] }).rows
+                : [];
+            if (batch.length) out.push(...batch);
+          }
+        }
+        return out;
+      };
 
       try {
-        const embedded = result.reportResult?.tables ?? result.tables ?? [];
-        let tables: Array<Record<string, unknown>> = embedded;
+        let tables: Array<Record<string, unknown>> =
+          result.reportResult?.tables ?? result.tables ?? [];
         if (!tables.length) {
-          const tablesRes = await client.request<{
-            tables?: Array<Record<string, unknown>>;
-          }>('report/get_report_tables', {});
+          const applied = await client.request<typeof result>('report/apply_report_result', {});
+          tables = applied.reportResult?.tables ?? applied.tables ?? [];
+          if (tables.length) result = applied;
+        }
+        if (!tables.length) {
+          const tablesRes = await client.request<{ tables?: Array<Record<string, unknown>> }>(
+            'report/get_report_tables',
+            {},
+          );
           tables = tablesRes.tables ?? [];
         }
+
         for (let tableIndex = 0; tableIndex < tables.length; tableIndex++) {
           const meta = tables[tableIndex];
           const totalRows = Number(meta.rows ?? 0);
+          const level = Number(meta.level ?? 1);
           const tableName = String(meta.name ?? `table_${tableIndex}`);
           const tableLabel = String(meta.label ?? meta.name ?? `Table ${tableIndex + 1}`);
           let columns = columnsFromTableMeta(meta, tableLabel);
 
           const fetchTo = Math.min(totalRows, maxRows);
-          const rawRows: unknown[] = [];
-          for (let indexFrom = 0; indexFrom < fetchTo; indexFrom += batchSize) {
-            const indexTo = Math.min(indexFrom + batchSize - 1, fetchTo - 1);
-            const rowData = await client.request<{ rows?: unknown[] }>('report/get_result_rows', {
-              tableIndex,
-              indexFrom,
-              indexTo,
-            });
-            if (rowData.rows?.length) rawRows.push(...rowData.rows);
+          let rawRows: unknown[] = [];
+
+          if (fetchTo > 0) {
+            // Multilevel reports only expose nested events via select_result_rows (flat).
+            if (level > 1) {
+              try {
+                rawRows = await fetchRowBatches(
+                  tableIndex,
+                  fetchTo,
+                  'report/select_result_rows',
+                  level,
+                );
+              } catch {
+                rawRows = [];
+              }
+            }
+
+            if (!rawRows.length) {
+              rawRows = await fetchRowBatches(tableIndex, fetchTo, 'report/get_result_rows');
+            }
+
+            rawRows = filterRawReportRowsToActiveUnits(rawRows, activeNames);
+            rawRows = flattenReportRows(rawRows);
           }
 
           let parsed = rawRows.map((r) => parseWialonReportRow(r, columns));
@@ -324,6 +447,7 @@ export class WialonLiveService {
             columns = inferColumnsFromRows(parsed, columns);
             parsed = rawRows.map((r) => parseWialonReportRow(r, columns));
           }
+          parsed = filterParsedReportRowsToActiveUnits(parsed, columns, activeNames);
 
           tablesOut.push({
             index: tableIndex,
@@ -331,21 +455,25 @@ export class WialonLiveService {
             label: tableLabel,
             columns,
             rows: parsed,
-            totalRows,
+            totalRows: parsed.length,
           });
         }
 
-        for (let chartIndex = 0; chartIndex < 8; chartIndex++) {
-          try {
-            const chart = await client.request<unknown>('report/get_result_chart', { chartIndex });
-            if (chart == null || (typeof chart === 'object' && !Object.keys(chart as object).length)) break;
-            chartsOut.push({
-              index: chartIndex,
-              name: `Chart ${chartIndex + 1}`,
-              data: chart,
-            });
-          } catch {
-            break;
+        if (tablesOut.length === 0) {
+          for (let chartIndex = 0; chartIndex < 4; chartIndex++) {
+            try {
+              const chart = await client.request<unknown>('report/get_result_chart', { chartIndex });
+              if (chart == null || (typeof chart === 'object' && !Object.keys(chart as object).length)) {
+                break;
+              }
+              chartsOut.push({
+                index: chartIndex,
+                name: `Chart ${chartIndex + 1}`,
+                data: chart,
+              });
+            } catch {
+              break;
+            }
           }
         }
       } catch (e) {
@@ -610,7 +738,7 @@ export class WialonLiveService {
         const indexTo = Math.min(indexFrom + batchSize - 1, total - 1);
         const batch = await client.request<{
           messages?: Array<{ pos?: { x: number; y: number; s: number; c?: number }; t: number }>;
-        }>('messages/load_first', { indexFrom, indexTo });
+        }>('messages/get_messages', { indexFrom, indexTo });
         if (batch.messages?.length) allMessages.push(...batch.messages);
         indexFrom = indexTo + 1;
       }

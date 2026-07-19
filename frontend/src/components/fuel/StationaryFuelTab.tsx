@@ -1,5 +1,5 @@
 import { CoreFuelTab } from './CoreFuelTab';
-import type { FuelTabDateRangeProps } from './VehiclesFuelTab';
+import type { FuelTabDateRangeProps } from './fuelTabTypes';
 import type { StationaryFuelType } from './useStationaryFuelHooks';
 
 export type { FuelTabDateRangeProps };

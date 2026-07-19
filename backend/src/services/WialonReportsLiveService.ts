@@ -157,6 +157,8 @@ export class WialonReportsLiveService {
     const scope = scopeFromCredentials(tenantId, creds);
 
     return withWialonClient(creds, async (client) => {
+      // Use resolver cache — avoid wiping it on every catalog poll (was making Reports feel slow).
+      // Cache TTL still refreshes templates within a few minutes; Sync / Run paths invalidate as needed.
       const templates = await WialonReportResolverService.listAllTemplates(client, scope);
       const groups = await WialonReportResolverService.listUnitGroups(client, scope, { limit: 80 });
 

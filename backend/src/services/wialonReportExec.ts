@@ -69,16 +69,32 @@ export async function execWialonReportTables(
 ): Promise<WialonReportTableMeta[]> {
   await client.request('report/cleanup_result', {}).catch(() => undefined);
 
-  await client.request('report/exec_report', {
+  const execParams = {
     reportResourceId: input.reportResourceId,
     reportTemplateId: input.reportTemplateId,
     reportObjectId: input.reportObjectId,
     reportObjectSecId: input.reportObjectSecId ?? 0,
     interval: { from: input.fromTs, to: input.toTs, flags: 0 },
-    remoteExec: 1,
-  });
+  };
 
-  const maxAttempts = input.pollAttempts ?? 120;
+  // Prefer sync when possible (same path as live report preview).
+  try {
+    const sync = await client.request<{
+      reportResult?: { tables?: Array<Record<string, unknown>> };
+      tables?: Array<Record<string, unknown>>;
+    }>('report/exec_report', { ...execParams, remoteExec: 0 });
+    const embedded = sync.reportResult?.tables ?? sync.tables ?? [];
+    if (embedded.length || sync.reportResult) {
+      return normalizeWialonReportTables(embedded);
+    }
+  } catch {
+    /* fall through to remote */
+  }
+
+  await client.request('report/cleanup_result', {}).catch(() => undefined);
+  await client.request('report/exec_report', { ...execParams, remoteExec: 1 });
+
+  const maxAttempts = input.pollAttempts ?? 90;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const statusRes = await client.request<{ status: number; error?: string }>('report/get_report_status', {});
     const code = statusRes.status;
@@ -86,7 +102,7 @@ export async function execWialonReportTables(
     if (code === 8 || code === 16) {
       throw new Error(statusRes.error || `Wialon report failed (status ${code})`);
     }
-    await sleep(1000);
+    await sleep(attempt < 20 ? 200 : attempt < 40 ? 400 : 800);
   }
 
   return readWialonReportTables(client);

@@ -118,6 +118,8 @@ export type WialonFuelTransaction = {
   longitude?: number;
   mainTankLevel?: number;
   reserveTankLevel?: number;
+  periodFromTs?: number;
+  periodToTs?: number;
 };
 
 export type WialonFuelReportData = {

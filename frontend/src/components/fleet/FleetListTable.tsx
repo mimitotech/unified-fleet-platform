@@ -43,14 +43,22 @@ export function FleetListTable({
     [queryClient]
   );
 
+  const mostlyStationary =
+    units.length > 0 && units.filter((u) => u.stationary).length >= units.length / 2;
+
   const filtered = useMemo(() => {
     const q = filters.search.trim().toLowerCase();
     return units.filter((u) => {
       if (q && !`${u.name} ${u.plate || ''}`.toLowerCase().includes(q)) return false;
-      if (filters.statuses.length && !filters.statuses.includes(u.status)) return false;
-      return true;
+      if (!filters.statuses.length) return true;
+      if (filters.statuses.includes(u.status)) return true;
+      // Generator/machinery: Running chip uses 'idle' and should also match moving.
+      if (mostlyStationary && filters.statuses.includes('idle') && u.status === 'moving') {
+        return true;
+      }
+      return false;
     });
-  }, [units, filters]);
+  }, [units, filters, mostlyStationary]);
 
   const toggleStatus = (s: VehicleStatus) => {
     setFilters((f) => ({
@@ -72,19 +80,27 @@ export function FleetListTable({
           />
         </div>
         <div className="flex flex-wrap gap-1">
-          {(['moving', 'idle', 'stopped', 'offline'] as VehicleStatus[]).map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => toggleStatus(s)}
-              className={cn(
-                'rounded-full px-2 py-0.5 text-xs border transition-colors',
-                filters.statuses.includes(s) ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted'
-              )}
-            >
-              <StatusBadge status={s} size="sm" />
-            </button>
-          ))}
+          {(['moving', 'idle', 'stopped', 'offline'] as VehicleStatus[]).map((s) => {
+            if (mostlyStationary && s === 'moving') return null;
+            return (
+              <button
+                key={s}
+                type="button"
+                onClick={() => toggleStatus(s)}
+                className={cn(
+                  'rounded-full px-2 py-0.5 text-xs border transition-colors',
+                  filters.statuses.includes(s) ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted'
+                )}
+              >
+                <StatusBadge
+                  status={s}
+                  label={mostlyStationary && s === 'idle' ? 'Running' : undefined}
+                  stationary={mostlyStationary && s === 'idle'}
+                  size="sm"
+                />
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -142,7 +158,13 @@ export function FleetListTable({
                   </span>
                 </td>
                 <td className="p-3">
-                  <StatusBadge status={u.status} label={u.motionState} size="sm" />
+                  <StatusBadge
+                    status={u.status}
+                    label={u.motionState}
+                    assetCategory={u.assetCategory}
+                    stationary={u.stationary}
+                    size="sm"
+                  />
                 </td>
                 <td className="p-3 hidden sm:table-cell text-xs text-muted-foreground">
                   {u.lastUpdate ? formatDistanceToNow(u.lastUpdate, { addSuffix: true }) : '—'}

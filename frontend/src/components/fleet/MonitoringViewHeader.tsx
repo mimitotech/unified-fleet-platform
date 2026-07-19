@@ -1,14 +1,16 @@
-import { Map, List, Route, AlertTriangle, Activity, Pause, Power, MapPin } from 'lucide-react';
+import { Map, List, Route, AlertTriangle, Activity, Pause, Power, MapPin, FileText } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { FleetAssetProfile } from '@/hooks/useFleetAssetProfile';
 
-export type MonitoringViewMode = 'map' | 'list' | 'tracks' | 'violations';
+export type MonitoringViewMode = 'map' | 'list' | 'tracks' | 'violations' | 'reports';
 
 const tabs: { id: MonitoringViewMode; label: string; icon: typeof Map }[] = [
   { id: 'map', label: 'Live Map', icon: Map },
   { id: 'list', label: 'Fleet List', icon: List },
+  // Track | Events — clearer for mixed / generator fleets
   { id: 'tracks', label: 'Track', icon: Route },
   { id: 'violations', label: 'Events', icon: AlertTriangle },
+  { id: 'reports', label: 'Reports', icon: FileText },
 ];
 
 type StatusCounts = {
@@ -43,6 +45,12 @@ export function MonitoringViewHeader({ mode, onChange, fleetCount, live, counts,
   const countLabel = assetProfile?.isGeneratorOnly
     ? `${fleetCount} generator${fleetCount === 1 ? '' : 's'} tracked`
     : `${fleetCount} ${assetProfile?.unitLabelPlural ?? 'units'} tracked`;
+
+  const useRunningChip =
+    assetProfile?.isGeneratorOnly ||
+    assetProfile?.primaryType === 'machinery' ||
+    (assetProfile?.generators ?? 0) + (assetProfile?.machinery ?? 0) >
+      (assetProfile?.vehicles ?? 0);
 
   return (
     <div className="flex flex-col gap-3">
@@ -82,11 +90,22 @@ export function MonitoringViewHeader({ mode, onChange, fleetCount, live, counts,
 
       {counts && (
         <div className="flex flex-wrap gap-1.5">
-          {kpiItems.map(({ key, label, icon: Icon, className }) => (
-            <div key={key} className="monitoring-kpi">
+          {(useRunningChip
+            ? [
+                { key: 'idle' as const, label: 'Running', icon: Activity, className: 'text-status-moving' },
+                { key: 'stopped' as const, label: 'Stopped', icon: Power, className: 'text-status-stopped' },
+                { key: 'offline' as const, label: 'Offline', icon: MapPin, className: 'text-muted-foreground' },
+              ]
+            : kpiItems
+          ).map(({ key, label, icon: Icon, className }) => (
+            <div key={`${key}-${label}`} className="monitoring-kpi">
               <Icon className={cn('h-3.5 w-3.5', className)} />
               <span className="text-muted-foreground">{label}</span>
-              <span className="font-semibold tabular-nums">{counts[key]}</span>
+              <span className="font-semibold tabular-nums">
+                {useRunningChip && key === 'idle'
+                  ? counts.idle + counts.moving
+                  : counts[key]}
+              </span>
             </div>
           ))}
         </div>

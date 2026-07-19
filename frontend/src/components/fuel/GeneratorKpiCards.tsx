@@ -3,7 +3,7 @@ import { Zap, Clock, Fuel, Activity, Cog } from 'lucide-react';
 import { MetricCard } from '@/components/app/MetricCard';
 import { useGeneratorEngineHours } from '@/services/fleet';
 import { useStationaryAssets, type StationaryFuelType } from './useStationaryFuelHooks';
-import { groupSummaryUnitIds, isWialonGroupSummary } from './fuelTransactionFilters';
+import { aggregateUnitFuelColumns } from './fuelColumnMetrics';
 import type { EnrichedGenerator, FuelTransaction, Generator, Machinery } from '@/types';
 
 interface GeneratorKpiCardsProps {
@@ -23,12 +23,6 @@ interface KpiAggregates {
   avgFuelPercent: number;
   totalPowerKw: number;
   activeLoadKw: number;
-}
-
-function effectiveConsumedTx(t: FuelTransaction): number {
-  if (t.fuelUsed > 0) return t.fuelUsed;
-  if (t.section === 'theft' && t.suddenFuelDrop > 0) return t.suddenFuelDrop;
-  return 0;
 }
 
 function aggregate(
@@ -111,19 +105,16 @@ export function GeneratorKpiCards({
       runtimeByUnit.set(key, (runtimeByUnit.get(key) ?? 0) + hours);
     }
 
-    const summaryUnits = groupSummaryUnitIds(fuelTransactions, fromDate, toDate);
     const consumedByUnit = new Map<string, number>();
+    const byUnit = new Map<string, typeof fuelTransactions>();
     for (const tx of fuelTransactions) {
-      if (tx.section !== 'consumption' && tx.section !== 'theft') continue;
-      const uid = String(tx.unitId);
-      if (isWialonGroupSummary(tx)) {
-        if (!summaryUnits.has(uid)) continue;
-        if (tx.fuelUsed > 0) consumedByUnit.set(uid, tx.fuelUsed);
-        continue;
-      }
-      if (summaryUnits.has(uid)) continue;
-      const used = effectiveConsumedTx(tx);
-      if (used > 0) consumedByUnit.set(uid, (consumedByUnit.get(uid) ?? 0) + used);
+      const list = byUnit.get(String(tx.unitId)) ?? [];
+      list.push(tx);
+      byUnit.set(String(tx.unitId), list);
+    }
+    for (const [uid, unitTxs] of byUnit) {
+      const cols = aggregateUnitFuelColumns(unitTxs, { fromDate, toDate });
+      if (cols.totalUsed > 0) consumedByUnit.set(uid, cols.totalUsed);
     }
 
     return base.map<EnrichedGenerator>((g) => ({

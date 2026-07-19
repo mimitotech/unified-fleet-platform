@@ -18,7 +18,8 @@ import { loadFuelGroupMembership } from './wialonFuelAssetGroups.js';
 import type { FuelTransaction } from './wialonFuelReport/types.js';
 import { WialonFuelFleetService } from './WialonFuelFleetService.js';
 import { applyBalanceConsumption } from './wialonFuelLedger.js';
-import { missingConsumption, effectiveConsumed } from './wialonFuelReport/metrics.js';
+import { filterPlausibleFuelEvents } from './fuelEventPlausibility.js';
+import { effectiveConsumed } from './wialonFuelReport/metrics.js';
 import { supplementTransactionsWithUnitReports } from './wialonFuelUnitReportSupplement.js';
 import { dedupeFuelTransactions } from './wialonFuelReport/dedupe.js';
 import { patchTransactionUnitIds, buildUnitNameIndex } from './wialonFuelReport/unitNames.js';
@@ -157,10 +158,6 @@ function unitsForAssetCategory(
   });
 }
 
-function isStationaryCategory(assetCategory?: FuelAssetCategory): boolean {
-  return assetCategory === 'generator' || assetCategory === 'machinery';
-}
-
 export class WialonFuelReportService {
   /** Direct Wialon report fetch — used by month cache warming only. */
   static async fetchFromWialon(
@@ -175,10 +172,7 @@ export class WialonFuelReportService {
     }
   ): Promise<FuelTransaction[]> {
     const { fromTs, toTs } = parseDateRange(opts.from, opts.to, opts.days);
-    const spanDays = Math.max(1, Math.ceil((toTs - fromTs + 1) / 86400));
-    const groupConcurrency = spanDays > 60 ? 3 : spanDays > 21 ? 4 : 6;
-    const unitConcurrency = spanDays > 60 ? 4 : spanDays > 21 ? 6 : 8;
-    const stationaryUnitConcurrency = 2;
+    const groupConcurrency = 1;
     const creds = await loadTenantWialonCreds(tenantId);
     const scope: WialonReportScope = scopeFromCredentials(tenantId, creds);
     const rows = await withWialonClient(creds, async (client: WialonClient) => {
@@ -206,9 +200,8 @@ export class WialonFuelReportService {
       const unitNameToId = new Map(allUnits.map((u) => [u.nm, u.id]));
       const unitIndex = buildUnitNameIndex(allUnits);
       let transactions: FuelTransaction[] = [];
-      const stationary = isStationaryCategory(opts.assetCategory);
 
-      // Group reports carry per-unit period summaries for gensets; always run when available.
+      // Same pipeline for every FLS category: prefer group reports, then unit reports.
       if (groupTemplate) {
         const groups = await findFleetGroups(client, scope, { assetCategory: opts.assetCategory });
         const groupTxBatches = await mapWithConcurrency(groups, groupConcurrency, async (group) => {
@@ -220,6 +213,17 @@ export class WialonFuelReportService {
           }
         });
         for (const groupTxs of groupTxBatches) transactions.push(...groupTxs);
+      }
+
+      // Group reports can still return deactivated/removed units that remain in the Wialon group.
+      const activeUnitIds = new Set(allUnits.map((u) => u.id));
+      const activeUnitNames = new Set(allUnits.map((u) => u.nm.trim().toLowerCase()).filter(Boolean));
+      if (transactions.length && (activeUnitIds.size || activeUnitNames.size)) {
+        transactions = transactions.filter((t) => {
+          if (t.unitId > 0 && activeUnitIds.has(t.unitId)) return true;
+          const name = String(t.unitName || '').trim().toLowerCase();
+          return Boolean(name && activeUnitNames.has(name));
+        });
       }
 
       let targetUnits = opts.unitId
@@ -242,13 +246,14 @@ export class WialonFuelReportService {
         }
       }
 
-      // Stationary assets need unit-level fillings/drains in addition to group summaries.
-      const runUnitReports = Boolean(
-        unitTemplate && (opts.unitId || !groupTemplate || stationary),
+      // Prefer group reports. Bulk per-unit fan-out times out on large fleets — same rule for all categories.
+      const LARGE_FLEET = 12;
+      const shouldRunUnitReports = Boolean(
+        unitTemplate && (opts.unitId || (!groupTemplate && targetUnits.length < LARGE_FLEET)),
       );
-      if (runUnitReports) {
-        const concurrency = stationary ? stationaryUnitConcurrency : unitConcurrency;
-        const unitBatches = await mapWithConcurrency(targetUnits, concurrency, async (unit) => {
+      if (shouldRunUnitReports) {
+        const unitsToRun = opts.unitId ? targetUnits : targetUnits.slice(0, LARGE_FLEET);
+        const unitBatches = await mapWithConcurrency(unitsToRun, 1, async (unit) => {
           try {
             return await processUnitFuelData(client, unit, unitTemplate!, fromTs, toTs);
           } catch (err) {
@@ -257,6 +262,10 @@ export class WialonFuelReportService {
           }
         });
         for (const unitTxs of unitBatches) transactions.push(...unitTxs);
+      } else if (!opts.unitId && groupTemplate && targetUnits.length >= LARGE_FLEET) {
+        console.info(
+          `[FuelReport] Using group summaries for ${targetUnits.length} units (category=${opts.assetCategory ?? 'all'}; skip per-unit fan-out)`,
+        );
       }
 
       if (opts.unitId) {
@@ -266,15 +275,16 @@ export class WialonFuelReportService {
       patchTransactionUnitIds(transactions, unitIndex);
 
       const unitIds = opts.unitId ? [opts.unitId] : targetUnits.map((u) => u.id);
-      const needsSupplement = unitIds.some((id) => !unitHasConsumption(transactions, id));
-      if (needsSupplement && unitTemplate && !stationary) {
+      const missingConsumption = unitIds.filter((id) => !unitHasConsumption(transactions, id));
+      // Same supplement path for all categories; cap size so large fleets stay on group reports.
+      if (missingConsumption.length > 0 && unitTemplate && missingConsumption.length < LARGE_FLEET) {
         try {
           transactions = await supplementTransactionsWithUnitReports(
             tenantId,
             transactions,
             fromTs,
             toTs,
-            unitIds,
+            missingConsumption,
             opts.assetCategory,
           );
         } catch (err) {
@@ -298,7 +308,6 @@ export class WialonFuelReportService {
     tenantId: string,
     rows: FuelTransaction[],
   ): Promise<FuelTransaction[]> {
-    if (!rows.length || !missingConsumption(rows)) return rows;
     let liveFuelByUnit: Map<number, number> | undefined;
     try {
       const fleet = await WialonFuelFleetService.listAssets(tenantId);
@@ -310,7 +319,11 @@ export class WialonFuelReportService {
     } catch {
       liveFuelByUnit = undefined;
     }
-    return applyBalanceConsumption(rows, liveFuelByUnit);
+    const plausible = filterPlausibleFuelEvents(
+      rows.filter((r) => r.sensor !== 'balance'),
+      liveFuelByUnit,
+    );
+    return applyBalanceConsumption(plausible, liveFuelByUnit);
   }
 
   private static startExactRangeFetch(

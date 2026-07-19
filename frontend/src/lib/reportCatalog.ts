@@ -26,7 +26,7 @@ export const LIVE_REPORTS: LiveReportDef[] = [
   {
     id: 'fleet-status',
     label: 'Live Fleet Status',
-    description: 'Real-time Wialon status, speed, fuel (FLS), position and connectivity for every unit.',
+    description: 'Real-time status, speed, fuel (FLS), position and connectivity for every unit.',
     category: 'Fleet — All Assets',
     scope: 'fleet',
     needsPeriod: false,
@@ -37,7 +37,7 @@ export const LIVE_REPORTS: LiveReportDef[] = [
       { key: 'status', label: 'Status' },
       { key: 'motionState', label: 'Motion' },
       { key: 'speedKmh', label: 'Speed (km/h)', align: 'right' },
-      { key: 'fuelLive', label: 'Fuel (Wialon)' },
+      { key: 'fuelLive', label: 'Fuel (live)' },
       { key: 'fuelPercent', label: 'Fuel %', align: 'right' },
       { key: 'odometerKm', label: 'Odometer (km)', align: 'right' },
       { key: 'engineHours', label: 'Engine hrs', align: 'right' },
@@ -66,7 +66,7 @@ export const LIVE_REPORTS: LiveReportDef[] = [
   {
     id: 'fleet-fuel',
     label: 'Live Fuel Levels',
-    description: 'Accurate Wialon FLS tank readings — live value, filtered level, fill events and sensor source.',
+    description: 'Accurate FLS tank readings — live value, filtered level, fill events and sensor source.',
     category: 'Fuel',
     scope: 'fleet',
     needsPeriod: false,
@@ -87,7 +87,7 @@ export const LIVE_REPORTS: LiveReportDef[] = [
   {
     id: 'trip-history',
     label: 'Trip History',
-    description: 'Wialon unit/get_trips — start, end, distance, speeds and fuel used per trip.',
+    description: 'Trip history — start, end, distance, speeds and fuel used per trip.',
     category: 'Trips & Movement',
     scope: 'both',
     needsPeriod: true,
@@ -118,7 +118,7 @@ export const LIVE_REPORTS: LiveReportDef[] = [
       { key: 'plate', label: 'Plate' },
       { key: 'status', label: 'Status' },
       { key: 'speedKmh', label: 'Speed', align: 'right' },
-      { key: 'fuelLive', label: 'Fuel (Wialon)' },
+      { key: 'fuelLive', label: 'Fuel (live)' },
       { key: 'fuelPercent', label: 'Fuel %', align: 'right' },
       { key: 'odometerKm', label: 'Odometer', align: 'right' },
       { key: 'latitude', label: 'Latitude', align: 'right' },
@@ -129,7 +129,7 @@ export const LIVE_REPORTS: LiveReportDef[] = [
   {
     id: 'unit-sensors',
     label: 'Sensors & Parameters',
-    description: 'Live Wialon sensors, parameters and custom fields for one unit.',
+    description: 'Live sensors, parameters and custom fields for one unit.',
     category: 'Single Asset',
     scope: 'unit',
     needsPeriod: false,
@@ -144,7 +144,7 @@ export const LIVE_REPORTS: LiveReportDef[] = [
   {
     id: 'events',
     label: 'Alerts & Violations',
-    description: 'Live alerts, eco violations and video events from Wialon integrations.',
+    description: 'Live alerts, eco violations and video events from connected telematics.',
     category: 'Safety & Events',
     scope: 'fleet',
     needsPeriod: false,

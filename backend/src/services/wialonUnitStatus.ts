@@ -94,18 +94,22 @@ function statusFromMotionStateText(text: string): WialonHostingStatus['status'] 
   return undefined;
 }
 
+export type WialonStatusOptions = {
+  /** Generators / machinery — never use speed or trip "moving". */
+  stationary?: boolean;
+};
+
 /**
- * Wialon Hosting status — netconn, message age, trip detector min speed, motion state sensor, ignition.
+ * Wialon Hosting status — netconn, message age, trip/motion (vehicles), ignition (all).
+ * Stationary assets: offline | idle (engine on) | stopped — never moving.
  */
 export function deriveWialonHostingStatus(
   item: WialonSearchItem,
-  calcSensors?: Array<{ n: string; v: string }>
+  calcSensors?: Array<{ n: string; v: string }>,
+  opts?: WialonStatusOptions,
 ): WialonHostingStatus {
+  const stationary = opts?.stationary === true;
   const motionState = motionStateFromCalc(item, calcSensors);
-  if (motionState) {
-    const fromMotion = statusFromMotionStateText(motionState);
-    if (fromMotion) return { status: fromMotion, motionState };
-  }
 
   if ((item as { netconn?: boolean }).netconn === false) {
     return { status: 'offline', motionState };
@@ -114,6 +118,27 @@ export function deriveWialonHostingStatus(
   const age = lastMessageAgeSec(item);
   if (age == null || age > DEFAULT_OFFLINE_SEC) {
     return { status: 'offline', motionState };
+  }
+
+  if (stationary) {
+    const ign = ignitionFromItem(item);
+    if (ign === true) return { status: 'idle', motionState: motionState || 'Running' };
+    if (ign === false) return { status: 'stopped', motionState: motionState || 'Stopped' };
+    if (motionState) {
+      const t = motionState.toLowerCase();
+      if (t.includes('run') || t.includes('idle') || t.includes('on')) {
+        return { status: 'idle', motionState };
+      }
+      if (t.includes('stop') || t.includes('off')) {
+        return { status: 'stopped', motionState };
+      }
+    }
+    return { status: 'stopped', motionState };
+  }
+
+  if (motionState) {
+    const fromMotion = statusFromMotionStateText(motionState);
+    if (fromMotion) return { status: fromMotion, motionState };
   }
 
   const speed = item.pos?.s ?? 0;

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { AppLayout } from '@/components/app/AppLayout';
@@ -7,7 +7,6 @@ import { useAuth } from '@/providers/AuthProvider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -16,72 +15,127 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Badge } from '@/components/ui/badge';
 import { useTenant } from '@/hooks/useTenant';
-import { useTenantBranding } from '@/hooks/useTenantBranding';
-import { TenantLogo } from '@/components/shared/TenantLogo';
-import { TENANT_BRAND_DEFAULTS } from '@/lib/tenantBranding';
 import { ChangePasswordForm } from '@/components/shared/ChangePasswordForm';
-import { ROLE_LABELS } from '@/lib/systemRoles';
+import { ROLE_LABELS, TENANT_ROLES } from '@/lib/systemRoles';
 import { notify } from '@/lib/notify';
 import { LoadingButton } from '@/components/shared/LoadingButton';
-import { WialonConnectionCard } from '@/components/app/WialonConnectionCard';
+import { formatDistanceToNow } from 'date-fns';
+import { Copy, KeyRound, MoreHorizontal, Pencil, UserPlus, UserX, UserCheck } from 'lucide-react';
+
+interface TenantUser {
+  id: string;
+  email: string;
+  full_name: string;
+  role: string;
+  is_active: boolean;
+  last_login_at: string | null;
+}
+
+const EMPTY_CREATE = { fullName: '', email: '', role: 'viewer', password: '' };
 
 export default function Settings() {
   const [searchParams] = useSearchParams();
-  const defaultTab = searchParams.get('tab') || 'account';
+  const rawTab = searchParams.get('tab');
   const { user } = useAuth();
   const qc = useQueryClient();
   const isAdmin = user?.role === 'tenant_admin' || user?.role === 'platform_admin' || user?.role === 'super_admin';
+  const defaultTab = rawTab === 'users' && isAdmin ? 'users' : 'account';
   const { data: tenant } = useTenant();
-  const branding = useTenantBranding();
 
-  const { data: prefs } = useQuery({ queryKey: ['preferences'], queryFn: () => clientApi.getPreferences() });
   const { data: tenantUsers } = useQuery({
     queryKey: ['clientUsers'],
     queryFn: () => clientApi.getTenantUsers(),
     enabled: isAdmin,
   });
+  const users = (tenantUsers as TenantUser[] | undefined) || [];
 
-  const [form, setForm] = useState({
-    language: 'en', timezone: 'UTC', dateFormat: 'YYYY-MM-DD',
-    timeFormat: '24h', unitSystem: 'metric',
-    emailNotifications: true, inAppNotifications: true, smsNotifications: false,
-  });
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createForm, setCreateForm] = useState(EMPTY_CREATE);
+  const [editUser, setEditUser] = useState<TenantUser | null>(null);
+  const [editForm, setEditForm] = useState({ fullName: '', role: 'viewer' });
+  const [removeUser, setRemoveUser] = useState<TenantUser | null>(null);
+  const [resetUser, setResetUser] = useState<TenantUser | null>(null);
+  const [tempPassword, setTempPassword] = useState<{ email: string; password: string } | null>(null);
 
-  const p = prefs as Record<string, unknown> | undefined;
+  const refresh = () => qc.invalidateQueries({ queryKey: ['clientUsers'] });
 
-  useEffect(() => {
-    if (!p) return;
-    setForm({
-      language: String(p.language || 'en'),
-      timezone: String(p.timezone || 'UTC'),
-      dateFormat: String(p.date_format || p.dateFormat || 'YYYY-MM-DD'),
-      timeFormat: String(p.time_format || p.timeFormat || '24h'),
-      unitSystem: String(p.unit_system || p.unitSystem || 'metric'),
-      emailNotifications: Boolean(p.email_notifications ?? p.emailNotifications ?? true),
-      inAppNotifications: Boolean(p.in_app_notifications ?? p.inAppNotifications ?? true),
-      smsNotifications: Boolean(p.sms_notifications ?? p.smsNotifications ?? false),
-    });
-  }, [p]);
-
-  const savePrefs = useMutation({
-    mutationFn: () => clientApi.updatePreferences(form),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['preferences'] });
-      notify.success('Preferences saved', 'Your settings have been updated');
+  const createMutation = useMutation({
+    mutationFn: () =>
+      clientApi.createTenantUser({
+        email: createForm.email.trim(),
+        fullName: createForm.fullName.trim() || undefined,
+        role: createForm.role,
+        password: createForm.password || undefined,
+      }),
+    onSuccess: (created) => {
+      refresh();
+      setCreateOpen(false);
+      const res = created as { temporaryPassword?: string };
+      if (res?.temporaryPassword) {
+        setTempPassword({ email: createForm.email.trim(), password: res.temporaryPassword });
+      } else {
+        notify.success('User created', `${createForm.email.trim()} can now sign in`);
+      }
+      setCreateForm(EMPTY_CREATE);
     },
+    onError: (e) => notify.error('Could not create user', (e as Error).message),
   });
+
+  const updateMutation = useMutation({
+    mutationFn: (args: { userId: string; data: { fullName?: string; role?: string; isActive?: boolean } }) =>
+      clientApi.updateTenantUser(args.userId, args.data),
+    onSuccess: () => {
+      refresh();
+      setEditUser(null);
+      notify.success('User updated');
+    },
+    onError: (e) => notify.error('Could not update user', (e as Error).message),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (userId: string) => clientApi.removeTenantUser(userId),
+    onSuccess: () => {
+      refresh();
+      setRemoveUser(null);
+      notify.success('Access removed', 'The user can no longer sign in');
+    },
+    onError: (e) => notify.error('Could not remove user', (e as Error).message),
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: (u: TenantUser) => clientApi.resetTenantUserPassword(u.id),
+    onSuccess: (res, u) => {
+      setResetUser(null);
+      const r = res as { temporaryPassword: string };
+      setTempPassword({ email: u.email, password: r.temporaryPassword });
+    },
+    onError: (e) => notify.error('Could not reset password', (e as Error).message),
+  });
+
+  const copyTempPassword = async () => {
+    if (!tempPassword) return;
+    await navigator.clipboard.writeText(tempPassword.password);
+    notify.success('Copied', 'Temporary password copied to clipboard');
+  };
+
+  const openEdit = (u: TenantUser) => {
+    setEditUser(u);
+    setEditForm({ fullName: u.full_name || '', role: u.role });
+  };
 
   return (
-    <AppLayout title="Settings" subtitle="Preferences and tenant configuration">
+    <AppLayout title="Settings" subtitle="Account and user management">
       <Tabs defaultValue={defaultTab} key={defaultTab}>
-        <TabsList className="bg-muted/80 border border-primary/10">
+        <TabsList className="branded-tabs">
           <TabsTrigger value="account">Account</TabsTrigger>
-          <TabsTrigger value="preferences">Preferences</TabsTrigger>
-          <TabsTrigger value="notifications">Notifications</TabsTrigger>
-          {isAdmin && <TabsTrigger value="wialon">Wialon</TabsTrigger>}
-          {isAdmin && <TabsTrigger value="branding">Branding</TabsTrigger>}
           {isAdmin && <TabsTrigger value="users">Users</TabsTrigger>}
         </TabsList>
 
@@ -105,147 +159,296 @@ export default function Settings() {
           <ChangePasswordForm />
         </TabsContent>
 
-        <TabsContent value="preferences" className="mt-4">
-          <Card>
-            <CardHeader><CardTitle>General</CardTitle></CardHeader>
-            <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl">
-              <div>
-                <Label>Language</Label>
-                <Select value={form.language} onValueChange={(v) => setForm({ ...form, language: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="en">English</SelectItem>
-                    <SelectItem value="es">Spanish</SelectItem>
-                    <SelectItem value="fr">French</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div><Label>Timezone</Label><Input value={form.timezone} onChange={(e) => setForm({ ...form, timezone: e.target.value })} /></div>
-              <div>
-                <Label>Time Format</Label>
-                <Select value={form.timeFormat} onValueChange={(v) => setForm({ ...form, timeFormat: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="24h">24 hour</SelectItem>
-                    <SelectItem value="12h">12 hour</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Units</Label>
-                <Select value={form.unitSystem} onValueChange={(v) => setForm({ ...form, unitSystem: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="metric">Metric</SelectItem>
-                    <SelectItem value="imperial">Imperial</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <LoadingButton
-                onClick={() => savePrefs.mutate()}
-                loading={savePrefs.isPending}
-                loadingText="Saving..."
-                className="md:col-span-2 w-fit"
-              >
-                Save Preferences
-              </LoadingButton>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="notifications" className="mt-4">
-          <Card>
-            <CardHeader><CardTitle>Notification Settings</CardTitle></CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between"><Label>Email notifications</Label><Switch checked={form.emailNotifications} onCheckedChange={(v) => setForm({ ...form, emailNotifications: v })} /></div>
-              <div className="flex items-center justify-between"><Label>In-app notifications</Label><Switch checked={form.inAppNotifications} onCheckedChange={(v) => setForm({ ...form, inAppNotifications: v })} /></div>
-              <div className="flex items-center justify-between"><Label>SMS notifications</Label><Switch checked={form.smsNotifications} onCheckedChange={(v) => setForm({ ...form, smsNotifications: v })} /></div>
-              <LoadingButton
-                onClick={() => savePrefs.mutate()}
-                loading={savePrefs.isPending}
-                loadingText="Saving..."
-              >
-                Save notifications
-              </LoadingButton>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
         {isAdmin && (
-          <TabsContent value="wialon" className="mt-4">
-            <WialonConnectionCard />
-          </TabsContent>
-        )}
-
-        {isAdmin && (
-          <TabsContent value="branding" className="mt-4">
+          <TabsContent value="users" className="mt-4">
             <Card>
-              <CardHeader>
-                <CardTitle>Organization branding</CardTitle>
+              <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
+                <div>
+                  <CardTitle>Team members</CardTitle>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Create accounts, assign roles, and reset passwords for your organization.
+                  </p>
+                </div>
+                <Button onClick={() => setCreateOpen(true)} className="shrink-0">
+                  <UserPlus className="w-4 h-4 mr-2" /> Add user
+                </Button>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center gap-4 p-4 rounded-xl border border-primary/15 bg-muted/30">
-                  <TenantLogo logoUrl={branding.logoUrl} name={branding.name} size="lg" variant="on-light" />
-                  <div>
-                    <p className="text-xl font-bold text-primary">{branding.name}</p>
-                    <p className="text-sm text-muted-foreground">{tenant?.slug}</p>
-                    {tenant?.contactEmail && (
-                      <p className="text-sm text-muted-foreground mt-1">{tenant.contactEmail}</p>
+              <CardContent className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Email</TableHead>
+                      <TableHead>Role</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="hidden md:table-cell">Last sign-in</TableHead>
+                      <TableHead className="w-12" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {users.map((u) => {
+                      const isSelf = u.id === user?.id;
+                      return (
+                        <TableRow key={u.id} className={!u.is_active ? 'opacity-60' : undefined}>
+                          <TableCell className="font-medium">
+                            {u.full_name}
+                            {isSelf && <span className="ml-2 text-xs text-muted-foreground">(you)</span>}
+                          </TableCell>
+                          <TableCell>{u.email}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{ROLE_LABELS[u.role] || u.role}</Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={u.is_active ? 'default' : 'secondary'}>
+                              {u.is_active ? 'Active' : 'Inactive'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell text-muted-foreground text-sm">
+                            {u.last_login_at
+                              ? formatDistanceToNow(new Date(u.last_login_at), { addSuffix: true })
+                              : 'Never'}
+                          </TableCell>
+                          <TableCell>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" aria-label="User actions">
+                                  <MoreHorizontal className="w-4 h-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => openEdit(u)}>
+                                  <Pencil className="w-4 h-4 mr-2" /> Edit
+                                </DropdownMenuItem>
+                                {!isSelf && (
+                                  <>
+                                    <DropdownMenuItem onClick={() => setResetUser(u)}>
+                                      <KeyRound className="w-4 h-4 mr-2" /> Reset password
+                                    </DropdownMenuItem>
+                                    {u.is_active ? (
+                                      <DropdownMenuItem
+                                        className="text-destructive focus:text-destructive"
+                                        onClick={() => setRemoveUser(u)}
+                                      >
+                                        <UserX className="w-4 h-4 mr-2" /> Remove access
+                                      </DropdownMenuItem>
+                                    ) : (
+                                      <DropdownMenuItem
+                                        onClick={() => updateMutation.mutate({ userId: u.id, data: { isActive: true } })}
+                                      >
+                                        <UserCheck className="w-4 h-4 mr-2" /> Reactivate
+                                      </DropdownMenuItem>
+                                    )}
+                                  </>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    {users.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                          No users yet
+                        </TableCell>
+                      </TableRow>
                     )}
-                  </div>
-                </div>
-                <div className="grid grid-cols-3 gap-3 max-w-md">
-                  <div className="rounded-lg border p-3 text-center">
-                    <div className="h-8 rounded-md mb-2" style={{ backgroundColor: branding.primaryColor }} />
-                    <p className="text-xs font-medium">Primary</p>
-                    <p className="text-[10px] text-muted-foreground font-mono">{branding.primaryColor}</p>
-                  </div>
-                  <div className="rounded-lg border p-3 text-center">
-                    <div className="h-8 rounded-md mb-2" style={{ backgroundColor: branding.secondaryColor }} />
-                    <p className="text-xs font-medium">Secondary</p>
-                    <p className="text-[10px] text-muted-foreground font-mono">{branding.secondaryColor}</p>
-                  </div>
-                  <div className="rounded-lg border p-3 text-center">
-                    <div className="h-8 rounded-md mb-2" style={{ backgroundColor: branding.accentColor }} />
-                    <p className="text-xs font-medium">Accent</p>
-                    <p className="text-[10px] text-muted-foreground font-mono">{branding.accentColor}</p>
-                  </div>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  Colors and logo are configured in Platform Admin. Unset values use MAMS defaults
-                  ({TENANT_BRAND_DEFAULTS.primaryColor} primary).
-                </p>
+                  </TableBody>
+                </Table>
               </CardContent>
             </Card>
           </TabsContent>
         )}
-
-        {isAdmin && (
-          <TabsContent value="users" className="mt-4">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(tenantUsers as Array<Record<string, unknown>>)?.map((u) => (
-                  <TableRow key={String(u.id)}>
-                    <TableCell>{String(u.full_name)}</TableCell>
-                    <TableCell>{String(u.email)}</TableCell>
-                    <TableCell><Badge variant="outline">{String(u.role)}</Badge></TableCell>
-                    <TableCell>{u.is_active ? 'Active' : 'Inactive'}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            <p className="text-sm text-muted-foreground mt-4">Manage users from the Platform Admin tenant detail page.</p>
-          </TabsContent>
-        )}
       </Tabs>
+
+      {/* Create user */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add user</DialogTitle>
+            <DialogDescription>
+              New users are asked to change their password on first sign-in.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Full name</Label>
+              <Input
+                value={createForm.fullName}
+                onChange={(e) => setCreateForm({ ...createForm, fullName: e.target.value })}
+                placeholder="Jane Doe"
+              />
+            </div>
+            <div>
+              <Label>Email</Label>
+              <Input
+                type="email"
+                value={createForm.email}
+                onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })}
+                placeholder="jane@company.com"
+              />
+            </div>
+            <div>
+              <Label>Role</Label>
+              <Select value={createForm.role} onValueChange={(v) => setCreateForm({ ...createForm, role: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {TENANT_ROLES.map((r) => (
+                    <SelectItem key={r} value={r}>{ROLE_LABELS[r] || r}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Password <span className="text-muted-foreground font-normal">(optional — leave blank to auto-generate)</span></Label>
+              <Input
+                type="text"
+                value={createForm.password}
+                onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
+                placeholder="Auto-generate"
+                autoComplete="off"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <LoadingButton
+              onClick={() => createMutation.mutate()}
+              loading={createMutation.isPending}
+              loadingText="Creating..."
+              disabled={!createForm.email.trim()}
+            >
+              Create user
+            </LoadingButton>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit user */}
+      <Dialog open={!!editUser} onOpenChange={(o) => !o && setEditUser(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit user</DialogTitle>
+            <DialogDescription>{editUser?.email}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Full name</Label>
+              <Input
+                value={editForm.fullName}
+                onChange={(e) => setEditForm({ ...editForm, fullName: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label>Role</Label>
+              <Select
+                value={editForm.role}
+                onValueChange={(v) => setEditForm({ ...editForm, role: v })}
+                disabled={editUser?.id === user?.id}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {TENANT_ROLES.map((r) => (
+                    <SelectItem key={r} value={r}>{ROLE_LABELS[r] || r}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {editUser?.id === user?.id && (
+                <p className="text-xs text-muted-foreground mt-1">You cannot change your own role.</p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditUser(null)}>Cancel</Button>
+            <LoadingButton
+              onClick={() =>
+                editUser &&
+                updateMutation.mutate({
+                  userId: editUser.id,
+                  data: {
+                    fullName: editForm.fullName.trim() || undefined,
+                    role: editUser.id === user?.id ? undefined : editForm.role,
+                  },
+                })
+              }
+              loading={updateMutation.isPending}
+              loadingText="Saving..."
+            >
+              Save changes
+            </LoadingButton>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Remove access confirmation */}
+      <Dialog open={!!removeUser} onOpenChange={(o) => !o && setRemoveUser(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Remove access</DialogTitle>
+            <DialogDescription>
+              {removeUser?.full_name} ({removeUser?.email}) will no longer be able to sign in.
+              You can reactivate them later.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemoveUser(null)}>Cancel</Button>
+            <LoadingButton
+              variant="destructive"
+              onClick={() => removeUser && removeMutation.mutate(removeUser.id)}
+              loading={removeMutation.isPending}
+              loadingText="Removing..."
+            >
+              Remove access
+            </LoadingButton>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset password confirmation */}
+      <Dialog open={!!resetUser} onOpenChange={(o) => !o && setResetUser(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reset password</DialogTitle>
+            <DialogDescription>
+              Generate a new temporary password for {resetUser?.full_name} ({resetUser?.email}).
+              They will be asked to change it on next sign-in.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResetUser(null)}>Cancel</Button>
+            <LoadingButton
+              onClick={() => resetUser && resetMutation.mutate(resetUser)}
+              loading={resetMutation.isPending}
+              loadingText="Resetting..."
+            >
+              Reset password
+            </LoadingButton>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Temporary password display */}
+      <Dialog open={!!tempPassword} onOpenChange={(o) => !o && setTempPassword(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Temporary password</DialogTitle>
+            <DialogDescription>
+              Share this with {tempPassword?.email}. It is shown only once — they must change it on first sign-in.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 rounded-md border bg-muted px-3 py-2 font-mono text-sm select-all">
+              {tempPassword?.password}
+            </code>
+            <Button variant="outline" size="sm" onClick={() => void copyTempPassword()} aria-label="Copy password">
+              <Copy className="w-4 h-4" />
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setTempPassword(null)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AppLayout>
   );
 }

@@ -19,10 +19,14 @@ import {
 import { FleetUnitSelect } from '@/components/fleet/FleetUnitSelect';
 import { LoadingButton } from '@/components/shared/LoadingButton';
 import { notify } from '@/lib/notify';
-import { Route, Clock, Play, CheckCircle, Plus } from 'lucide-react';
+import { Route, Clock, Play, CheckCircle, Plus, FileText } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { WialonRoutesPanel } from '@/components/app/WialonLivePanels';
 import type { FleetUnit } from '@/lib/fleetUnits';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { GenericModuleReports } from '@/components/reports/moduleReportPanels';
+import { safeArray } from '@/lib/safeArray';
+import { CHART } from '@/lib/chartColors';
 
 const statusConfig: Record<string, { label: string; className: string }> = {
   scheduled: { label: 'Scheduled', className: 'bg-info/15 text-info' },
@@ -80,6 +84,12 @@ export default function RoutesPage() {
 
   return (
     <AppLayout title="Routes" subtitle="Route planning and tracking">
+      <Tabs defaultValue="routes" className="space-y-4">
+        <TabsList className="branded-tabs">
+          <TabsTrigger value="routes">Routes</TabsTrigger>
+          <TabsTrigger value="reports" className="gap-1"><FileText className="h-3.5 w-3.5" />Reports</TabsTrigger>
+        </TabsList>
+        <TabsContent value="routes" className="mt-0 space-y-6">
       <div className="space-y-6">
         <WialonRoutesPanel />
         <div className="stat-strip-4">
@@ -187,6 +197,51 @@ export default function RoutesPage() {
           )}
         </div>
       </div>
+        </TabsContent>
+        <TabsContent value="reports" className="mt-0">
+          <GenericModuleReports
+            moduleLabel="Routes"
+            title="Routes executive"
+            blurb="Planned and active routes for operations."
+            kpis={[
+              { label: 'Total', value: stats?.total ?? safeArray(routes).length },
+              { label: 'Active', value: stats?.inProgress ?? 0 },
+              { label: 'Scheduled', value: stats?.scheduled ?? 0 },
+              { label: 'Completed', value: stats?.completed ?? 0 },
+            ]}
+            columns={[
+              { key: 'name', label: 'Route' },
+              { key: 'asset', label: 'Asset' },
+              { key: 'status', label: 'Status' },
+              { key: 'distance', label: 'Distance', align: 'right' },
+            ]}
+            rows={(safeArray(routes) as Array<{ name?: string; assetPlate?: string; assetName?: string; status?: string; distance?: number }>).map((r) => ({
+              name: r.name || '—',
+              asset: r.assetPlate || r.assetName || '—',
+              status: r.status || '—',
+              distance: `${r.distance ?? 0} km`,
+              distanceKm: r.distance ?? 0,
+            }))}
+            charts={{
+              heading: 'Asset performance · route analytics',
+              categoryKey: 'name',
+              bar: {
+                title: 'Distance by route',
+                subtitle: 'Standing bars — planned / recorded kilometres',
+                metrics: [{ key: 'distanceKm', label: 'Distance (km)', color: CHART.brand }],
+                topN: 8,
+              },
+              secondary: {
+                type: 'category',
+                title: 'Route status mix',
+                subtitle: 'Share of routes by operational status',
+                groupKey: 'status',
+                as: 'pie',
+              },
+            }}
+          />
+        </TabsContent>
+      </Tabs>
     </AppLayout>
   );
 }

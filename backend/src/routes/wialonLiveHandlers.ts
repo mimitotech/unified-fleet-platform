@@ -3,6 +3,7 @@ import { success, error } from '../utils/response.js';
 import { WialonLiveService } from '../services/WialonLiveService.js';
 import type { WialonCredentialsInput } from '../services/WialonHierarchyService.js';
 import { query } from '../config/database.js';
+import { fetchCachedUnitIcon } from '../services/wialonIconCache.js';
 
 type CredsLoader = (req: Request) => Promise<WialonCredentialsInput>;
 
@@ -183,10 +184,10 @@ export function createWialonLiveHandlers(loadCreds: CredsLoader) {
       const ugi = Math.max(1, parseInt(String(req.query.v || '1'), 10) || 1);
       try {
         const creds = await loadCreds(req);
-        const buf = await WialonLiveService.fetchUnitIcon(creds, unitId, size, ugi);
+        const buf = await fetchCachedUnitIcon(creds, unitId, size, ugi);
         res.setHeader('Content-Type', 'image/png');
-        res.setHeader('Cache-Control', 'private, max-age=300');
-        return res.send(Buffer.from(buf));
+        res.setHeader('Cache-Control', 'private, max-age=86400, immutable');
+        return res.send(buf);
       } catch (e) {
         return error(res, (e as Error).message);
       }

@@ -8,7 +8,8 @@ import {
   monthlyFuelTrend,
 } from './fuelTransactionAggregates.js';
 import { applyBalanceConsumption } from './wialonFuelLedger.js';
-import { missingConsumption } from './wialonFuelReport/metrics.js';
+import { filterPlausibleFuelEvents } from './fuelEventPlausibility.js';
+import { decodePeriodLocation } from './wialonFuelReport/periodMeta.js';
 import type { FuelAssetCategory } from './wialonAssetCategory.js';
 import type { FuelTransaction } from './wialonFuelReport/types.js';
 import { logger } from '../config/logger.js';
@@ -39,6 +40,8 @@ function dbRowToFuelTransaction(r: Record<string, unknown>): FuelTransaction {
   const finalLevel = Number(r.finalLevel ?? 0);
   const suddenFuelDrop = Number(r.suddenFuelDrop ?? 0);
   const section = r.section as FuelTransaction['section'];
+  const sensor = String(r.sensor ?? 'db');
+  const decoded = decodePeriodLocation(String(r.location ?? ''));
   return {
     id: String(r.id),
     unitId: Number(r.unitId),
@@ -47,11 +50,11 @@ function dbRowToFuelTransaction(r: Record<string, unknown>): FuelTransaction {
     tank,
     timestamp: Number(r.timestamp),
     time: String(r.timeStr ?? r.time ?? ''),
-    location: String(r.location ?? ''),
+    location: decoded.location,
     initialLevel,
     finalLevel,
     filled: Number(r.filled ?? 0),
-    sensor: String(r.sensor ?? 'db'),
+    sensor,
     fuelUsed: Number(r.fuelUsed ?? 0),
     mileage: Number(r.mileage ?? 0),
     duration: String(r.duration ?? ''),
@@ -63,17 +66,22 @@ function dbRowToFuelTransaction(r: Record<string, unknown>): FuelTransaction {
     longitude: r.longitude != null ? Number(r.longitude) : undefined,
     mainTankLevel: tank === 'main' ? finalLevel : undefined,
     reserveTankLevel: tank === 'reserve' ? finalLevel : undefined,
+    periodFromTs: decoded.periodFromTs,
+    periodToTs: decoded.periodToTs,
   };
 }
 
 async function resolveUnitIdsForCategory(tenantId: string, assetCategory?: FuelAssetCategory) {
-  if (!assetCategory) return undefined;
   try {
     const { assets } = await WialonFuelFleetService.listAssets(tenantId);
-    const unitIds = assets.filter((a) => a.assetType === assetCategory).map((a) => String(a.unitId));
+    const scoped = assetCategory
+      ? assets.filter((a) => a.assetType === assetCategory)
+      : assets;
+    // listAssets already excludes Wialon-deactivated units — use as the only allow-list.
+    const unitIds = scoped.map((a) => String(a.unitId));
     return unitIds.length ? unitIds : undefined;
   } catch (err) {
-    logger.debug(`[FuelDbRead] category unit list skipped tenant=${tenantId} category=${assetCategory}`, err);
+    logger.debug(`[FuelDbRead] active unit list skipped tenant=${tenantId} category=${assetCategory}`, err);
     return undefined;
   }
 }
@@ -83,7 +91,8 @@ async function enrichWithBalanceConsumption(
   tenantId: string,
   rows: FuelTransaction[],
 ): Promise<FuelTransaction[]> {
-  if (!rows.length || !missingConsumption(rows)) return rows;
+  // Drop previously persisted synthetic balance rows — recompute with live guards only.
+  const withoutBalance = rows.filter((r) => r.sensor !== 'balance');
   let liveFuelByUnit: Map<number, number> | undefined;
   try {
     const { assets } = await WialonFuelFleetService.listAssets(tenantId);
@@ -95,7 +104,10 @@ async function enrichWithBalanceConsumption(
   } catch {
     liveFuelByUnit = undefined;
   }
-  return applyBalanceConsumption(rows, liveFuelByUnit);
+
+  const plausible = filterPlausibleFuelEvents(withoutBalance, liveFuelByUnit);
+  // applyBalanceConsumption decides per-unit (skips units that already have report consumption).
+  return applyBalanceConsumption(plausible, liveFuelByUnit);
 }
 
 async function readTransactionsFromDb(opts: {
@@ -115,17 +127,13 @@ async function readTransactionsFromDb(opts: {
   const params: unknown[] = [opts.tenantId, opts.fromTs, opts.toTs];
 
   const unitIds = await resolveUnitIdsForCategory(opts.tenantId, opts.assetCategory);
-  if (opts.assetCategory) {
-    sql += ` AND (asset_category = $${params.length + 1}`;
-    params.push(opts.assetCategory);
-    if (unitIds && unitIds.length) {
-      sql += ` OR unit_id = ANY($${params.length + 1})`;
-      params.push(unitIds);
-    }
-    sql += `)`;
-  } else if (unitIds && unitIds.length) {
+  if (unitIds && unitIds.length) {
+    // Strict allow-list: only currently active Wialon units (disabled/removed excluded).
     sql += ` AND unit_id = ANY($${params.length + 1})`;
     params.push(unitIds);
+  } else if (opts.assetCategory) {
+    sql += ` AND asset_category = $${params.length + 1}`;
+    params.push(opts.assetCategory);
   }
   if (opts.unitId != null) {
     sql += ` AND unit_id = $${params.length + 1}`;
@@ -206,6 +214,54 @@ function buildResponse(
     fetchedAt: new Date().toISOString(),
     lastSyncedAt: lastSyncedAt ?? null,
   };
+}
+
+async function applyStationFilledToTransactions(
+  tenantId: string,
+  fromDate: string,
+  toDate: string,
+  transactions: FuelTransaction[],
+): Promise<FuelTransaction[]> {
+  if (!fromDate || !toDate || !transactions.length) return transactions;
+  try {
+    const { FuelVarianceService } = await import('./FuelVarianceService.js');
+    const { normalizePlateKey } = await import('./FuelStationSheetService.js');
+    const { extractPlateFromName } = await import('./unitPlateUtils.js');
+    const stationByKey = await FuelVarianceService.getStationTotalsByKey(tenantId, fromDate, toDate);
+    if (!stationByKey.size) return transactions;
+
+    const unitNames = [...new Set(transactions.map((t) => t.unitName).filter(Boolean))];
+    const assigned = new Map<string, number>();
+    const usedKeys = new Set<string>();
+    for (const unitName of unitNames) {
+      const keys = [
+        normalizePlateKey(extractPlateFromName(unitName) || ''),
+        normalizePlateKey(unitName),
+      ].filter(Boolean);
+      let liters = 0;
+      for (const key of keys) {
+        const st = stationByKey.get(key);
+        if (!st || usedKeys.has(key)) continue;
+        liters += st.stationLiters;
+        usedKeys.add(key);
+      }
+      if (liters > 0) assigned.set(unitName, liters);
+    }
+    if (!assigned.size) return transactions;
+
+    const applied = new Set<string>();
+    return transactions.map((t) => {
+      if (t.section !== 'filling') return t;
+      if (applied.has(t.unitName)) return t;
+      const station = assigned.get(t.unitName);
+      if (!(station && station > 0)) return t;
+      applied.add(t.unitName);
+      return { ...t, filledStation: station };
+    });
+  } catch (err) {
+    logger.debug(`[FuelDbRead] station fill enrich skipped tenant=${tenantId}`, err);
+    return transactions;
+  }
 }
 
 export class FuelDbReadService {
@@ -313,29 +369,34 @@ export class FuelDbReadService {
     const cursor = await getSyncCursor(tenantId, cursorKey);
 
     if (opts.refresh) {
-      const txs = await WialonFuelDbSyncService.syncRangeToDb({
+      // Queue full Wialon sync in background — never block HTTP for large fleets.
+      this.queueBackgroundSync({
         tenantId,
-        from: fromDate,
-        to: toDate,
+        fromDate,
+        toDate,
         assetCategory: opts.assetCategory,
         refresh: true,
-        unitId: opts.unitId,
       });
-      await touchSyncCursor(tenantId, cursorKey, { success: true, rowCount: txs.length, error: null });
-      let transactions = await enrichWithBalanceConsumption(tenantId, txs);
-      if (opts.unitId != null) {
-        transactions = transactions.filter((t) => t.unitId === opts.unitId);
-      }
+      let transactions = await readTransactionsFromDb({
+        tenantId,
+        fromTs,
+        toTs,
+        assetCategory: opts.assetCategory,
+        unitId: opts.unitId,
+        rowLimit,
+      });
+      transactions = await enrichWithBalanceConsumption(tenantId, transactions);
+      transactions = await applyStationFilledToTransactions(tenantId, fromDate, toDate, transactions);
       return buildResponse(
         transactions,
         fromDate,
         toDate,
         fromTs,
         toTs,
-        'wialon',
-        false,
-        false,
-        new Date().toISOString(),
+        transactions.length ? 'db' : 'warming',
+        transactions.length === 0,
+        true,
+        cursor?.last_success_at,
       );
     }
 
@@ -348,6 +409,7 @@ export class FuelDbReadService {
       rowLimit,
     });
     transactions = await enrichWithBalanceConsumption(tenantId, transactions);
+    transactions = await applyStationFilledToTransactions(tenantId, fromDate, toDate, transactions);
 
     const stale = isStale(cursor);
     const needsRefresh = stale || (transactions.length === 0 && !cursor?.last_synced_at);

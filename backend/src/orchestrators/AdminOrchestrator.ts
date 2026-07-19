@@ -67,7 +67,19 @@ export class AdminOrchestrator {
     );
 
     const { rows: topTenants } = await query(
-      `SELECT t.id, t.name, t.slug, t.status, COUNT(a.id)::int as vehicle_count,
+      `SELECT t.id, t.name, t.slug, t.status,
+              CASE
+                WHEN EXISTS (
+                  SELECT 1 FROM data_sources ds
+                  WHERE ds.tenant_id = t.id AND ds.source_type = 'wialon' AND ds.is_active
+                ) THEN (
+                  SELECT COUNT(DISTINCT am.asset_id)::int
+                  FROM asset_mappings am
+                  JOIN assets ax ON ax.id = am.asset_id
+                  WHERE ax.tenant_id = t.id AND am.source_type = 'wialon'
+                )
+                ELSE COUNT(DISTINCT a.id)::int
+              END as vehicle_count,
               COUNT(DISTINCT u.id)::int as user_count
        FROM tenants t
        LEFT JOIN assets a ON a.tenant_id = t.id
@@ -297,7 +309,18 @@ export class AdminOrchestrator {
       `SELECT t.*,
               mgr.full_name as assigned_manager_name,
               mgr.email as assigned_manager_email,
-              COUNT(DISTINCT a.id)::int as vehicle_count,
+              CASE
+                WHEN EXISTS (
+                  SELECT 1 FROM data_sources ds
+                  WHERE ds.tenant_id = t.id AND ds.source_type = 'wialon' AND ds.is_active
+                ) THEN (
+                  SELECT COUNT(DISTINCT am.asset_id)::int
+                  FROM asset_mappings am
+                  JOIN assets ax ON ax.id = am.asset_id
+                  WHERE ax.tenant_id = t.id AND am.source_type = 'wialon'
+                )
+                ELSE COUNT(DISTINCT a.id)::int
+              END as vehicle_count,
               COUNT(DISTINCT u.id)::int as user_count,
               COUNT(DISTINCT tm.module_key) FILTER (WHERE tm.is_enabled)::int as enabled_modules,
               (SELECT COUNT(*)::int FROM module_definitions) as total_modules,

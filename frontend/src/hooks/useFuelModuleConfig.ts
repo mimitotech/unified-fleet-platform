@@ -16,10 +16,35 @@ export function useFuelModuleConfig() {
 }
 
 export function getVisibleFuelColumns(
-  cfg: { visibleColumns?: string[] } | undefined,
+  cfg:
+    | {
+        visibleColumns?: string[];
+        columnsByCategory?: Partial<Record<string, string[]>>;
+      }
+    | undefined,
+  assetCategory?: string,
 ): string[] {
+  if (assetCategory && cfg?.columnsByCategory?.[assetCategory]?.length) {
+    return cfg.columnsByCategory[assetCategory] as string[];
+  }
   const list = cfg?.visibleColumns;
   if (!list?.length) return DEFAULT_FUEL_VISIBLE_COLUMNS;
   return list;
+}
+
+/** Variance tab appears when variance column is enabled for any asset category. */
+export function isFuelVarianceEnabled(
+  cfg:
+    | {
+        visibleColumns?: string[];
+        columnsByCategory?: Partial<Record<string, string[]>>;
+      }
+    | undefined,
+): boolean {
+  if (!cfg) return false;
+  if (cfg.visibleColumns?.includes('variance')) return true;
+  const byCat = cfg.columnsByCategory;
+  if (!byCat) return false;
+  return Object.values(byCat).some((cols) => cols?.includes('variance'));
 }
 

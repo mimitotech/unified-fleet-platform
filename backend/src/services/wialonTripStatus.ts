@@ -1,16 +1,31 @@
 import type { WialonSearchItem } from '../adapters/wialonUtils.js';
 import type { WialonUnitEventSlice } from './wialonEventsService.js';
-import { deriveWialonHostingStatus, type WialonHostingStatus } from './wialonUnitStatus.js';
+import {
+  deriveWialonHostingStatus,
+  type WialonHostingStatus,
+  type WialonStatusOptions,
+} from './wialonUnitStatus.js';
 
 /** Map Wialon trip detector + ignition from events API to Hosting status. */
 export function deriveStatusFromWialonEvents(
   item: WialonSearchItem,
-  events?: WialonUnitEventSlice
+  events?: WialonUnitEventSlice,
+  opts?: WialonStatusOptions,
 ): WialonHostingStatus {
-  if (!events) return deriveWialonHostingStatus(item);
+  if (!events) return deriveWialonHostingStatus(item, undefined, opts);
 
   if ((item as { netconn?: boolean }).netconn === false) {
     return { status: 'offline', motionState: events.tripStateLabel };
+  }
+
+  if (opts?.stationary) {
+    if (events.ignitionOn === true) {
+      return { status: 'idle', motionState: events.tripStateLabel || 'Running' };
+    }
+    if (events.ignitionOn === false) {
+      return { status: 'stopped', motionState: events.tripStateLabel || 'Stopped' };
+    }
+    return deriveWialonHostingStatus(item, undefined, opts);
   }
 
   const minSpeed = (item as { rtd?: { minMovingSpeed?: number } }).rtd?.minMovingSpeed ?? 5;
@@ -38,5 +53,5 @@ export function deriveStatusFromWialonEvents(
   if (events.ignitionOn === true) return { status: 'idle', motionState: label };
   if (events.ignitionOn === false) return { status: 'stopped', motionState: label };
 
-  return deriveWialonHostingStatus(item);
+  return deriveWialonHostingStatus(item, undefined, opts);
 }

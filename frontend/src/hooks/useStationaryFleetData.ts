@@ -57,7 +57,7 @@ export function useStationaryFleetData(options?: StationaryFleetDataOptions): St
   const units = unitsQuery.data ?? [];
   const fuelTransactions = fuelQuery.data?.transactions ?? [];
   const isFuelWarming = fuelQuery.data?.warming ?? false;
-  const isFuelBackgroundRefreshing = false;
+  const isFuelBackgroundRefreshing = Boolean(fuelQuery.data?.needsRefresh) || fuelQuery.isFetching;
 
   const unitFuelMapByName = useMemo(() => buildFuelLevelByName(units), [units]);
 

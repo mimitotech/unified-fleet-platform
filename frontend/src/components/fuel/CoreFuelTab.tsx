@@ -8,17 +8,20 @@ import {
   FuelLevelAlerts,
   FuelTransactionsTable,
   FuelDrainAlerts,
-  FuelTrendChart,
 } from '@/components/fuel';
 import { FuelLiveStrip } from './FuelLiveStrip';
+import { FuelAssetCharts } from './FuelAssetCharts';
+import { FuelCostingPanel } from './FuelCostingPanel';
 import { computePeriodFuelKpis } from '@/components/fuel/fuelColumnMetrics';
-import { filterFuelTransactionsByDate } from '@/components/fuel/fuelTransactionFilters';
+import { filterFuelTransactionsByDate, isWialonGroupSummary } from '@/components/fuel/fuelTransactionFilters';
+import { isPlausibleFuelEvent } from '@/components/fuel/fuelEventPlausibility';
+import { effectiveSuddenDropVolume, fuelTheftEventKey } from '@/components/fuel/fuelTheftVolume';
 import type { FleetFuelLevel } from '@/components/fuel/FuelLevelAlerts';
 import type { FuelEvent } from '@/types/entities';
 import type { FuelAssetCategory } from '@/lib/fuelTypes';
-import type { FuelTabDateRangeProps } from './VehiclesFuelTab';
-import { GeneratorFuelAlerts } from './GeneratorFuelAlerts';
+import type { FuelTabDateRangeProps } from './fuelTabTypes';
 import type { StationaryFuelType } from './useStationaryFuelHooks';
+import type { FuelTableUnit } from './FuelTransactionsTable/types';
 
 const LABELS: Record<FuelAssetCategory, { unit: string; plural: string }> = {
   vehicle: { unit: 'Vehicle', plural: 'vehicles' },
@@ -26,13 +29,19 @@ const LABELS: Record<FuelAssetCategory, { unit: string; plural: string }> = {
   machinery: { unit: 'Machine', plural: 'machinery' },
 };
 
+function fuelStatusFromPercent(percent: number): 'critical' | 'warning' | 'ok' {
+  if (percent <= 15) return 'critical';
+  if (percent <= 30) return 'warning';
+  return 'ok';
+}
+
 export type CoreFuelTabProps = FuelTabDateRangeProps & {
   assetCategory: FuelAssetCategory;
 };
 
 /**
- * Unified fuel tab — same layout for vehicles, generators, and machinery.
- * Live data: Wialon fuel level sensors. History: Wialon report tables (fillings / consumption / drains).
+ * Unified fuel tab — same sensors, reports, drops, charts, and alerts for
+ * vehicles, generators, machinery, bowsers, and any other FLS-tracked asset.
  */
 export function CoreFuelTab({
   assetCategory,
@@ -54,7 +63,7 @@ export function CoreFuelTab({
   const stationaryType: StationaryFuelType =
     assetCategory === 'generator' ? 'generator' : 'machinery';
 
-  const stationary = useStationaryFleetData({
+  const categoryFleet = useStationaryFleetData({
     stationaryType,
     startDate: fromDate,
     endDate: toDate,
@@ -64,18 +73,19 @@ export function CoreFuelTab({
   const refreshFuelMutation = useRefreshFuelTransactions();
   const { data: fuelModuleConfig } = useFuelModuleConfig();
   const visibleColumns = useMemo(
-    () => getVisibleFuelColumns(fuelModuleConfig),
-    [fuelModuleConfig],
+    () => getVisibleFuelColumns(fuelModuleConfig, assetCategory),
+    [fuelModuleConfig, assetCategory],
   );
 
-  const units = isVehicle ? fleet.vehicles : stationary.tableUnits;
-  const fuelTransactions = isVehicle ? fleet.fuelTransactions : stationary.fuelTransactions;
-  const unitFuelMapByName = isVehicle ? fleet.vehicleFuelMapByName : stationary.unitFuelMapByName;
-  const isFuelLoading = isVehicle ? fleet.isFuelLoading : stationary.isFuelLoading;
+  const units = isVehicle ? fleet.vehicles : categoryFleet.tableUnits;
+  const fuelTransactions = isVehicle ? fleet.fuelTransactions : categoryFleet.fuelTransactions;
+  const unitFuelMapByName = isVehicle ? fleet.vehicleFuelMapByName : categoryFleet.unitFuelMapByName;
+  const isFuelLoading = isVehicle ? fleet.isFuelLoading : categoryFleet.isFuelLoading;
+  const isFuelWarming = isVehicle ? fleet.isFuelWarming : categoryFleet.isFuelWarming;
   const isFuelBackgroundRefreshing = isVehicle
     ? fleet.isFuelBackgroundRefreshing
-    : stationary.isFuelBackgroundRefreshing;
-  const fuelError = isVehicle ? fleet.fuelError : stationary.fuelError;
+    : categoryFleet.isFuelBackgroundRefreshing;
+  const fuelError = isVehicle ? fleet.fuelError : categoryFleet.fuelError;
 
   const reportKpis = useMemo(
     () => computePeriodFuelKpis(fuelTransactions, fromDate, toDate, unitFuelMapByName),
@@ -88,61 +98,141 @@ export function CoreFuelTab({
   );
 
   const liveUnits = useMemo(() => {
-    return units.map((u) => {
+    if (isVehicle) {
+      return fleet.vehicles.map((u) => {
+        const level = unitFuelMapByName.get(u.name) ?? 0;
+        const vehicleFuel = fleet.vehicleFuelMap.get(u.id);
+        return {
+          id: u.id,
+          name: u.name,
+          fuelLiters: level > 0 ? level : undefined,
+          fuelPercent: vehicleFuel?.percent,
+        };
+      });
+    }
+
+    return categoryFleet.units.map((u) => {
       const level = unitFuelMapByName.get(u.name) ?? 0;
-      const vehicleFuel = isVehicle ? fleet.vehicleFuelMap.get(u.id) : undefined;
+      const pctFromInfo = u.fuelInfo?.percentage;
+      const pctFromUnit =
+        u.fuelUnit === 'percent' && typeof u.fuel === 'number' && u.fuel > 0 ? u.fuel : undefined;
+      let fuelPercent = pctFromInfo ?? pctFromUnit;
+      if (
+        (fuelPercent == null || fuelPercent <= 0) &&
+        level > 0 &&
+        u.fuelInfo?.tankCapacity &&
+        u.fuelInfo.tankCapacity > 0
+      ) {
+        fuelPercent = Math.min(100, (level / u.fuelInfo.tankCapacity) * 100);
+      }
       return {
         id: u.id,
         name: u.name,
         fuelLiters: level > 0 ? level : undefined,
-        fuelPercent: vehicleFuel?.percent,
+        fuelPercent: fuelPercent != null && fuelPercent > 0 ? fuelPercent : undefined,
       };
     });
-  }, [units, unitFuelMapByName, isVehicle, fleet.vehicleFuelMap]);
+  }, [
+    isVehicle,
+    fleet.vehicles,
+    fleet.vehicleFuelMap,
+    unitFuelMapByName,
+    categoryFleet.units,
+  ]);
 
+  const assetNames = useMemo(
+    () => (isVehicle ? fleet.vehicles.map((v) => v.name) : categoryFleet.units.map((u) => u.name)),
+    [isVehicle, fleet.vehicles, categoryFleet.units],
+  );
+
+  /** Same low-fuel alert model for every asset category (FLS %). */
   const fleetFuelLevels: FleetFuelLevel[] = useMemo(() => {
-    if (!isVehicle) return [];
-    return fleet.vehicles.map((vehicle) => {
-      const fuelInfo = fleet.vehicleFuelMap.get(vehicle.id);
+    if (isVehicle) {
+      return fleet.vehicles.map((vehicle) => {
+        const fuelInfo = fleet.vehicleFuelMap.get(vehicle.id);
+        return {
+          vehicleId: vehicle.id,
+          vehicle: vehicle.name,
+          fuelLevel: fuelInfo?.level ?? 0,
+          fuelPercent: fuelInfo?.percent ?? 0,
+          status: fuelInfo?.status ?? 'ok',
+        };
+      });
+    }
+
+    return categoryFleet.units.map((u) => {
+      const level = unitFuelMapByName.get(u.name) ?? 0;
+      const pctFromInfo = u.fuelInfo?.percentage;
+      const pctFromUnit =
+        u.fuelUnit === 'percent' && typeof u.fuel === 'number' && u.fuel > 0 ? u.fuel : undefined;
+      let fuelPercent = pctFromInfo ?? pctFromUnit ?? 0;
+      if (
+        fuelPercent <= 0 &&
+        level > 0 &&
+        u.fuelInfo?.tankCapacity &&
+        u.fuelInfo.tankCapacity > 0
+      ) {
+        fuelPercent = Math.min(100, (level / u.fuelInfo.tankCapacity) * 100);
+      }
+      const status = fuelStatusFromPercent(fuelPercent);
       return {
-        vehicleId: vehicle.id,
-        vehicle: vehicle.name,
-        fuelLevel: fuelInfo?.level ?? 0,
-        fuelPercent: fuelInfo?.percent ?? 0,
-        status: fuelInfo?.status ?? 'ok',
+        vehicleId: u.id,
+        vehicle: u.name,
+        fuelLevel: level,
+        fuelPercent,
+        status,
       };
     });
-  }, [isVehicle, fleet.vehicles, fleet.vehicleFuelMap]);
+  }, [isVehicle, fleet.vehicles, fleet.vehicleFuelMap, categoryFleet.units, unitFuelMapByName]);
 
+  /** Sudden drops from leaf Wialon theft events only — volume matches Before/After. */
   const drainAlerts = useMemo<FuelEvent[]>(() => {
-    return filteredFuelTransactions
-      .filter((t) => t.section === 'theft' && (t.suddenFuelDrop ?? 0) > 0)
-      .map<FuelEvent>((t) => ({
+    const seen = new Set<string>();
+    const out: FuelEvent[] = [];
+    for (const t of filteredFuelTransactions) {
+      if (isWialonGroupSummary(t)) continue;
+      if (t.section !== 'theft') continue;
+      const volume = effectiveSuddenDropVolume(t);
+      if (volume <= 0) continue;
+      const live = unitFuelMapByName.get(t.unitName);
+      if (!isPlausibleFuelEvent({ ...t, suddenFuelDrop: volume }, live)) continue;
+      const key = fuelTheftEventKey({ ...t, suddenFuelDrop: volume });
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
         type: 'theft',
         unitId: String(t.unitId),
         unitName: t.unitName,
         timestamp: new Date(t.timestamp * 1000).toISOString(),
         location: { lat: t.latitude ?? 0, lng: t.longitude ?? 0 },
-        volumeChange: -Math.abs(t.suddenFuelDrop || 0),
+        volumeChange: -Math.abs(volume),
         levelBefore: t.initialLevel ?? 0,
         levelAfter: t.finalLevel ?? 0,
         section: 'theft',
-        suddenFuelDrop: t.suddenFuelDrop,
+        suddenFuelDrop: volume,
         count: t.count,
-      }))
-      .sort((a, b) => (b.timestamp > a.timestamp ? 1 : -1));
-  }, [filteredFuelTransactions]);
+      });
+    }
+    return out.sort((a, b) => (b.timestamp > a.timestamp ? 1 : -1));
+  }, [filteredFuelTransactions, unitFuelMapByName]);
 
   return (
     <div className="space-y-4 min-w-0 max-w-full">
-      <p className="text-xs text-muted-foreground">
-        Live tank levels from Wialon sensors. Collapsed table rows show period totals for{' '}
-        {fromDate} → {toDate}; expand a row to see individual events.
-      </p>
-
-      {fuelError && (
+      {fuelError && !isFuelWarming && (
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
           Report data unavailable: {fuelError.message}. Live sensor levels below may still update.
+        </div>
+      )}
+
+      {(isFuelWarming || isFuelBackgroundRefreshing) && !fuelError && (
+        <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-primary">
+          Syncing fuel reports in the background. Live levels are shown now; totals update when the sync finishes.
+        </div>
+      )}
+
+      {isFuelWarming && fuelError && (
+        <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-primary">
+          Syncing large fleet reports — this can take a few minutes. Live levels update below; period totals will fill in automatically.
         </div>
       )}
 
@@ -156,23 +246,22 @@ export function CoreFuelTab({
         kpis={reportKpis}
         fuelTransactions={filteredFuelTransactions}
         isLoading={isFuelLoading}
+        assetCategory={assetCategory}
+        unitLabel={labels.unit}
+        unitLabelPlural={labels.plural}
       />
 
-      {isVehicle ? (
-        <FuelLevelAlerts
-          criticalVehicles={fleetFuelLevels.filter((v) => v.status === 'critical')}
-          warningVehicles={fleetFuelLevels.filter((v) => v.status === 'warning')}
-        />
-      ) : (
-        <GeneratorFuelAlerts stationaryType={stationaryType} />
-      )}
+      <FuelLevelAlerts
+        criticalVehicles={fleetFuelLevels.filter((v) => v.status === 'critical')}
+        warningVehicles={fleetFuelLevels.filter((v) => v.status === 'warning')}
+      />
 
-      {isVehicle && drainAlerts.length > 0 && <FuelDrainAlerts alerts={drainAlerts} />}
+      {drainAlerts.length > 0 && <FuelDrainAlerts alerts={drainAlerts} />}
 
       <FuelTransactionsTable
         transactions={filteredFuelTransactions}
         vehicleFuelLevels={unitFuelMapByName}
-        units={units}
+        units={units as FuelTableUnit[]}
         unitLabel={labels.unit}
         unitLabelPlural={labels.plural}
         showFuelPerTrip={isVehicle}
@@ -194,9 +283,26 @@ export function CoreFuelTab({
         visibleColumns={visibleColumns}
       />
 
-      <FuelTrendChart
-        transactions={filteredFuelTransactions}
+      <FuelAssetCharts
+        transactions={fuelTransactions}
+        fromDate={fromDate}
+        toDate={toDate}
+        todayStr={todayStr}
+        liveLevels={unitFuelMapByName}
+        assetNames={assetNames}
+        unitLabel={labels.unit.toLowerCase()}
+        assetCategory={assetCategory}
         isLoading={isFuelLoading}
+      />
+
+      <FuelCostingPanel
+        transactions={fuelTransactions}
+        fromDate={fromDate}
+        toDate={toDate}
+        todayStr={todayStr}
+        liveLevels={unitFuelMapByName}
+        assetNames={assetNames}
+        unitLabel={labels.unit.toLowerCase()}
       />
     </div>
   );

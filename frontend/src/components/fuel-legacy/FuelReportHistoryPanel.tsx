@@ -63,7 +63,7 @@ export function FuelReportHistoryPanel({
         )}
         {hideDatePickers && (
           <div>
-            <p className="text-xs font-medium">Wialon fuel report</p>
+            <p className="text-xs font-medium">Fuel report</p>
             <p className="text-[10px] text-muted-foreground mt-0.5">
               {fromDate} → {toDate}
             </p>
@@ -147,7 +147,7 @@ export function FuelReportHistoryPanel({
               {!transactions.length && !isLoading && (
                 <TableRow>
                   <TableCell colSpan={9} className="text-center py-12 text-muted-foreground">
-                    No fuel events in Wialon report for {fromDate} → {toDate}.
+                    No fuel events in report for {fromDate} → {toDate}.
                   </TableCell>
                 </TableRow>
               )}

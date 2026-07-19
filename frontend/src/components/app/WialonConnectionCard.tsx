@@ -33,7 +33,7 @@ export function WialonConnectionCard() {
           ? `, ${result.usersCreated} new users, ${result.usersUpdated ?? 0} updated`
           : '';
       notify.success(
-        'Wialon sync complete',
+        'Sync complete',
         `${result.vehicles} vehicles${userPart}, ${result.drivers} drivers, ${result.geofences} geofences`
       );
     },
@@ -47,7 +47,7 @@ export function WialonConnectionCard() {
   if (isLoading) {
     return (
       <Card>
-        <CardContent className="py-8 text-sm text-muted-foreground">Loading Wialon connection…</CardContent>
+        <CardContent className="py-8 text-sm text-muted-foreground">Loading connection…</CardContent>
       </Card>
     );
   }
@@ -59,12 +59,12 @@ export function WialonConnectionCard() {
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
             <Satellite className="h-4 w-4" />
-            Wialon
+            Fleet connection
           </CardTitle>
           <CardDescription>
             {configuredButBroken
-              ? 'Wialon is configured but the last connection check failed. Ask your platform administrator to re-verify the token under Admin → Tenant → Integrations.'
-              : 'Wialon is not connected for this organization. Your platform administrator configures the token under Admin → Tenant → Integrations.'}
+              ? 'Your fleet connection is configured but the last check failed. Ask your platform administrator to re-verify credentials under Admin → Tenant → Integrations.'
+              : 'Fleet telematics is not connected for this organization. Your platform administrator configures the connection under Admin → Tenant → Integrations.'}
           </CardDescription>
           {configuredButBroken && ctx?.lastError && (
             <p className="text-sm text-destructive pt-2">{ctx.lastError}</p>
@@ -82,10 +82,10 @@ export function WialonConnectionCard() {
             <div>
               <CardTitle className="text-base flex items-center gap-2">
                 <Satellite className="h-4 w-4" />
-                Wialon connection
+                Fleet connection
               </CardTitle>
               <CardDescription>
-                Fleet data is sourced from Wialon according to your account scope and ACLs.
+                Live fleet data follows your linked account scope and permissions.
               </CardDescription>
             </div>
             <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isFetching}>
@@ -127,7 +127,7 @@ export function WialonConnectionCard() {
             onClick={() => sync.mutate()}
             className="w-full sm:w-auto"
           >
-            Sync vehicles, drivers & geofences from Wialon
+            Sync vehicles, drivers & geofences
           </LoadingButton>
         </CardContent>
       </Card>

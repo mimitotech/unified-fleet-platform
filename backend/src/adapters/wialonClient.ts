@@ -93,6 +93,24 @@ export class WialonClient {
       this.sessionId = data.eid;
       this.sessionUser = data.user || null;
       this.loginMeta = data;
+
+      // Hide Wialon-deactivated units (distinct from offline). Offline units still appear.
+      try {
+        await this.request('core/set_session_property', {
+          prop_name: 'skip_nonactive_items',
+          prop_value: 1,
+        });
+      } catch {
+        try {
+          await this.request('core/set_session_property', {
+            prop_name: 'skip_nonactive_items',
+            prop_value: '1',
+          });
+        } catch {
+          /* some hosts may deny session props — continue; callers also filter by act/dactt */
+        }
+      }
+
       return data;
     });
   }

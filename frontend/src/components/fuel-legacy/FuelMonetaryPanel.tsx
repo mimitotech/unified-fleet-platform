@@ -23,7 +23,7 @@ export function FuelMonetaryPanel({ analytics, fuelPrice, onFuelPriceChange }: P
         <div>
           <h3 className="text-sm font-semibold">Monetary analysis</h3>
           <p className="text-[10px] text-muted-foreground">
-            Enter your fuel purchase price to estimate spend. Wialon litre totals above are unchanged.
+            Enter your fuel purchase price to estimate spend. Litre totals above are unchanged.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -64,7 +64,7 @@ export function FuelMonetaryPanel({ analytics, fuelPrice, onFuelPriceChange }: P
             icon={Droplets}
             variant="primary"
             size="xxs"
-            subtitle="From Wialon report"
+            subtitle="From fuel report"
           />
           {k.totalLossCost != null && k.totalLossCost > 0 ? (
             <MetricCard
@@ -82,7 +82,7 @@ export function FuelMonetaryPanel({ analytics, fuelPrice, onFuelPriceChange }: P
               icon={Flame}
               variant="warning"
               size="xxs"
-              subtitle="From Wialon report"
+              subtitle="From fuel report"
             />
           )}
         </div>

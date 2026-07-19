@@ -45,7 +45,7 @@ export function FuelAssetOverviewTable({ assets, isLoading }: Props) {
       {isLoading && (
         <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5 text-xs text-muted-foreground bg-card/90 px-2 py-1 rounded-md border">
           <Loader2 className="h-3 w-3 animate-spin" />
-          Reading Wialon sensors…
+          Reading sensors…
         </div>
       )}
       <Table>
@@ -142,7 +142,7 @@ export function FuelAssetOverviewTable({ assets, isLoading }: Props) {
           {!assets.length && !isLoading && (
             <TableRow>
               <TableCell colSpan={12} className="text-center py-16 text-muted-foreground">
-                No assets with Wialon fuel sensors found.
+                No assets with fuel sensors found.
               </TableCell>
             </TableRow>
           )}

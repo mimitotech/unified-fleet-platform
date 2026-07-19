@@ -4,6 +4,7 @@ import { X, MapPin, TrendingUp, TrendingDown, Droplets, GaugeCircle, AlertTriang
 import { FuelTransaction } from '@/types/entities';
 import { cn } from '@/lib/utils';
 import { formatTransactionTime } from './FuelTransactionsTable/utils';
+import { effectiveSuddenDropVolume } from './fuelTheftVolume';
 
 interface TransactionDetailModalProps {
   transaction: FuelTransaction | null;
@@ -17,6 +18,7 @@ export function TransactionDetailModal({ transaction, isOpen, onClose }: Transac
   const t = transaction;
   const isMainTank = t.tank === 'main';
   const isReserveTank = t.tank === 'reserve';
+  const dropVol = effectiveSuddenDropVolume(t);
 
   const filledMain = isMainTank && t.filled > 0 ? t.filled : 0;
   const filledReserve = isReserveTank && t.filled > 0 ? t.filled : 0;
@@ -26,8 +28,8 @@ export function TransactionDetailModal({ transaction, isOpen, onClose }: Transac
   const levelMain = t.mainTankLevel ?? (isMainTank && t.finalLevel > 0 ? t.finalLevel : 0);
   const levelReserve = t.reserveTankLevel ?? (isReserveTank && t.finalLevel > 0 ? t.finalLevel : 0);
 
-  const dropMain = isMainTank && t.suddenFuelDrop > 0 ? t.suddenFuelDrop : 0;
-  const dropReserve = isReserveTank && t.suddenFuelDrop > 0 ? t.suddenFuelDrop : 0;
+  const dropMain = isMainTank && dropVol > 0 ? dropVol : 0;
+  const dropReserve = isReserveTank && dropVol > 0 ? dropVol : 0;
 
   const fuelType = t.fuelType || '';
 

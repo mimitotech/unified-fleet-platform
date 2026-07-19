@@ -1,156 +1,1084 @@
+import { useMemo } from 'react';
+import {
+  Activity,
+  AlertTriangle,
+  Fuel,
+  Gauge,
+  Radio,
+  Route,
+  Truck,
+  Users,
+  Video,
+  Wrench,
+} from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { AppLayout } from '@/components/app/AppLayout';
 import { MetricCard } from '@/components/app/MetricCard';
-import { FleetMapPanel } from '@/components/map/FleetMapPanel';
-import { useMapSessionKey } from '@/hooks/useMapSessionKey';
+import { WialonContextBanner } from '@/components/app/WialonContextBanner';
 import { AnimatedPage, PageLoader } from '@/components/shared/PageLoader';
 import { QueryErrorBanner } from '@/components/shared/QueryErrorBanner';
-import { useFleetAssetProfile } from '@/hooks/useFleetAssetProfile';
+import {
+  DashboardSectionLabel,
+  DashboardWidget,
+} from '@/components/dashboard/DashboardWidget';
+import {
+  CompactBars,
+  CompactComposed,
+  CompactDonut,
+  CompactMultiLine,
+  CompactRadial,
+  CompactStackedHBars,
+  CompactStageBars,
+  LegendDots,
+  alertSeveritySlices,
+  fleetStatusSlices,
+} from '@/components/dashboard/DashboardCharts';
+import {
+  DashboardQuickAccess,
+  moduleEnabledSet,
+} from '@/components/dashboard/DashboardQuickAccess';
 import { useDashboardKpis } from '@/hooks/useAssets';
 import { useFleetUnits } from '@/hooks/useFleetUnits';
 import { useAlerts } from '@/hooks/useAlerts';
-import { UnitTypeIcon } from '@/components/fleet/UnitTypeIcon';
-import { StatusBadge } from '@/components/shared/StatusBadge';
-import { Activity, Truck, MapPin, AlertTriangle, Users, Route, Fuel, Wrench,
-  Video, BarChart3, Zap,
-} from 'lucide-react';
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
-import { WialonContextBanner } from '@/components/app/WialonContextBanner';
-import { MapErrorBoundary } from '@/components/shared/MapErrorBoundary';
+import { useModules } from '@/hooks/useModules';
+import { useTenantBranding } from '@/hooks/useTenantBranding';
+import { useAuth } from '@/providers/AuthProvider';
+import { useWialonContext } from '@/hooks/useWialon';
+import {
+  useDriverStats,
+  useFuelKpis,
+  useFuelTrend,
+  useRouteStats,
+  useVideoStreams,
+  useWorkshopKpis,
+} from '@/hooks/useDomain';
+import { clientApi } from '@/lib/api';
+import { ALERT_SEVERITY, FLEET_STATUS } from '@/lib/chartColors';
+import { lightenHex } from '@/lib/tenantBranding';
 import { LIVE_POLL, livePollLabel } from '@/lib/liveRefresh';
 import { safeArray } from '@/lib/safeArray';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+
+const SECTION = 'space-y-2.5';
+
+function num(v: unknown): number {
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function fmt(n: number, digits = 0): string {
+  if (!Number.isFinite(n)) return '0';
+  return n.toLocaleString(undefined, { maximumFractionDigits: digits });
+}
+
+function shortName(name: string, max = 14): string {
+  return name.length > max ? `${name.slice(0, max - 1)}…` : name;
+}
+
+function pct(part: number, whole: number): number {
+  if (whole <= 0) return 0;
+  return Math.round((part / whole) * 100);
+}
 
 export default function Dashboard() {
-  const mapSessionKey = useMapSessionKey();
-  const assetProfile = useFleetAssetProfile();
-  const { data: kpis, isLoading: kpisLoading, isError, refetch } = useDashboardKpis();
-  const { units, live, statuses, isLoading: fleetLoading } = useFleetUnits();
-  const { data: alerts } = useAlerts(8);
-  const alertList = safeArray<{ title?: string; severity?: string }>(alerts);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const { user } = useAuth();
+  const branding = useTenantBranding();
+  const brand = branding.primaryColor;
+  const accent = branding.accentColor;
+  const secondary = branding.secondaryColor;
+  const isAdmin = user?.role === 'tenant_admin' || user?.role === 'platform_admin';
+  const { modules } = useModules();
+  const enabled = useMemo(() => moduleEnabledSet(modules, isAdmin), [modules, isAdmin]);
 
+  const hasMonitoring = enabled.has('monitoring');
+  const hasAlerts = enabled.has('alerts');
+  const hasFuel = enabled.has('fuel');
+  const hasWorkshop = enabled.has('workshop');
+  const hasDrivers = enabled.has('drivers');
+  const hasRoutes = enabled.has('routes');
+  const hasCommands = enabled.has('commands');
+  const hasSurveillance = enabled.has('surveillance');
+
+  const { data: kpis, isLoading: kpisLoading, isError, refetch } = useDashboardKpis();
+  const { units, counts, statuses, live, isLoading: fleetLoading } = useFleetUnits();
+  const { connected, configured, ctx } = useWialonContext();
+  const { data: alerts } = useAlerts(80, hasAlerts);
+  const alertList = safeArray<{
+    id?: string;
+    title?: string;
+    severity?: string;
+    type?: string;
+    timestamp?: string;
+    acknowledged?: boolean;
+  }>(alerts);
+
+  const { data: fuelKpis } = useFuelKpis(hasFuel);
+  const { data: fuelTrend } = useFuelTrend(hasFuel);
+  const { data: workshopKpis } = useWorkshopKpis(hasWorkshop);
+  const { data: driverStats } = useDriverStats(hasDrivers);
+  const { data: routeStats } = useRouteStats(hasRoutes);
+  const { data: videoStreams } = useVideoStreams(hasSurveillance);
+  const { data: trips } = useQuery({
+    queryKey: ['trips', 'dashboard'],
+    queryFn: () => clientApi.getTrips(40),
+    enabled: hasRoutes,
+    staleTime: 90_000,
+  });
+  const { data: tenantUsers } = useQuery({
+    queryKey: ['tenantUsers', 'dashboard'],
+    queryFn: () => clientApi.getTenantUsers(),
+    enabled: isAdmin,
+    staleTime: 120_000,
+  });
+  const { data: commandHistory } = useQuery({
+    queryKey: ['commandHistory', 'dashboard'],
+    queryFn: () => clientApi.getCommandHistory(),
+    enabled: hasCommands,
+    staleTime: 90_000,
+  });
+
+  const onlineCount = Math.max(0, counts.total - counts.offline);
+  const withGps = counts.withPosition ?? 0;
+  const withoutGps = Math.max(0, counts.total - withGps);
+
+  const ignitionById = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const s of statuses ?? []) {
+      map.set(String(s.assetId), Boolean(s.wialon?.trip?.ignitionOn));
+    }
+    return map;
+  }, [statuses]);
+
+  /* —— Accurate fleet partitions (always sum to a known whole) —— */
+
+  const statusSlices = useMemo(() => fleetStatusSlices(counts), [counts]);
+
+  const connectionSlices = useMemo(
+    () =>
+      [
+        { name: 'Online', value: onlineCount, color: brand },
+        { name: 'Offline', value: counts.offline, color: FLEET_STATUS.offline },
+      ].filter((s) => s.value > 0),
+    [onlineCount, counts.offline, brand],
+  );
+
+  /** Motion × ignition for online assets only — stacked horizontal bars */
+  const motionIgnition = useMemo(() => {
+    const buckets = {
+      Moving: { withIgn: 0, withoutIgn: 0 },
+      Idle: { withIgn: 0, withoutIgn: 0 },
+      Stopped: { withIgn: 0, withoutIgn: 0 },
+    };
+    for (const u of units ?? []) {
+      if (u.status === 'offline') continue;
+      const ign = ignitionById.get(String(u.id)) ?? false;
+      const key = u.status === 'moving' ? 'Moving' : u.status === 'idle' ? 'Idle' : 'Stopped';
+      if (ign) buckets[key].withIgn += 1;
+      else buckets[key].withoutIgn += 1;
+    }
+    return (['Moving', 'Idle', 'Stopped'] as const).map((name) => ({
+      name,
+      withIgn: buckets[name].withIgn,
+      withoutIgn: buckets[name].withoutIgn,
+    }));
+  }, [units, ignitionById]);
+
+  const gpsSlices = useMemo(
+    () =>
+      [
+        { name: 'With GPS', value: withGps, color: brand },
+        { name: 'No coordinates', value: withoutGps, color: '#94a3b8' },
+      ].filter((s) => s.value > 0),
+    [withGps, withoutGps, brand],
+  );
+
+  /** Message freshness from lastUpdate — real operational signal */
+  const freshnessBars = useMemo(() => {
+    const now = Date.now();
+    const bands = [
+      { name: '<15 min', value: 0, fill: FLEET_STATUS.moving },
+      { name: '15–60 min', value: 0, fill: brand },
+      { name: '1–24 h', value: 0, fill: ALERT_SEVERITY.warning },
+      { name: '>24 h', value: 0, fill: ALERT_SEVERITY.critical },
+      { name: 'No fix', value: 0, fill: FLEET_STATUS.offline },
+    ];
+    for (const u of units ?? []) {
+      if (!u.lastUpdate) {
+        bands[4].value += 1;
+        continue;
+      }
+      const age = now - u.lastUpdate.getTime();
+      if (age < 15 * 60_000) bands[0].value += 1;
+      else if (age < 60 * 60_000) bands[1].value += 1;
+      else if (age < 24 * 60 * 60_000) bands[2].value += 1;
+      else bands[3].value += 1;
+    }
+    return bands;
+  }, [units, brand]);
+
+  const speedBands = useMemo(() => {
+    const bands = [
+      { name: '0 km/h', value: 0, fill: FLEET_STATUS.offline },
+      { name: '1–20', value: 0, fill: FLEET_STATUS.idle },
+      { name: '21–60', value: 0, fill: brand },
+      { name: '60+', value: 0, fill: FLEET_STATUS.moving },
+    ];
+    let online = 0;
+    for (const u of units ?? []) {
+      if (u.status === 'offline') continue;
+      online += 1;
+      const s = Math.round(num(u.speed));
+      if (s <= 0) bands[0].value += 1;
+      else if (s <= 20) bands[1].value += 1;
+      else if (s <= 60) bands[2].value += 1;
+      else bands[3].value += 1;
+    }
+    return { bands, online };
+  }, [units, brand]);
+
+  const hardwareBars = useMemo(() => {
+    const entries = Object.entries(counts.byHwName || {});
+    if (!entries.length) return [];
+    const palette = [brand, accent, '#0284c7', FLEET_STATUS.idle, '#0d9488', secondary];
+    return entries
+      .map(([name, value], i) => ({
+        name: shortName(name || 'Unknown', 12),
+        value: num(value),
+        fill: palette[i % palette.length],
+      }))
+      .filter((r) => r.value > 0)
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+  }, [counts.byHwName, brand, accent, secondary]);
+
+  const mileageLeaders = useMemo(
+    () =>
+      (units ?? [])
+        .filter((u) => num(u.mileage) > 0)
+        .map((u, i) => ({
+          name: shortName(u.name),
+          value: Math.round(num(u.mileage)),
+          fill: i % 2 === 0 ? brand : accent,
+        }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 8),
+    [units, brand, accent],
+  );
+
+  /* —— Alerts —— */
+
+  const severitySlices = useMemo(() => alertSeveritySlices(alertList), [alertList]);
+  const openCount = useMemo(() => alertList.filter((a) => !a.acknowledged).length, [alertList]);
+  const ackedCount = Math.max(0, alertList.length - openCount);
+  const criticalCount = useMemo(
+    () =>
+      alertList.filter((a) => {
+        const s = String(a.severity || '').toLowerCase();
+        return s === 'critical' || s === 'emergency';
+      }).length,
+    [alertList],
+  );
+
+  const ackSlices = useMemo(
+    () =>
+      [
+        { name: 'Open', value: openCount, color: ALERT_SEVERITY.warning },
+        { name: 'Acknowledged', value: ackedCount, color: brand },
+      ].filter((s) => s.value > 0),
+    [openCount, ackedCount, brand],
+  );
+
+  const alertTimeline = useMemo(() => {
+    const days = new Map<string, { critical: number; warning: number; info: number }>();
+    for (let i = 6; i >= 0; i -= 1) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      days.set(d.toISOString().slice(0, 10), { critical: 0, warning: 0, info: 0 });
+    }
+    for (const a of alertList) {
+      if (!a.timestamp) continue;
+      const day = new Date(a.timestamp).toISOString().slice(0, 10);
+      const bucket = days.get(day);
+      if (!bucket) continue;
+      const s = String(a.severity || 'info').toLowerCase();
+      if (s === 'critical' || s === 'emergency') bucket.critical += 1;
+      else if (s === 'warning') bucket.warning += 1;
+      else bucket.info += 1;
+    }
+    return [...days.entries()].map(([day, v]) => ({ name: day.slice(5), ...v }));
+  }, [alertList]);
+
+  const alertTypeBars = useMemo(() => {
+    const byType = new Map<string, number>();
+    for (const a of alertList) {
+      const raw = String(a.type || a.title || 'event')
+        .replace(/^wialon[_-]?/i, '')
+        .replace(/_/g, ' ')
+        .trim();
+      const t = raw.split(/\s+/).slice(0, 3).join(' ') || 'event';
+      byType.set(t, (byType.get(t) ?? 0) + 1);
+    }
+    const palette = [ALERT_SEVERITY.critical, ALERT_SEVERITY.warning, accent, brand, '#0284c7'];
+    return [...byType.entries()]
+      .map(([name, value], i) => ({
+        name: shortName(name, 16),
+        value,
+        fill: palette[i % palette.length],
+      }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+  }, [alertList, accent, brand]);
+
+  /* —— Fuel —— */
+
+  const fuelFilled = num((fuelKpis as Record<string, number> | undefined)?.totalFilled);
+  const fuelUsed = num((fuelKpis as Record<string, number> | undefined)?.totalConsumed);
+  const fuelTheft = num(
+    (fuelKpis as Record<string, number> | undefined)?.theftEvents
+      ?? (fuelKpis as Record<string, number> | undefined)?.theftCount,
+  );
+  const fuelTracked = num((fuelKpis as Record<string, number> | undefined)?.vehiclesTracked);
+  const avgConsumption = num((fuelKpis as Record<string, number> | undefined)?.avgConsumption);
+
+  const fuelKpiBars = useMemo(
+    () => [
+      { name: 'Filled', value: Math.round(fuelFilled), fill: brand },
+      { name: 'Consumed', value: Math.round(fuelUsed), fill: accent },
+      { name: 'Theft', value: Math.round(fuelTheft), fill: ALERT_SEVERITY.critical },
+    ],
+    [fuelFilled, fuelUsed, fuelTheft, brand, accent],
+  );
+
+  const fuelTrendRows = useMemo(() => {
+    const rows = safeArray<{ month?: string; filled?: number; consumed?: number }>(fuelTrend);
+    return rows.slice(-8).map((r) => ({
+      name: String(r.month || '—').slice(2),
+      filled: num(r.filled),
+      consumed: num(r.consumed),
+    }));
+  }, [fuelTrend]);
+
+  const tankRiskBars = useMemo(() => {
+    const withPct = (units ?? [])
+      .filter((u) => u.fuelLevel != null && u.fuelLevel > 0 && u.fuelLevel <= 100)
+      .map((u) => ({
+        name: shortName(u.name),
+        value: Math.round(num(u.fuelLevel)),
+        fill:
+          num(u.fuelLevel) < 25
+            ? ALERT_SEVERITY.critical
+            : num(u.fuelLevel) < 50
+              ? ALERT_SEVERITY.warning
+              : brand,
+      }))
+      .sort((a, b) => a.value - b.value)
+      .slice(0, 8);
+    if (withPct.length) return { kind: 'pct' as const, rows: withPct };
+    const withL = (units ?? [])
+      .filter((u) => num(u.fuelLiters) > 0)
+      .map((u, i) => ({
+        name: shortName(u.name),
+        value: Math.round(num(u.fuelLiters) * 10) / 10,
+        fill: i % 2 === 0 ? accent : brand,
+      }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+    if (withL.length) return { kind: 'liters' as const, rows: withL };
+    return { kind: 'none' as const, rows: [] as Array<{ name: string; value: number; fill: string }> };
+  }, [units, brand, accent]);
+
+  /* —— Ops (only when data exists) —— */
+
+  const tripRows = useMemo(() => {
+    const list = safeArray<{ unitName?: string; mileage?: number; fuelUsed?: number }>(trips);
+    const byUnit = new Map<string, { distance: number; fuel: number }>();
+    for (const t of list) {
+      const name = t.unitName || '—';
+      if (name === '—') continue;
+      const row = byUnit.get(name) ?? { distance: 0, fuel: 0 };
+      row.distance += num(t.mileage);
+      row.fuel += num(t.fuelUsed);
+      byUnit.set(name, row);
+    }
+    return [...byUnit.entries()]
+      .map(([name, v]) => ({
+        name: shortName(name),
+        distance: Math.round(v.distance),
+        fuel: Math.round(v.fuel * 10) / 10,
+      }))
+      .filter((r) => r.distance > 0 || r.fuel > 0)
+      .sort((a, b) => b.distance - a.distance)
+      .slice(0, 8);
+  }, [trips]);
+
+  const routeStages = useMemo(() => {
+    if (!routeStats || num(routeStats.total) <= 0) return [];
+    return [
+      { name: 'Scheduled', value: num(routeStats.scheduled), color: FLEET_STATUS.idle },
+      { name: 'In progress', value: num(routeStats.inProgress), color: brand },
+      { name: 'Completed', value: num(routeStats.completed), color: accent },
+    ].filter((s) => s.value > 0);
+  }, [routeStats, brand, accent]);
+
+  const driverSlices = useMemo(() => {
+    if (!driverStats || num(driverStats.total) <= 0) return [];
+    return [
+      { name: 'Available', value: num(driverStats.available), color: FLEET_STATUS.moving },
+      { name: 'Driving', value: num(driverStats.driving), color: brand },
+      { name: 'Off duty', value: num(driverStats.offDuty), color: FLEET_STATUS.offline },
+    ].filter((s) => s.value > 0);
+  }, [driverStats, brand]);
+
+  const workshopBars = useMemo(() => {
+    if (!workshopKpis) return [];
+    return [
+      { name: 'Pending', value: num(workshopKpis.pendingMaintenance), fill: ALERT_SEVERITY.warning },
+      { name: 'Done (mo)', value: num(workshopKpis.completedThisMonth), fill: brand },
+      { name: 'Breakdowns', value: num(workshopKpis.openBreakdowns), fill: ALERT_SEVERITY.critical },
+      { name: 'Inspections', value: num(workshopKpis.inspectionsDue), fill: accent },
+    ].filter((r) => r.value > 0);
+  }, [workshopKpis, brand, accent]);
+
+  const userSlices = useMemo(() => {
+    const list = safeArray<{ role?: string; is_active?: boolean }>(tenantUsers);
+    const byRole = new Map<string, number>();
+    for (const u of list) {
+      byRole.set(String(u.role || 'viewer').replace(/_/g, ' '), (byRole.get(String(u.role || 'viewer').replace(/_/g, ' ')) ?? 0) + 1);
+    }
+    const palette = [brand, accent, secondary, '#0284c7', '#0d9488'];
+    return [...byRole.entries()].map(([name, value], i) => ({
+      name,
+      value,
+      color: palette[i % palette.length],
+    }));
+  }, [tenantUsers, brand, accent, secondary]);
+
+  const activeUsers = useMemo(
+    () => safeArray<{ is_active?: boolean }>(tenantUsers).filter((u) => u.is_active !== false).length,
+    [tenantUsers],
+  );
+
+  const commandBars = useMemo(() => {
+    const list = safeArray<Record<string, unknown>>(commandHistory);
+    const byAsset = new Map<string, number>();
+    for (const row of list) {
+      const name = String(row.assetName || row.asset_name || '—');
+      if (name === '—') continue;
+      byAsset.set(name, (byAsset.get(name) ?? 0) + 1);
+    }
+    return [...byAsset.entries()]
+      .map(([name, value], i) => ({
+        name: shortName(name),
+        value,
+        fill: i % 2 === 0 ? brand : accent,
+      }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+  }, [commandHistory, brand, accent]);
+
+  const utilization = pct(counts.moving + counts.idle, counts.total);
+  const ackRate = pct(ackedCount, alertList.length);
+  const onlinePct = pct(onlineCount, counts.total);
+  const gpsPct = pct(withGps, counts.total);
+  const freshNow = freshnessBars[0]?.value ?? 0;
+
+  const moduleCount = enabled.size;
   const showLoader = fleetLoading && !(units?.length) && kpisLoading && !kpis;
 
   if (showLoader) {
     return (
-      <AppLayout title="Dashboard" subtitle={assetProfile.subtitle}>
+      <AppLayout title="Dashboard" subtitle="Operations command center">
         <PageLoader />
       </AppLayout>
     );
   }
 
   return (
-    <AppLayout title="Dashboard" subtitle={assetProfile.subtitle}>
+    <AppLayout title="Dashboard" subtitle="Live operational picture across your enabled modules">
       {isError && (
-        <QueryErrorBanner message="Could not load dashboard data." onRetry={() => refetch()} className="mb-4" />
+        <QueryErrorBanner message="Could not load dashboard KPIs." onRetry={() => refetch()} className="mb-4" />
       )}
-      <AnimatedPage className="space-y-4">
+
+      <AnimatedPage className="space-y-6">
         <WialonContextBanner />
-        {(kpis as { liveFromWialon?: boolean } | undefined)?.liveFromWialon && (
-          <p className="text-xs text-muted-foreground -mt-2">
-            Fleet data refreshes from Wialon {livePollLabel(LIVE_POLL.fleet)}.
-          </p>
-        )}
+
+        <div
+          className="flex flex-wrap items-center gap-3 py-3 px-4 rounded-xl border"
+          style={{
+            borderColor: `${brand}33`,
+            background: `linear-gradient(120deg, ${lightenHex(brand, 0.9)} 0%, #ffffff 55%, ${lightenHex(accent, 0.88)} 100%)`,
+          }}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <span
+              className={cn(
+                'inline-flex h-2.5 w-2.5 rounded-full',
+                live || connected ? 'bg-status-moving animate-pulse' : 'bg-muted-foreground/40',
+              )}
+            />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold truncate">
+                {live || connected ? 'System live' : configured ? 'Link idle' : 'Telematics not linked'}
+              </p>
+              <p className="text-[11px] text-muted-foreground truncate">
+                {live
+                  ? `Snapshot refreshes ${livePollLabel(LIVE_POLL.fleet)} · ${fmt(counts.total)} assets`
+                  : ctx?.accountName
+                    ? String(ctx.accountName)
+                    : 'Connect a source in Admin for live counts'}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1.5 ml-auto">
+            <Badge variant="outline" className="text-[10px] font-medium">
+              {moduleCount} module{moduleCount === 1 ? '' : 's'}
+            </Badge>
+            {hasMonitoring && (
+              <Badge variant="outline" className="text-[10px] font-medium">
+                {onlinePct}% online
+              </Badge>
+            )}
+            {hasAlerts && criticalCount > 0 && (
+              <Badge className="text-[10px] bg-destructive text-destructive-foreground">
+                {criticalCount} critical
+              </Badge>
+            )}
+            {connected && (
+              <Badge variant="outline" className="text-[10px] text-primary border-primary/30">
+                <Radio className="h-3 w-3 mr-1" />
+                Linked
+              </Badge>
+            )}
+          </div>
+        </div>
+
         <div className="stat-strip">
-          <MetricCard
-            title={assetProfile.primaryLabel}
-            value={assetProfile.total}
-            icon={assetProfile.isGeneratorOnly ? Zap : Truck}
-            variant="primary"
-            size="xxs"
-          />
-          <MetricCard title="Active" value={kpis?.activeVehicles ?? 0} icon={Activity} variant="success" size="xxs" />
-          {!assetProfile.isGeneratorOnly && (
-            <MetricCard title="Moving" value={kpis?.moving ?? 0} icon={MapPin} variant="info" size="xxs" />
+          {hasMonitoring && (
+            <MetricCard title="Assets" value={counts.total} icon={Truck} variant="primary" size="xxs" />
           )}
-          {assetProfile.isGeneratorOnly && assetProfile.generators > 0 && (
-            <MetricCard title="Onsite" value={assetProfile.generators} icon={Zap} variant="info" size="xxs" />
+          {hasMonitoring && (
+            <MetricCard title="Online" value={onlineCount} icon={Activity} variant="success" size="xxs" />
           )}
-          <MetricCard title="Alerts" value={kpis?.criticalAlerts ?? 0} icon={AlertTriangle} variant="destructive" size="xxs" />
-          {!assetProfile.isGeneratorOnly && (
-            <>
-              <MetricCard title="Drivers" value={kpis?.activeDrivers ?? 0} icon={Users} variant="default" size="xxs" />
-              <MetricCard title="Routes" value={kpis?.activeRoutes ?? 0} icon={Route} variant="warning" size="xxs" />
-            </>
+          {hasMonitoring && (
+            <MetricCard title="Utilization" value={`${utilization}%`} icon={Gauge} variant="info" size="xxs" />
+          )}
+          {hasAlerts && (
+            <MetricCard title="Open alerts" value={openCount} icon={AlertTriangle} variant="destructive" size="xxs" />
+          )}
+          {hasFuel && (
+            <MetricCard title="Fuel used" value={`${fmt(fuelUsed)} L`} icon={Fuel} variant="info" size="xxs" />
+          )}
+          {hasDrivers && num(driverStats?.total) > 0 && (
+            <MetricCard title="Drivers" value={num(driverStats?.total)} icon={Users} variant="default" size="xxs" />
+          )}
+          {hasRoutes && num(routeStats?.total) > 0 && (
+            <MetricCard title="Routes" value={num(routeStats?.total)} icon={Route} variant="warning" size="xxs" />
+          )}
+          {hasWorkshop && (
+            <MetricCard
+              title="Maint. pending"
+              value={num(workshopKpis?.pendingMaintenance)}
+              icon={Wrench}
+              variant="warning"
+              size="xxs"
+            />
+          )}
+          {hasSurveillance && safeArray(videoStreams).length > 0 && (
+            <MetricCard
+              title="Streams"
+              value={safeArray(videoStreams).length}
+              icon={Video}
+              variant="info"
+              size="xxs"
+            />
           )}
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 min-h-[65vh]">
-          <div className="xl:col-span-3">
-            <MapErrorBoundary fallbackHeight="65vh">
-              <FleetMapPanel
-                statuses={statuses ?? []}
-                height="65vh"
-                sessionKey={mapSessionKey}
-                selectedUnitId={selectedId}
-                onUnitSelect={setSelectedId}
-                isLoading={fleetLoading}
-              />
-            </MapErrorBoundary>
-          </div>
-          <div className="space-y-4 flex flex-col min-h-0">
-            <div className="fleet-card flex-1 overflow-auto max-h-[32vh] xl:max-h-none">
-              <div className="flex items-center justify-between mb-3 sticky top-0 bg-card/95 backdrop-blur py-1 z-10">
-                <h3 className="font-semibold text-sm">
-                  {assetProfile.primaryLabel} ({units?.length ?? 0})
-                  {live && <span className="ml-1.5 text-status-moving text-xs font-normal">● Live</span>}
-                </h3>
-                <Link to="/app/monitoring?view=list" className="text-xs text-primary hover:underline">Full list</Link>
-              </div>
-              <ul className="space-y-1">
-                {(units ?? []).slice(0, 12).map((u) => (
-                  <li key={u.id}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedId(u.id)}
-                      className="w-full flex items-center gap-2 py-1.5 px-1.5 rounded-lg hover:bg-muted/50 text-left text-sm"
-                    >
-                      <UnitTypeIcon
-                        size="sm"
-                        wialonId={u.wialonId}
-                        iconUgi={u.iconUgi}
-                        title={u.name}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium truncate">{u.name}</p>
-                        <p className="text-xs text-muted-foreground truncate">{u.plate || u.id}</p>
-                      </div>
-                      <StatusBadge status={u.status} size="sm" showDot={false} />
-                    </button>
-                  </li>
-                ))}
-                {!(units?.length) && <p className="text-muted-foreground text-sm">No units synced</p>}
-              </ul>
-            </div>
-            <div className="fleet-card flex-1 overflow-auto">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold text-sm">Recent Alerts</h3>
-                <Link to="/app/alerts" className="text-xs text-primary hover:underline">View all</Link>
-              </div>
-              <div className="space-y-2">
-                {alertList.slice(0, 6).map((a, i) => (
-                  <div key={i} className="text-sm border-b border-border/60 pb-2 last:border-0 animate-slide-in" style={{ animationDelay: `${i * 50}ms` }}>
-                    <span className="font-medium line-clamp-1">{a.title}</span>
-                    <span className="text-muted-foreground ml-2 text-xs capitalize">{a.severity}</span>
-                  </div>
-                ))}
-                {!alertList.length && <p className="text-muted-foreground text-sm">No alerts</p>}
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-1.5">
-              <MetricCard title="Fuel (mo)" value={`${kpis?.fuelConsumedMonth ?? 0}L`} icon={Fuel} size="xxs" variant="info" />
-              <MetricCard title="Maint." value={kpis?.pendingMaintenance ?? 0} icon={Wrench} size="xxs" variant="warning" />
-            </div>
-          </div>
-        </div>
+        {/* —— Fleet: asymmetric creative layout —— */}
+        {hasMonitoring && counts.total > 0 && (
+          <div className={SECTION}>
+            <DashboardSectionLabel color={brand}>Fleet pulse</DashboardSectionLabel>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <DashboardWidget
+                title="Asset status"
+                subtitle="Live partition of the whole fleet"
+                href="/app/monitoring"
+                brandColor={brand}
+                tone="primary"
+                insight={`${counts.moving} moving · ${counts.idle} idle · ${counts.stopped} stopped · ${counts.offline} offline`}
+              >
+                <CompactDonut data={statusSlices} centerValue={counts.total} centerLabel="assets" />
+                <LegendDots items={statusSlices.map((s) => ({ label: s.name, color: s.color, value: s.value }))} />
+              </DashboardWidget>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5">
-          <Link to="/app/monitoring"><Button variant="outline" className="w-full h-10 flex-col gap-0.5 rounded-lg text-[10px] bg-secondary border-primary/20 hover:bg-primary hover:text-primary-foreground hover:border-primary transition-all"><MapPin className="w-3.5 h-3.5 text-primary group-hover:text-primary-foreground" /><span>Live Map</span></Button></Link>
-          <Link to="/app/surveillance"><Button variant="outline" className="w-full h-10 flex-col gap-0.5 rounded-lg text-[10px] bg-secondary border-accent/25 hover:bg-accent hover:text-accent-foreground hover:border-accent transition-all"><Video className="w-3.5 h-3.5 text-accent" /><span>Surveillance</span></Button></Link>
-          <Link to="/app/reports"><Button variant="outline" className="w-full h-10 flex-col gap-0.5 rounded-lg text-[10px] bg-slate-50 border-slate-200 hover:bg-primary hover:text-primary-foreground hover:border-primary transition-all"><BarChart3 className="w-3.5 h-3.5 text-slate-600" /><span>Reports</span></Button></Link>
-          <Link to="/app/routes"><Button variant="outline" className="w-full h-10 flex-col gap-0.5 rounded-lg text-[10px] bg-amber-50 border-amber-200/80 hover:bg-amber-500 hover:text-white hover:border-amber-500 transition-all"><Route className="w-3.5 h-3.5 text-amber-600" /><span>Routes</span></Button></Link>
-        </div>
+              <DashboardWidget
+                className="md:col-span-2"
+                title="Motion × ignition"
+                subtitle="Online assets only — stacked by ignition state"
+                href="/app/monitoring"
+                brandColor={accent}
+                tone="accent"
+                insight={`${onlineCount} online assets classified by motion and ignition`}
+              >
+                <CompactStackedHBars
+                  data={motionIgnition}
+                  series={[
+                    { key: 'withIgn', label: 'Ignition on', color: FLEET_STATUS.moving },
+                    { key: 'withoutIgn', label: 'Ignition off', color: '#94a3b8' },
+                  ]}
+                  height={180}
+                />
+                <LegendDots
+                  items={[
+                    { label: 'Ignition on', color: FLEET_STATUS.moving },
+                    { label: 'Ignition off', color: '#94a3b8' },
+                  ]}
+                />
+              </DashboardWidget>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <DashboardWidget
+                title="Connection"
+                subtitle="Online vs offline"
+                href="/app/monitoring"
+                brandColor={brand}
+                tone="teal"
+                insight={`${onlinePct}% of the fleet is online right now`}
+              >
+                <CompactDonut data={connectionSlices} centerValue={`${onlinePct}%`} centerLabel="online" />
+                <LegendDots
+                  items={connectionSlices.map((s) => ({ label: s.name, color: s.color, value: s.value }))}
+                />
+              </DashboardWidget>
+
+              <DashboardWidget
+                title="GPS coverage"
+                subtitle="Assets reporting coordinates"
+                brandColor={accent}
+                tone="sky"
+                insight={`${gpsPct}% have a position fix (${withGps} of ${counts.total})`}
+              >
+                <CompactDonut data={gpsSlices} centerValue={`${gpsPct}%`} centerLabel="with GPS" />
+                <LegendDots items={gpsSlices.map((s) => ({ label: s.name, color: s.color, value: s.value }))} />
+              </DashboardWidget>
+
+              <DashboardWidget
+                title="Signal freshness"
+                subtitle="Time since last position update"
+                brandColor={ALERT_SEVERITY.warning}
+                tone="amber"
+                insight={`${freshNow} assets updated in the last 15 minutes`}
+              >
+                <CompactBars data={freshnessBars} includeZeros color={brand} />
+                <LegendDots
+                  items={freshnessBars
+                    .filter((b) => b.value > 0)
+                    .map((b) => ({ label: b.name, color: String(b.fill), value: b.value }))}
+                />
+              </DashboardWidget>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <DashboardWidget
+                title="Speed bands"
+                subtitle="Current speed of online assets"
+                brandColor={brand}
+                tone="primary"
+                insight={`Based on ${speedBands.online} online assets`}
+              >
+                <CompactBars data={speedBands.bands} includeZeros color={brand} />
+                <LegendDots
+                  items={speedBands.bands.map((b) => ({
+                    label: b.name,
+                    color: String(b.fill),
+                    value: b.value,
+                  }))}
+                />
+              </DashboardWidget>
+
+              {hardwareBars.length > 0 && (
+                <DashboardWidget
+                  title="Hardware mix"
+                  subtitle="Devices by telematics hardware"
+                  brandColor={accent}
+                  tone="accent"
+                  insight={`${hardwareBars.length} hardware types in this fleet`}
+                >
+                  <CompactBars data={hardwareBars} horizontal color={accent} />
+                </DashboardWidget>
+              )}
+
+              {mileageLeaders.length > 0 && (
+                <DashboardWidget
+                  title="Distance leaders"
+                  subtitle="Highest recorded odometer"
+                  href="/app/monitoring?view=list"
+                  brandColor={brand}
+                  tone="teal"
+                  insight={`Top asset: ${mileageLeaders[0].name} · ${fmt(mileageLeaders[0].value)} km`}
+                >
+                  <CompactBars data={mileageLeaders} horizontal unit="km" color={brand} />
+                </DashboardWidget>
+              )}
+
+              {hardwareBars.length === 0 && mileageLeaders.length === 0 && (
+                <DashboardWidget
+                  className="md:col-span-2"
+                  title="Fleet utilization"
+                  subtitle="Moving + idle share of all assets"
+                  brandColor={accent}
+                  tone="accent"
+                  insight={`${counts.moving + counts.idle} of ${counts.total} assets are active (${utilization}%)`}
+                >
+                  <CompactRadial value={utilization} label="active" color={accent} />
+                </DashboardWidget>
+              )}
+
+              {(hardwareBars.length === 0) !== (mileageLeaders.length === 0) && (
+                <DashboardWidget
+                  title="Fleet utilization"
+                  subtitle="Moving + idle share"
+                  brandColor={brand}
+                  tone="teal"
+                  insight={`${utilization}% of assets are currently active`}
+                >
+                  <CompactRadial value={utilization} label="active" color={brand} />
+                </DashboardWidget>
+              )}
+            </div>
+          </div>
+        )}
+
+        {hasAlerts && (
+          <div className={SECTION}>
+            <DashboardSectionLabel color={ALERT_SEVERITY.warning}>Alerts</DashboardSectionLabel>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <DashboardWidget
+                className="md:col-span-2"
+                title="Alert activity — last 7 days"
+                subtitle="Loaded events bucketed by day and severity"
+                href="/app/alerts"
+                brandColor={ALERT_SEVERITY.critical}
+                tone="rose"
+                insight={
+                  alertList.length
+                    ? `${alertList.length} recent events in view · ${criticalCount} critical`
+                    : 'No alerts in the current window'
+                }
+              >
+                <CompactMultiLine
+                  data={alertTimeline}
+                  series={[
+                    { key: 'critical', label: 'Critical', color: ALERT_SEVERITY.critical },
+                    { key: 'warning', label: 'Warning', color: ALERT_SEVERITY.warning },
+                    { key: 'info', label: 'Info', color: accent },
+                  ]}
+                  height={180}
+                />
+                <LegendDots
+                  items={[
+                    { label: 'Critical', color: ALERT_SEVERITY.critical },
+                    { label: 'Warning', color: ALERT_SEVERITY.warning },
+                    { label: 'Info', color: accent },
+                  ]}
+                />
+              </DashboardWidget>
+
+              <DashboardWidget
+                title="Open vs acknowledged"
+                subtitle="Response state of loaded alerts"
+                href="/app/alerts"
+                brandColor={brand}
+                tone="primary"
+                insight={alertList.length ? `${ackRate}% acknowledged` : 'Inbox is clear'}
+              >
+                {ackSlices.length ? (
+                  <>
+                    <CompactDonut data={ackSlices} centerValue={`${ackRate}%`} centerLabel="acked" />
+                    <LegendDots items={ackSlices.map((s) => ({ label: s.name, color: s.color, value: s.value }))} />
+                  </>
+                ) : (
+                  <CompactDonut
+                    data={[{ name: 'No alerts', value: 1, color: '#e2e8f0' }]}
+                    centerValue={0}
+                    centerLabel="events"
+                  />
+                )}
+              </DashboardWidget>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <DashboardWidget
+                title="Severity mix"
+                subtitle="Critical · warning · info"
+                href="/app/alerts"
+                brandColor={ALERT_SEVERITY.warning}
+                tone="amber"
+                insight={
+                  severitySlices.length
+                    ? severitySlices.map((s) => `${s.value} ${s.name.toLowerCase()}`).join(' · ')
+                    : 'No severity data yet'
+                }
+              >
+                {severitySlices.length ? (
+                  <>
+                    <CompactDonut data={severitySlices} centerValue={alertList.length} centerLabel="events" />
+                    <LegendDots
+                      items={severitySlices.map((s) => ({ label: s.name, color: s.color, value: s.value }))}
+                    />
+                  </>
+                ) : (
+                  <CompactBars
+                    data={[{ name: 'None', value: 0, fill: '#e2e8f0' }]}
+                    includeZeros
+                    color="#e2e8f0"
+                  />
+                )}
+              </DashboardWidget>
+
+              <DashboardWidget
+                className="md:col-span-2"
+                title="Top alert types"
+                subtitle="Most frequent categories in the loaded set"
+                href="/app/alerts"
+                brandColor={accent}
+                tone="accent"
+                insight={
+                  alertTypeBars[0]
+                    ? `Leading type: ${alertTypeBars[0].name} (${alertTypeBars[0].value})`
+                    : 'No typed alerts yet'
+                }
+              >
+                {alertTypeBars.length ? (
+                  <CompactBars data={alertTypeBars} horizontal color={accent} height={180} />
+                ) : (
+                  <CompactBars
+                    data={[{ name: 'No types', value: 0, fill: '#e2e8f0' }]}
+                    includeZeros
+                    color="#e2e8f0"
+                  />
+                )}
+              </DashboardWidget>
+            </div>
+          </div>
+        )}
+
+        {hasFuel && (
+          <div className={SECTION}>
+            <DashboardSectionLabel color={brand}>Fuel</DashboardSectionLabel>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <DashboardWidget
+                title="Fuel totals"
+                subtitle="Filled · consumed · theft (period KPIs)"
+                href="/app/fuel"
+                brandColor={brand}
+                tone="primary"
+                insight={
+                  fuelTracked > 0
+                    ? `${fuelTracked} assets tracked · avg ${avgConsumption || 0} L/100`
+                    : `${fmt(fuelFilled)} L filled · ${fmt(fuelUsed)} L consumed`
+                }
+              >
+                <CompactBars data={fuelKpiBars} includeZeros color={brand} />
+                <LegendDots
+                  items={fuelKpiBars.map((b) => ({
+                    label: b.name,
+                    color: String(b.fill),
+                    value: b.value,
+                  }))}
+                />
+              </DashboardWidget>
+
+              <DashboardWidget
+                className="md:col-span-2"
+                title="Monthly fill vs consumption"
+                subtitle="Trend from fuel reports"
+                href="/app/fuel"
+                brandColor={accent}
+                tone="accent"
+                insight={
+                  fuelTrendRows.length
+                    ? `Showing ${fuelTrendRows.length} months of fill and burn`
+                    : 'Trend appears after fuel reports sync into the database'
+                }
+              >
+                {fuelTrendRows.some((r) => r.filled > 0 || r.consumed > 0) ? (
+                  <>
+                    <CompactComposed
+                      data={fuelTrendRows}
+                      bars={[{ key: 'filled', label: 'Filled (L)', color: brand }]}
+                      lines={[{ key: 'consumed', label: 'Consumed (L)', color: accent }]}
+                      height={180}
+                    />
+                    <LegendDots
+                      items={[
+                        { label: 'Filled (L)', color: brand },
+                        { label: 'Consumed (L)', color: accent },
+                      ]}
+                    />
+                  </>
+                ) : (
+                  <CompactBars data={fuelKpiBars} includeZeros color={accent} height={180} />
+                )}
+              </DashboardWidget>
+            </div>
+
+            {tankRiskBars.rows.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <DashboardWidget
+                  className="md:col-span-2"
+                  title={tankRiskBars.kind === 'pct' ? 'Tank risk — lowest levels' : 'Live tank litres'}
+                  subtitle={
+                    tankRiskBars.kind === 'pct'
+                      ? 'Assets with live fuel % (lowest first)'
+                      : 'Assets reporting live tank litres'
+                  }
+                  href="/app/fuel"
+                  brandColor={ALERT_SEVERITY.warning}
+                  tone="amber"
+                  insight={
+                    tankRiskBars.kind === 'pct'
+                      ? `${tankRiskBars.rows.filter((r) => r.value < 25).length} assets below 25%`
+                      : `Highest live tank: ${tankRiskBars.rows[0]?.value} L`
+                  }
+                >
+                  <CompactBars
+                    data={tankRiskBars.rows}
+                    horizontal
+                    unit={tankRiskBars.kind === 'pct' ? '%' : 'L'}
+                    color={accent}
+                    height={180}
+                  />
+                </DashboardWidget>
+
+                <DashboardWidget
+                  title="Burn vs fill"
+                  subtitle="Consumed as share of filled"
+                  brandColor={brand}
+                  tone="teal"
+                  insight={
+                    fuelFilled > 0
+                      ? `${pct(fuelUsed, fuelFilled)}% of filled volume was consumed`
+                      : 'No fill volume in KPI window'
+                  }
+                >
+                  <CompactRadial
+                    value={fuelFilled > 0 ? pct(fuelUsed, fuelFilled) : 0}
+                    label="used / filled"
+                    color={brand}
+                  />
+                </DashboardWidget>
+              </div>
+            )}
+          </div>
+        )}
+
+        {(tripRows.length > 0
+          || routeStages.length > 0
+          || driverSlices.length > 0
+          || workshopBars.length > 0
+          || commandBars.length > 0
+          || userSlices.length > 0) && (
+          <div className={SECTION}>
+            <DashboardSectionLabel color={secondary}>Operations</DashboardSectionLabel>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {tripRows.length > 0 && (
+                <DashboardWidget
+                  title="Trip performance"
+                  subtitle="Distance with fuel used"
+                  href="/app/routes"
+                  brandColor={brand}
+                  tone="sky"
+                  insight={`${tripRows.length} assets with trip data`}
+                >
+                  <CompactComposed
+                    data={tripRows}
+                    bars={[{ key: 'distance', label: 'Distance (km)', color: brand }]}
+                    lines={[{ key: 'fuel', label: 'Fuel (L)', color: accent }]}
+                  />
+                </DashboardWidget>
+              )}
+              {routeStages.length > 0 && (
+                <DashboardWidget
+                  title="Route pipeline"
+                  subtitle="Scheduled → in progress → done"
+                  href="/app/routes"
+                  brandColor={accent}
+                  tone="accent"
+                  insight={`${num(routeStats?.total)} routes in total`}
+                >
+                  <CompactStageBars stages={routeStages} />
+                </DashboardWidget>
+              )}
+              {driverSlices.length > 0 && (
+                <DashboardWidget
+                  title="Driver duty"
+                  subtitle="Roster availability"
+                  href="/app/drivers"
+                  brandColor={brand}
+                  tone="teal"
+                  insight={`${num(driverStats?.total)} drivers on roster`}
+                >
+                  <CompactDonut
+                    data={driverSlices}
+                    centerValue={num(driverStats?.total)}
+                    centerLabel="drivers"
+                  />
+                  <LegendDots
+                    items={driverSlices.map((s) => ({ label: s.name, color: s.color, value: s.value }))}
+                  />
+                </DashboardWidget>
+              )}
+              {workshopBars.length > 0 && (
+                <DashboardWidget
+                  title="Workshop load"
+                  subtitle="Jobs and inspections"
+                  href="/app/workshop"
+                  brandColor={ALERT_SEVERITY.warning}
+                  tone="amber"
+                  insight={`${num(workshopKpis?.pendingMaintenance)} pending maintenance`}
+                >
+                  <CompactBars data={workshopBars} color={brand} />
+                </DashboardWidget>
+              )}
+              {commandBars.length > 0 && (
+                <DashboardWidget
+                  title="Commands"
+                  subtitle="Remote commands per asset"
+                  href="/app/commands"
+                  brandColor={secondary}
+                  tone="secondary"
+                  insight={`${commandBars.reduce((s, r) => s + r.value, 0)} commands logged`}
+                >
+                  <CompactBars data={commandBars} horizontal color={brand} />
+                </DashboardWidget>
+              )}
+              {userSlices.length > 0 && (
+                <DashboardWidget
+                  title="Users by role"
+                  subtitle={`${activeUsers} active accounts`}
+                  href="/app/settings"
+                  brandColor={brand}
+                  tone="primary"
+                  insight={`${safeArray(tenantUsers).length} users total`}
+                >
+                  <CompactDonut
+                    data={userSlices}
+                    centerValue={safeArray(tenantUsers).length}
+                    centerLabel="users"
+                  />
+                  <LegendDots
+                    items={userSlices.map((s) => ({ label: s.name, color: s.color, value: s.value }))}
+                  />
+                </DashboardWidget>
+              )}
+            </div>
+          </div>
+        )}
+
+        <DashboardQuickAccess enabledKeys={enabled} />
       </AnimatedPage>
     </AppLayout>
   );

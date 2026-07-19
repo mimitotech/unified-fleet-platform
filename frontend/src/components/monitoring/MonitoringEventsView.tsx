@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { formatDistanceToNow } from 'date-fns';
 import { AlertTriangle, Bell, Leaf, Video, ExternalLink, MapPin, Filter } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -33,11 +33,15 @@ function matchUnit(event: MonitoringEventRow, unit: FleetUnit | undefined): bool
 }
 
 export function MonitoringEventsView({ units = [], unitId, onViewUnitOnMap, className }: Props) {
-  const { events, isLoading, isError, refetch } = useMonitoringEvents(80);
+  const { events, isLoading, isError, refetch } = useMonitoringEvents(80, true, units);
   const [category, setCategory] = useState<CategoryFilter>('all');
-  const [unitOnly, setUnitOnly] = useState(false);
+  const [unitOnly, setUnitOnly] = useState(Boolean(unitId));
 
   const selectedUnit = units.find((u) => u.id === unitId);
+
+  useEffect(() => {
+    if (unitId) setUnitOnly(true);
+  }, [unitId]);
 
   const filtered = useMemo(() => {
     let rows = events;
@@ -78,7 +82,7 @@ export function MonitoringEventsView({ units = [], unitId, onViewUnitOnMap, clas
           <div>
             <h3 className="font-semibold text-sm">Fleet events & violations</h3>
             <p className="text-[11px] text-muted-foreground">
-              Alerts, eco-driving, and video events from Wialon integrations
+              Alerts and events for this client&apos;s assets only
             </p>
           </div>
           <div className="flex gap-1.5">

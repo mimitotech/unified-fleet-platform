@@ -30,6 +30,7 @@ export interface AssetStatusEntry {
       state?: 0 | 1 | 2;
       currSpeed?: number;
       course?: number;
+      ignitionOn?: boolean;
     };
     engineHours?: number;
     mileage?: number;

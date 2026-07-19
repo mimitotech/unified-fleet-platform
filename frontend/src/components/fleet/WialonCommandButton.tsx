@@ -31,7 +31,7 @@ export function WialonCommandButton({
           { unitId, commandName, param },
           {
             onSuccess: () => {
-              notify.success(label ? `${label} sent` : 'Command sent to Wialon');
+              notify.success(label ? `${label} sent` : 'Command sent');
               onSuccess?.();
             },
             onError: (e) => notify.error('Command failed', e.message),

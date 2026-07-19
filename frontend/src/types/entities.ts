@@ -337,6 +337,10 @@ export interface FuelTransaction {
   latitude?: number;
   longitude?: number;
 
+  /** Exact Wialon report interval for group period totals (unix seconds). */
+  periodFromTs?: number;
+  periodToTs?: number;
+
   // Fields enriched from Google Sheets (matched by plate + timestamp)
   filledStation?: number; // Liters filled (from fuel station/Google Sheets)
   totalCost?: number;

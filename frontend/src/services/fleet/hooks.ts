@@ -12,10 +12,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { UseQueryOptions } from '@tanstack/react-query';
 import { getFleetService, isFleetServiceConnected } from './index';
 import { useFleetReady } from '@/contexts/FleetContext';
+import { notify } from '@/lib/notify';
 import {
   buildGeneratorEngineIntervalsByUnit,
   getGeneratorFuelActivity,
 } from './generatorFuelClassification';
+import { aggregateUnitFuelColumns } from '@/components/fuel/fuelColumnMetrics';
+import { isWialonGroupSummary } from '@/components/fuel/fuelTransactionFilters';
+import { isPlausibleFuelEvent } from '@/components/fuel/fuelEventPlausibility';
 import type {
   VehicleFilters,
   FleetStats,
@@ -330,14 +334,29 @@ export function useGeneratorsWithReports(range?: {
     // the first known refuel/drain address acts as the unit's "current location"
     // for display in Generators by Site.
     const initialLocationByUnit = new Map<string, { ts: number; location: string }>();
-    for (const tx of fuelQuery.data?.transactions ?? []) {
+    const txs = fuelQuery.data?.transactions ?? [];
+    const byUnitName = new Map<string, typeof txs>();
+    for (const tx of txs) {
+      const list = byUnitName.get(tx.unitName) ?? [];
+      list.push(tx);
+      byUnitName.set(tx.unitName, list);
+    }
+    for (const [unitName, unitTxs] of byUnitName) {
+      const sample = unitTxs[0];
+      const key = String(sample?.unitId ?? unitName);
+      const cols = aggregateUnitFuelColumns(unitTxs, {
+        fromDate: range?.startDate,
+        toDate: range?.endDate,
+      });
+      fuelByUnit.set(key, {
+        consumed: cols.totalUsed,
+        filled: cols.filledMain + cols.filledReserve,
+        drained: cols.totalDrop,
+      });
+    }
+    for (const tx of txs) {
       const key = String(tx.unitId);
-      const current = fuelByUnit.get(key) ?? { consumed: 0, filled: 0, drained: 0 };
-      const activity = getGeneratorFuelActivity(tx, engineIntervalsByUnit);
-      current.consumed += activity.consumed;
-      current.filled += activity.filled;
-      current.drained += activity.drained;
-      fuelByUnit.set(key, current);
+      if (isWialonGroupSummary(tx) || !isPlausibleFuelEvent(tx)) continue;
 
       // Site inference uses anchor events (fill/drain), not consumption rows
       // which represent driving/idle intervals rather than a physical place.
@@ -463,14 +482,24 @@ export function useMachineryWithReports(range?: {
 
     const engineByUnit = buildGeneratorEngineIntervalsByUnit(engineHoursQuery.data ?? []);
     const fuelByUnit = new Map<string, { consumed: number; filled: number; drained: number }>();
-    for (const tx of fuelQuery.data?.transactions ?? []) {
+    const txs = fuelQuery.data?.transactions ?? [];
+    const byUnit = new Map<string, typeof txs>();
+    for (const tx of txs) {
       const uid = String(tx.unitId);
-      const row = fuelByUnit.get(uid) ?? { consumed: 0, filled: 0, drained: 0 };
-      const activity = getGeneratorFuelActivity(tx, engineByUnit.get(uid) ?? []);
-      if (activity.consumed > 0) row.consumed += activity.consumed;
-      if (activity.filled > 0) row.filled += activity.filled;
-      if (activity.drained > 0) row.drained += activity.drained;
-      fuelByUnit.set(uid, row);
+      const list = byUnit.get(uid) ?? [];
+      list.push(tx);
+      byUnit.set(uid, list);
+    }
+    for (const [uid, unitTxs] of byUnit) {
+      const cols = aggregateUnitFuelColumns(unitTxs, {
+        fromDate: range?.startDate,
+        toDate: range?.endDate,
+      });
+      fuelByUnit.set(uid, {
+        consumed: cols.totalUsed,
+        filled: cols.filledMain + cols.filledReserve,
+        drained: cols.totalDrop,
+      });
     }
 
     return items.map<EnrichedMachinery>((m) => {
@@ -624,7 +653,7 @@ function fuelTransactionsQueryOptions(
     refetchInterval: (query: { state: { data?: FuelTransactionsQueryData; status: string } }) => {
       const d = query.state.data;
       if (query.state.status === 'error') return false;
-      if (!d?.transactions?.length) return 10_000;
+      if (d?.warming || d?.needsRefresh || !d?.transactions?.length) return 8_000;
       return 60_000;
     },
     ...extra,
@@ -670,6 +699,9 @@ export function useRefreshFuelTransactions() {
       queryClient.invalidateQueries({ queryKey: fleetQueryKeys.fuel() });
       queryClient.invalidateQueries({ queryKey: fleetQueryKeys.generatorFuelTransactions() });
       queryClient.invalidateQueries({ queryKey: fleetQueryKeys.machineryFuelTransactions() });
+      if (data?.warming || data?.needsRefresh) {
+        notify.info('Fuel sync started', 'Large fleets sync in the background. Totals update automatically.');
+      }
     },
   });
 }

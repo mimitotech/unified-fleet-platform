@@ -105,8 +105,8 @@ export default function TenantCreate() {
   }, [searchParams]);
 
   return (
-    <AdminLayout title="New Tenant" subtitle="Create a branded MAMS tenant linked to a Wialon client account">
-      <Link to="/admin/tenants" className="text-sm text-primary mb-4 inline-block">← Back to Tenants</Link>
+    <AdminLayout title="New Client" subtitle="Create a branded MAMS client linked to a Wialon account">
+      <Link to="/admin/tenants" className="text-sm text-primary mb-4 inline-block">← Back to Clients</Link>
 
       <div className="flex gap-2 mb-6 text-sm">
         {['Details', 'Wialon account', 'Review'].map((label, i) => (
@@ -124,12 +124,12 @@ export default function TenantCreate() {
       {step === 1 && (
         <Card className="max-w-xl">
           <CardHeader>
-            <CardTitle>Tenant details</CardTitle>
+            <CardTitle>Client details</CardTitle>
             <CardDescription>Name and login slug for this client&apos;s branded MAMS portal.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <Label>Tenant name</Label>
+              <Label>Client name</Label>
               <Input placeholder="NSAMBA Logistics" value={name} onChange={(e) => handleNameChange(e.target.value)} />
             </div>
             <div>
@@ -178,7 +178,7 @@ export default function TenantCreate() {
         <Card className="max-w-xl">
           <CardHeader>
             <CardTitle>Review & create</CardTitle>
-            <CardDescription>Tenant starts as draft. Activate when branding and modules are ready.</CardDescription>
+            <CardDescription>Client starts as draft. Activate when branding and modules are ready.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             <p><strong>Name:</strong> {name}</p>
@@ -194,7 +194,7 @@ export default function TenantCreate() {
             )}
             <div className="flex gap-2 pt-2">
               <LoadingButton loading={create.isPending} onClick={() => create.mutate()} disabled={!name.trim()}>
-                Create tenant
+                Create client
               </LoadingButton>
               <Button variant="outline" onClick={() => setStep(2)}>Back</Button>
             </div>

@@ -1,6 +1,4 @@
-import { Link } from 'react-router-dom';
-import { Plug, Settings } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Plug } from 'lucide-react';
 import { useModuleAccess } from '@/hooks/useModules';
 import { useWialonContext } from '@/hooks/useWialon';
 import { cn } from '@/lib/utils';
@@ -22,7 +20,16 @@ export function ModuleIntegrationBanner({ moduleKey, className }: Props) {
 
   if (wialonOk) return null;
 
-  const sources = (mod.sources || []).filter(Boolean).join(', ') || 'integrations';
+  const sources = (mod.sources || [])
+    .map((s) => {
+      const key = String(s).toLowerCase();
+      if (key === 'wialon') return 'fleet telematics';
+      if (key === 'tracksolid') return 'devices';
+      if (key === 'loconav') return 'video';
+      return key;
+    })
+    .filter(Boolean)
+    .join(', ') || 'integrations';
 
   return (
     <div
@@ -35,15 +42,10 @@ export function ModuleIntegrationBanner({ moduleKey, className }: Props) {
         <Plug className="h-4 w-4 text-amber-600 shrink-0" />
         <span>
           <strong>{mod.label}</strong> needs a connected data source ({sources}).
-          {configured && !connected ? ' Wialon is configured but not connected.' : ''}
+          {configured && !connected ? ' Telematics is configured but not connected.' : ''}
+          {' '}Contact your account manager to connect it.
         </span>
       </div>
-      <Button variant="outline" size="sm" asChild>
-        <Link to="/app/settings?tab=wialon">
-          <Settings className="h-3.5 w-3.5 mr-1.5" />
-          Connect integrations
-        </Link>
-      </Button>
     </div>
   );
 }

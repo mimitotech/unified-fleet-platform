@@ -144,10 +144,48 @@ export class LocoNavAdapter extends BaseAdapter {
   }
 
   async getAlerts(from: Date, to: Date): Promise<FleetAlert[]> {
-    void from;
-    void to;
-    return [];
+    // LocoNav delivers most events via webhooks; polling is best-effort when an events API is exposed.
+    try {
+      const fromIso = from.toISOString();
+      const toIso = to.toISOString();
+      const result = await this.request(
+        'GET',
+        `/integration/api/v1/events?page=1&perPage=100&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`,
+      );
+      return extractLocoNavEvents(result);
+    } catch {
+      return [];
+    }
   }
+}
+
+function extractLocoNavEvents(data: unknown): FleetAlert[] {
+  const root = data as Record<string, unknown>;
+  let rows: Array<Record<string, unknown>> = [];
+  const inner = root.data as Record<string, unknown> | undefined;
+  if (Array.isArray(inner?.events)) rows = inner.events as Array<Record<string, unknown>>;
+  else if (Array.isArray(inner?.data)) rows = inner.data as Array<Record<string, unknown>>;
+  else if (Array.isArray(root.events)) rows = root.events as Array<Record<string, unknown>>;
+  else if (Array.isArray(root.data)) rows = root.data as Array<Record<string, unknown>>;
+
+  return rows.map((e, i) => {
+    const kind = String(e.kind || e.event_key || e.alert_type || e.type || 'event').toLowerCase();
+    const vehicleRef = e.vehicle_number || e.vehicle_uuid || e.vehicle_id || '';
+    const ts = e.active_event_time || e.event_time || e.created_at || e.timestamp;
+    const externalId = e.id ? String(e.id) : `loconav-poll:${vehicleRef}:${ts}:${i}`;
+    return {
+      id: externalId,
+      type: kind,
+      severity: 'warning' as const,
+      title: `LocoNav: ${kind}${vehicleRef ? ` — ${vehicleRef}` : ''}`,
+      description: JSON.stringify(e).slice(0, 500),
+      timestamp: ts ? new Date(String(ts)) : new Date(),
+      sourceType: 'loconav' as const,
+      externalId,
+      assetId: vehicleRef ? String(vehicleRef) : undefined,
+      acknowledged: false,
+    };
+  });
 }
 
 function extractTelematicsValues(data: unknown): Array<{

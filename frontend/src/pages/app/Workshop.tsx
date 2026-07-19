@@ -27,9 +27,26 @@ import {
 import { FleetUnitSelect } from '@/components/fleet/FleetUnitSelect';
 import { LoadingButton } from '@/components/shared/LoadingButton';
 import { notify } from '@/lib/notify';
-import { Wrench, ClipboardCheck, AlertOctagon, DollarSign, Plus } from 'lucide-react';
+import { Wrench, ClipboardCheck, AlertOctagon, DollarSign, Plus, FileText } from 'lucide-react';
 import { format } from 'date-fns';
 import type { FleetUnit } from '@/lib/fleetUnits';
+import {
+  WorkshopCostingPanel,
+} from '@/components/workshop/WorkshopCostingPanel';
+import { WorkshopReportsInline } from '@/components/reports/moduleReportPanels';
+
+type MaintLike = {
+  vehicleName?: string;
+  totalCost?: number | string;
+  maintenanceType?: string;
+  status?: string;
+};
+type BreakLike = {
+  vehicleName?: string;
+  totalCost?: number | string;
+  severity?: string;
+  status?: string;
+};
 
 function unitFields(unit: FleetUnit | null) {
   if (!unit) return {};
@@ -161,6 +178,11 @@ export default function Workshop() {
             <TabsTrigger value="maintenance">Maintenance</TabsTrigger>
             <TabsTrigger value="inspections">Inspections</TabsTrigger>
             <TabsTrigger value="breakdowns">Breakdowns</TabsTrigger>
+            <TabsTrigger value="costing">Costing</TabsTrigger>
+            <TabsTrigger value="reports" className="gap-1">
+              <FileText className="h-3.5 w-3.5" />
+              Reports
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="maintenance" className="fleet-card mt-4">
@@ -405,6 +427,17 @@ export default function Workshop() {
                 ))}
               </TableBody>
             </Table>
+          </TabsContent>
+
+          <TabsContent value="costing" className="mt-4 space-y-4">
+            <WorkshopCostingPanel
+              maintenance={maintenance as MaintLike[]}
+              breakdowns={breakdowns as BreakLike[]}
+            />
+          </TabsContent>
+
+          <TabsContent value="reports" className="mt-4">
+            <WorkshopReportsInline />
           </TabsContent>
         </Tabs>
       </div>

@@ -143,6 +143,11 @@ export function applyTenantThemeVars(branding: ResolvedTenantBranding): void {
     '--gradient-primary',
     `linear-gradient(135deg, hsl(${primaryHsl}), hsl(${hexToHsl(lightenHex(branding.primaryColor, 0.18))}))`
   );
+  root.style.setProperty('--brand-primary', branding.primaryColor);
+  root.style.setProperty('--brand-secondary', branding.secondaryColor);
+  root.style.setProperty('--brand-accent', branding.accentColor);
+  root.style.setProperty('--brand-primary-soft', hexToHsl(lightenHex(branding.primaryColor, 0.85)));
+  root.style.setProperty('--brand-border', hexToHsl(lightenHex(branding.primaryColor, 0.55)));
 }
 
 export function clearTenantThemeVars(): void {
@@ -153,6 +158,7 @@ export function clearTenantThemeVars(): void {
     '--sidebar-background', '--sidebar-foreground', '--sidebar-primary',
     '--sidebar-primary-foreground', '--sidebar-accent', '--sidebar-accent-foreground',
     '--sidebar-border', '--sidebar-ring', '--fleet-primary', '--fleet-primary-light', '--gradient-primary',
+    '--brand-primary', '--brand-secondary', '--brand-accent', '--brand-primary-soft', '--brand-border',
   ];
   vars.forEach((v) => root.style.removeProperty(v));
 }

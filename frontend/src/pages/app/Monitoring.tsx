@@ -6,6 +6,7 @@ import { MonitoringViewHeader } from '@/components/fleet/MonitoringViewHeader';
 import { FleetMapWorkspace, FleetListWorkspace } from '@/components/fleet/FleetMapWorkspace';
 import { FleetTrackWorkspace } from '@/components/fleet/FleetTrackWorkspace';
 import { MonitoringEventsView } from '@/components/monitoring/MonitoringEventsView';
+import { MonitoringModuleReports } from '@/components/reports/moduleReportPanels';
 import { useMonitoringUrlState } from '@/hooks/useMonitoringUrlState';
 import { useFleetAssetProfile } from '@/hooks/useFleetAssetProfile';
 import { useFleetUnits } from '@/hooks/useFleetUnits';
@@ -86,6 +87,7 @@ export default function Monitoring() {
             onViewUnitOnMap={goMapWithUnit}
           />
         )}
+        {view === 'reports' && <MonitoringModuleReports />}
       </div>
     </AppLayout>
   );

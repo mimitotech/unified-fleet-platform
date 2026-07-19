@@ -174,6 +174,7 @@ export async function resolveCanonicalFuelSlots(
 }
 
 const FLEET_GROUP_RE = /vehicle|truck|fleet|lorry|bus|\[veh\]|cars?/i;
+const GENSET_GROUP_RE = /generator|genset|gen\s*set|gensets?|stationary|power\s*unit|sites?|branches?/i;
 const STATIONARY_GROUP_RE =
   /generator|genset|gen\s*set|bowser|machinery|plant|power|stationary|gensets?/i;
 
@@ -185,7 +186,15 @@ export async function findFleetGroups(
   const all = await WialonReportResolverService.listUnitGroups(client, scope, { limit: 200 });
   if (!all.length) return [];
 
-  if (opts?.assetCategory === 'generator' || opts?.assetCategory === 'machinery') {
+  if (opts?.assetCategory === 'generator') {
+    // Prefer true genset groups so bowser-named groups don't replace Fuel Usage Report(Gensets).
+    const gensets = all.filter((g) => GENSET_GROUP_RE.test(g.nm));
+    if (gensets.length) return gensets;
+    const stationary = all.filter((g) => STATIONARY_GROUP_RE.test(g.nm));
+    return stationary.length ? stationary : all;
+  }
+
+  if (opts?.assetCategory === 'machinery') {
     const stationary = all.filter((g) => STATIONARY_GROUP_RE.test(g.nm));
     return stationary.length ? stationary : all;
   }

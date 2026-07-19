@@ -29,6 +29,9 @@ async function main() {
     '023_tenant_fuel_module_config.sql',
     '024_fuel_sync.sql',
     '025_fuel_asset_category.sql',
+    '026_fuel_columns_by_category.sql',
+    '027_fuel_station_variance.sql',
+    '028_eco_violations_dedup.sql',
   ];
 
   // Verify connection first

@@ -13,7 +13,7 @@ const SLOT_META: Record<
 };
 
 /**
- * Shows the four canonical Wialon fuel reports each tenant should have:
+ * Shows the four canonical Fuel reports each tenant should have:
  *   Fuel Report(Group) · Fuel Report(Unit)
  *   Fuel Usage Report(Gensets) · Fuel Usage Report(Units)
  */
@@ -28,10 +28,10 @@ export function FuelReportCoverageStrip() {
     <div className="rounded-xl border border-border/70 bg-muted/20 px-3 py-2.5 space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="text-xs font-semibold tracking-tight">Wialon fuel reports</p>
+          <p className="text-xs font-semibold tracking-tight">Fuel reports</p>
           <p className="text-[11px] text-muted-foreground">
             {ready}/{total} canonical templates linked
-            {data.uniform ? ' · uniform setup complete' : ' · create missing reports in Wialon'}
+            {data.uniform ? ' · uniform setup complete' : ' · some reports still need setup'}
           </p>
         </div>
         {!data.uniform && data.missingReports?.length > 0 && (
@@ -61,7 +61,7 @@ export function FuelReportCoverageStrip() {
               title={
                 slot.available
                   ? `Matched: ${slot.matchedName}`
-                  : `Create "${slot.expectedName}" in Wialon for this client`
+                  : `Ask admin to create "${slot.expectedName}" for this client`
               }
             >
               <div className="flex items-center gap-1.5">

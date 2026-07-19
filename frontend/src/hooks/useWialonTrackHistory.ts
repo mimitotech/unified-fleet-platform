@@ -6,15 +6,20 @@ import { safeArray } from '@/lib/safeArray';
 import {
   buildStatusSegments,
   buildTripColoredSegments,
+  buildStateMarkers,
+  buildDirectionMarkers,
   mergeStopEvents,
   parkingStopsFromTrips,
   stopsFromPoints,
+  summarizeTrack,
   type TrackPoint,
   type TrackStatusSegment,
   type TrackStopEvent,
+  type TrackStateMarker,
+  type TrackDirectionMarker,
 } from '@/lib/trackAnalysis';
 
-export type { TrackPoint, TrackStatusSegment, TrackStopEvent };
+export type { TrackPoint, TrackStatusSegment, TrackStopEvent, TrackStateMarker, TrackDirectionMarker };
 
 export function useWialonTrackHistory(unitId: number | null, enabled: boolean, minutes = 360, live = false) {
   const query = useQuery({
@@ -45,17 +50,20 @@ export function useWialonTrackHistory(unitId: number | null, enabled: boolean, m
     const tripSegments = buildTripColoredSegments(points, trips);
     const stops = mergeStopEvents(parkingStopsFromTrips(trips), stopsFromPoints(points));
     const route = points.map((p) => [p.lat, p.lng] as [number, number]);
+    const stateMarkers = buildStateMarkers(points);
+    const directionMarkers = buildDirectionMarkers(points);
+    const summary = summarizeTrack(points, stops);
     const start = points.length ? points[0] : null;
     const end = points.length ? points[points.length - 1] : null;
-    return { points, statusSegments, tripSegments, stops, route, start, end };
+    return { points, statusSegments, tripSegments, stops, route, stateMarkers, directionMarkers, summary, start, end };
   }, [query.data]);
 
   return {
     ...analysis,
     isLoading: query.isLoading,
     isFetching: query.isFetching,
-    pointCount: analysis.points.length,
-    stopCount: analysis.stops.length,
+    pointCount: analysis.summary.pointCount,
+    stopCount: analysis.summary.stopCount,
     refetch: query.refetch,
   };
 }

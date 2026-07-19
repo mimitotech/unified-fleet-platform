@@ -57,10 +57,12 @@ export function WialonHierarchyPanel({
   const probe = data;
   const metaCounts = storedMeta?.counts as WialonProbe['counts'] | undefined;
 
+  const isClient = scope === 'client';
+
   const handleRefresh = async () => {
     try {
       await refetch();
-      notify.success('Wialon hierarchy refreshed');
+      notify.success(isClient ? 'Account tree refreshed' : 'Wialon hierarchy refreshed');
     } catch (e) {
       notify.error('Refresh failed', (e as Error).message);
     }
@@ -72,9 +74,13 @@ export function WialonHierarchyPanel({
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
             <Network className="h-4 w-4" />
-            Wialon account tree
+            {isClient ? 'Account tree' : 'Wialon account tree'}
           </CardTitle>
-          <CardDescription>Save and verify a Wialon token to browse accounts and users under Mimito.</CardDescription>
+          <CardDescription>
+            {isClient
+              ? 'Ask your platform administrator to complete the fleet connection.'
+              : 'Save and verify a Wialon token to browse accounts and users under Mimito.'}
+          </CardDescription>
         </CardHeader>
       </Card>
     );
@@ -87,10 +93,12 @@ export function WialonHierarchyPanel({
           <div>
             <CardTitle className="text-sm flex items-center gap-2">
               <Network className="h-4 w-4" />
-              Wialon account tree
+              {isClient ? 'Linked account tree' : 'Wialon account tree'}
             </CardTitle>
             <CardDescription>
-              Select a client admin account to link this tenant — MAMS will create users, sync vehicles, drivers, and geofences for that account only.
+              {isClient
+                ? 'Accounts and users in your linked fleet scope.'
+                : 'Select a client admin account to link this tenant — MAMS will create users, sync vehicles, drivers, and geofences for that account only.'}
             </CardDescription>
           </div>
           <Button size="sm" variant="outline" onClick={handleRefresh} disabled={isFetching}>
@@ -100,7 +108,11 @@ export function WialonHierarchyPanel({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {isLoading && <p className="text-sm text-muted-foreground">Loading Wialon hierarchy…</p>}
+        {isLoading && (
+          <p className="text-sm text-muted-foreground">
+            {isClient ? 'Loading account tree…' : 'Loading Wialon hierarchy…'}
+          </p>
+        )}
         {error && (
           <p className="text-sm text-destructive">{(error as Error).message}</p>
         )}
@@ -125,7 +137,7 @@ export function WialonHierarchyPanel({
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 text-center">
               {(
                 [
-                  ['Units', probe.counts.units],
+                  ['Active units', probe.counts.units],
                   ['Accounts', probe.counts.accounts],
                   ['Users', probe.counts.users],
                   ['Resources', probe.counts.resources],
@@ -141,7 +153,7 @@ export function WialonHierarchyPanel({
             </div>
         {error && !probe && metaCounts && (
               <p className="text-xs text-muted-foreground">
-                Last saved snapshot: {metaCounts.units} units, {metaCounts.accounts} accounts.
+                Last saved snapshot: {metaCounts.units} active units, {metaCounts.accounts} accounts.
                 {(error as Error).message ? ` (${(error as Error).message})` : ''}
               </p>
             )}
@@ -154,7 +166,7 @@ export function WialonHierarchyPanel({
                       <TableRow>
                         <TableHead className="h-8">ID</TableHead>
                         <TableHead className="h-8">Name</TableHead>
-                        <TableHead className="h-8">Units</TableHead>
+                        <TableHead className="h-8">Active units</TableHead>
                         <TableHead className="h-8">Users</TableHead>
                         <TableHead className="h-8 w-28" />
                       </TableRow>

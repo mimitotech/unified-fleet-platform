@@ -40,7 +40,7 @@ export function WialonLiveCameraGrid({
   if (!cameras.length) {
     return (
       <p className="text-sm text-muted-foreground">
-        No camera channels configured in Wialon for this unit.
+        No camera channels configured for this unit.
       </p>
     );
   }

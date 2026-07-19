@@ -1,5 +1,7 @@
+import { useState, createElement } from 'react';
+import { createRoot } from 'react-dom/client';
 import { format } from 'date-fns';
-import { Download, Loader2, RefreshCw } from 'lucide-react';
+import { Download, Loader2, Printer, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Table,
@@ -13,6 +15,14 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import type { LiveReportDef } from '@/lib/reportCatalog';
 import { formatReportCell, tableToCsv, downloadTextFile } from '@/lib/reportUtils';
 import { renderReportCell } from '@/lib/reportCellStyles';
+import { resolveTenantBranding } from '@/lib/tenantBranding';
+import { loadBrandingCache } from '@/lib/tenantBrandingCache';
+import { notify } from '@/lib/notify';
+import {
+  BrandedReportDocument,
+  BrandedReportFooter,
+  BrandedReportHeader,
+} from '@/components/reports/BrandedReportChrome';
 import { cn } from '@/lib/utils';
 
 type Props = {
@@ -23,6 +33,9 @@ type Props = {
   isFetching?: boolean;
   onRefresh?: () => void;
   emptyHint?: string;
+  periodLabel?: string;
+  objectLabel?: string;
+  moduleLabel?: string;
   className?: string;
 };
 
@@ -34,8 +47,14 @@ export function LiveReportTable({
   isFetching,
   onRefresh,
   emptyHint,
+  periodLabel,
+  objectLabel,
+  moduleLabel = 'Reports',
   className,
 }: Props) {
+  const branding = resolveTenantBranding(loadBrandingCache());
+  const [busy, setBusy] = useState(false);
+
   const exportCsv = () => {
     downloadTextFile(
       tableToCsv({
@@ -47,8 +66,119 @@ export function LiveReportTable({
         totalRows: rows.length,
       }),
       `${def.id}-live.csv`,
-      'text/csv'
+      'text/csv',
     );
+  };
+
+  const exportPdf = async (mode: 'download' | 'print') => {
+    setBusy(true);
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;left:-10000px;top:0;width:1100px;pointer-events:none;';
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    try {
+      await new Promise<void>((resolve) => {
+        root.render(
+          createElement(
+            'div',
+            { className: 'bg-white text-slate-900' },
+            createElement(
+              BrandedReportDocument,
+              { branding },
+              createElement(BrandedReportHeader, {
+                branding,
+                reportTitle: def.label,
+                moduleLabel,
+                periodLabel,
+                objectLabel,
+                generatedAt: fetchedAt ? new Date(fetchedAt) : new Date(),
+              }),
+              createElement(
+                'div',
+                { className: 'border border-slate-200 border-t-0 px-4 py-3' },
+                createElement(
+                  'table',
+                  { className: 'w-full text-sm border-collapse' },
+                  createElement(
+                    'thead',
+                    null,
+                    createElement(
+                      'tr',
+                      null,
+                      def.columns.map((col) =>
+                        createElement(
+                          'th',
+                          {
+                            key: col.key,
+                            className: cn(
+                              'border px-2 py-1.5 text-xs font-medium',
+                              col.align === 'right' ? 'text-right' : 'text-left',
+                            ),
+                            style: {
+                              background: branding.primaryColor,
+                              color: '#fff',
+                              borderColor: branding.primaryColor,
+                            },
+                          },
+                          col.label,
+                        ),
+                      ),
+                    ),
+                  ),
+                  createElement(
+                    'tbody',
+                    null,
+                    rows.map((row, ri) =>
+                      createElement(
+                        'tr',
+                        { key: ri, className: ri % 2 ? 'bg-slate-50' : 'bg-white' },
+                        def.columns.map((col) =>
+                          createElement(
+                            'td',
+                            {
+                              key: col.key,
+                              className: cn(
+                                'border border-slate-200 px-2 py-1 text-xs',
+                                col.align === 'right' && 'text-right',
+                              ),
+                            },
+                            formatReportCell(row[col.key]),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              createElement(BrandedReportFooter, {
+                branding,
+                generatedAt: fetchedAt ? new Date(fetchedAt) : new Date(),
+              }),
+            ),
+          ),
+        );
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      });
+
+      const { printReportDocument } = await import('@/lib/printReport');
+      await printReportDocument({
+        root: host.firstElementChild as HTMLElement,
+        title: `${branding.name || 'Client'} - ${def.label}`,
+        primaryColor: branding.primaryColor,
+        secondaryColor: branding.secondaryColor,
+        mode,
+      });
+    } catch (e) {
+      notify.error(
+        mode === 'download' ? 'Download failed' : 'Print failed',
+        e instanceof Error ? e.message : 'Could not prepare report',
+      );
+    } finally {
+      root.unmount();
+      host.remove();
+      setBusy(false);
+    }
   };
 
   return (
@@ -75,6 +205,26 @@ export function LiveReportTable({
             <Download className="h-3 w-3 mr-1" />
             CSV
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs border-primary/40 text-primary"
+            onClick={() => void exportPdf('download')}
+            disabled={busy || !rows.length}
+          >
+            <Download className="h-3 w-3 mr-1" />
+            Download PDF
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => void exportPdf('print')}
+            disabled={busy || !rows.length}
+          >
+            <Printer className="h-3 w-3 mr-1" />
+            Print
+          </Button>
         </div>
       </div>
 
@@ -93,7 +243,7 @@ export function LiveReportTable({
                     key={col.key}
                     className={cn(
                       'text-xs whitespace-nowrap h-9 font-semibold text-foreground/90',
-                      col.align === 'right' && 'text-right'
+                      col.align === 'right' && 'text-right',
                     )}
                   >
                     {col.label}
@@ -110,7 +260,7 @@ export function LiveReportTable({
                       className={cn(
                         'text-xs py-2 max-w-[220px]',
                         col.align === 'right' && 'text-right',
-                        !['status', 'fuelPercent', 'fuelLive'].includes(col.key) && 'truncate'
+                        !['status', 'fuelPercent', 'fuelLive'].includes(col.key) && 'truncate',
                       )}
                     >
                       {renderReportCell(col.key, row[col.key], row) ?? formatReportCell(row[col.key])}

@@ -5,7 +5,7 @@ export const LIVE_POLL = {
   statuses: 8_000,
   assets: 10_000,
   kpis: 10_000,
-  alerts: 10_000,
+  alerts: 8_000,
   video: 30_000,
   integrations: 30_000,
   fuel: 15_000,

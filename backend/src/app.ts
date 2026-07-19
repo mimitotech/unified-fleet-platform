@@ -7,6 +7,7 @@ import authRoutes from './routes/auth.js';
 import adminRoutes from './routes/admin.js';
 import wialonAdminRoutes from './routes/wialonAdmin.js';
 import wialonCenterRoutes from './routes/wialonCenter.js';
+import integrationCenterRoutes from './routes/integrationCenter.js';
 import clientRoutes from './routes/client.js';
 import webhookRoutes from './routes/webhooks.js';
 import publicRoutes from './routes/public.js';
@@ -54,6 +55,7 @@ export function createApp() {
   app.use('/api/admin', adminRoutes);
   app.use('/api/admin', wialonAdminRoutes);
   app.use('/api/admin', wialonCenterRoutes);
+  app.use('/api/admin', integrationCenterRoutes);
   app.use('/api/admin', uploadRoutes);
   app.use('/api/client', clientRoutes);
   app.use('/api/public', rateLimit({ windowMs: 60_000, max: 180 }), publicRoutes);

@@ -8,6 +8,8 @@ import { deriveStatusFromWialonEvents } from './wialonTripStatus.js';
 import type { WialonUnitEventSlice } from './wialonEventsService.js';
 import type { WialonHwType } from './wialonHwTypes.js';
 import { resolveHwName } from './wialonHwTypes.js';
+import type { FuelAssetCategory } from './wialonAssetCategory.js';
+import { resolveFuelAssetCategory } from './wialonAssetCategory.js';
 
 export type WialonFld = { id: number; name: string; value: string };
 export type WialonSensDef = {
@@ -53,6 +55,10 @@ export type WialonUnitSlice = {
   counters?: { mileage?: number; engineHours?: number };
   status: WialonHostingStatus['status'];
   motionState?: string;
+  /** vehicle | generator | machinery — drives Running vs Moving labels */
+  assetCategory?: FuelAssetCategory;
+  /** True for generators / machinery (no GPS "moving") */
+  stationary?: boolean;
   trip?: {
     state?: 0 | 1 | 2;
     currSpeed?: number;
@@ -134,6 +140,37 @@ function mapLmsg(item: WialonSearchItem) {
   return { time: lmsg.t, params: Object.keys(params).length ? params : undefined };
 }
 
+function resolveUnitCategory(
+  item: WialonSearchItem,
+  prp: Record<string, string>,
+): FuelAssetCategory {
+  const flds = item.flds;
+  const customFields: Record<string, string> = { ...prp };
+  if (flds) {
+    for (const f of Object.values(flds)) {
+      if (f?.n) customFields[f.n] = String(f.v ?? '');
+    }
+  }
+  const sensorNames = item.sens
+    ? Object.values(item.sens).map((s) => s?.n || '').filter(Boolean)
+    : [];
+  return resolveFuelAssetCategory({
+    name: item.nm || '',
+    plate: prp.registration_plate || prp.plate || extractPlateFromName(item.nm),
+    customFields,
+    flds,
+    engineHours: item.cneh,
+    mileage: item.cnm,
+    unitId: item.id,
+    sensorNames,
+  });
+}
+
+function isStationaryUnit(item: WialonSearchItem, prp: Record<string, string>): boolean {
+  const category = resolveUnitCategory(item, prp);
+  return category === 'generator' || category === 'machinery';
+}
+
 export function mapWialonSearchItem(
   item: WialonSearchItem,
   hwTypes?: Map<number, WialonHwType>,
@@ -142,7 +179,9 @@ export function mapWialonSearchItem(
   const prp = item.prp || {};
   const plate = prp.registration_plate || prp.plate || extractPlateFromName(item.nm);
   const pos = item.pos;
-  const hosting = deriveWialonHostingStatus(item, calcSensors);
+  const assetCategory = resolveUnitCategory(item, prp);
+  const stationary = assetCategory === 'generator' || assetCategory === 'machinery';
+  const hosting = deriveWialonHostingStatus(item, calcSensors, { stationary });
   const hw = item.hw;
   const prmsList = mapPrms(item);
   const lmsg = mapLmsg(item);
@@ -184,6 +223,8 @@ export function mapWialonSearchItem(
     counters: { mileage: item.cnm, engineHours: item.cneh },
     status: hosting.status,
     motionState: hosting.motionState,
+    assetCategory,
+    stationary,
     fuelLevel,
     fuel: fromSearch?.live,
   };
@@ -195,7 +236,8 @@ export function applyUnitEvents(
   events?: WialonUnitEventSlice
 ): WialonUnitSlice {
   if (!events) return slice;
-  const hosting = deriveStatusFromWialonEvents(item, events);
+  const stationary = isStationaryUnit(item, item.prp || {});
+  const hosting = deriveStatusFromWialonEvents(item, events, { stationary });
   const liveFuel = events.fuelLls?.length
     ? fuelLiveFromLls(mergeLlsWithSensorNames(events.fuelLls, slice.sens))
     : undefined;
@@ -213,6 +255,8 @@ export function applyUnitEvents(
     ...slice,
     status: hosting.status,
     motionState: hosting.motionState || events.tripStateLabel,
+    stationary,
+    assetCategory: resolveUnitCategory(item, item.prp || {}),
     fuelLevel: slice.fuelLevel,
     fuel,
     position: slice.position

@@ -1,19 +1,26 @@
 import type { WialonClient } from '../../adapters/wialonClient.js';
 import type { WialonCell, WialonReportRow } from './types.js';
 
-/** Fetch leaf rows from hierarchical Wialon fuel report tables (MAMS pattern). */
+/** Fetch leaf rows from hierarchical Wialon fuel report tables (MAMS pattern).
+ * When `skipOrphanTops` is true (group unit-summary tables), top rows with no
+ * children are skipped — those tops are already ingested as period summaries.
+ */
 export async function fetchLeafRows(
   client: WialonClient,
   tableIndex: number,
   topRowCount: number,
-  maxDepth = 6
+  maxDepth = 6,
+  opts?: { skipOrphanTops?: boolean },
 ): Promise<WialonCell[][]> {
   const leaves: WialonCell[][] = [];
   const BATCH = 100;
+  const skipOrphanTops = opts?.skipOrphanTops === true;
 
   async function collectFrom(row: WialonReportRow, path: number[], depth: number): Promise<void> {
     const childCount = row.d ?? 0;
     if (childCount <= 0 || depth >= maxDepth) {
+      // Group table tops without children are period summaries, not events.
+      if (depth === 0 && skipOrphanTops) return;
       if (row.c?.length) leaves.push(row.c);
       return;
     }
@@ -42,6 +49,7 @@ export async function fetchLeafRows(
     }
 
     if (!children.length) {
+      if (depth === 0 && skipOrphanTops) return;
       if (row.c?.length) leaves.push(row.c);
       return;
     }

@@ -46,8 +46,10 @@ function normalizeVehicleStatus(raw: string): Vehicle['status'] {
 
 function normalizeGeneratorStatus(raw: string): Generator['status'] {
   const s = (raw || '').toLowerCase();
-  if (s === 'moving' || s === 'running' || s === 'idle') return GENERATOR_STATUS.RUNNING;
+  // Backend maps stationary engine-on → idle; never trust vehicle "moving" for gensets.
+  if (s === 'running' || s === 'idle') return GENERATOR_STATUS.RUNNING;
   if (s === 'stopped' || s === 'stop' || s === 'parked') return GENERATOR_STATUS.STOPPED;
+  if (s === 'moving') return GENERATOR_STATUS.RUNNING;
   return GENERATOR_STATUS.OFFLINE;
 }
 

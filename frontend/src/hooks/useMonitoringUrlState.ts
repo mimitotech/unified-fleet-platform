@@ -2,7 +2,7 @@ import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { MonitoringViewMode } from '@/components/fleet/MonitoringViewHeader';
 
-const VIEWS: MonitoringViewMode[] = ['map', 'list', 'tracks', 'violations'];
+const VIEWS: MonitoringViewMode[] = ['map', 'list', 'tracks', 'violations', 'reports'];
 
 function parseView(raw: string | null): MonitoringViewMode {
   if (raw && VIEWS.includes(raw as MonitoringViewMode)) return raw as MonitoringViewMode;

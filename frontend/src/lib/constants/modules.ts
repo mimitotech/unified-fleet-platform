@@ -9,7 +9,6 @@ export const MODULE_ICONS: Record<string, string> = {
   fuel: 'Fuel',
   emissions: 'Leaf',
   workshop: 'Wrench',
-  reports: 'BarChart3',
   alerts: 'Bell',
   trailers: 'Truck',
   sensors: 'Gauge',

@@ -11,10 +11,10 @@ export const ROLE_ACCESS: Record<
     canCommand: true,
   },
   manager: {
-    description: 'Operational access — fleet, drivers, routes, fuel, workshop, geofencing, reports, and commands.',
+    description: 'Operational access — fleet, drivers, routes, fuel, workshop, geofencing, and commands.',
     modules: [
       'dashboard', 'monitoring', 'surveillance', 'drivers', 'routes', 'fuel',
-      'emissions', 'workshop', 'reports', 'alerts', 'trailers', 'sensors', 'geofencing',
+      'emissions', 'workshop', 'alerts', 'trailers', 'sensors', 'geofencing',
     ],
     canWrite: true,
     canCommand: true,
@@ -26,8 +26,8 @@ export const ROLE_ACCESS: Record<
     canCommand: false,
   },
   viewer: {
-    description: 'Read-only — dashboard, monitoring, alerts, and reports.',
-    modules: ['dashboard', 'monitoring', 'alerts', 'reports'],
+    description: 'Read-only — dashboard, monitoring, and alerts (reports live inside each module).',
+    modules: ['dashboard', 'monitoring', 'alerts'],
     canWrite: false,
     canCommand: false,
   },

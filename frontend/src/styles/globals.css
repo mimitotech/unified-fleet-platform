@@ -161,6 +161,12 @@
     background-attachment: fixed;
   }
 
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
   .font-mono {
     font-family: 'JetBrains Mono', monospace;
   }
@@ -169,6 +175,51 @@
 @layer components {
   .fleet-card {
     @apply bg-card/90 backdrop-blur-sm border border-border/80 rounded-xl p-4 transition-all duration-300 shadow-sm;
+    border-color: hsl(var(--primary) / 0.12);
+  }
+
+  .branded-tabs {
+    @apply inline-flex flex-wrap h-auto min-h-9 items-center gap-0.5 rounded-lg border border-primary/15 bg-primary/5 p-1;
+  }
+
+  .branded-tabs [data-state='active'] {
+    background: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+    box-shadow: 0 1px 2px hsl(var(--primary) / 0.25);
+  }
+
+  .branded-tabs [data-state='inactive']:hover {
+    color: hsl(var(--primary));
+    background: hsl(var(--primary) / 0.08);
+  }
+
+  /* Desktop: clearer spacing for filters / toolbars above tables */
+  @media (min-width: 1024px) {
+    .tenant-app .fleet-card {
+      @apply p-5;
+    }
+
+    .tenant-app .branded-tabs {
+      @apply gap-1 p-1.5;
+    }
+
+    .tenant-app .branded-tabs [role='tab'] {
+      @apply px-3.5 py-2 text-sm;
+    }
+  }
+
+  .branded-number {
+    color: hsl(var(--primary));
+    font-variant-numeric: tabular-nums;
+  }
+
+  .branded-border {
+    border-color: hsl(var(--primary) / 0.28);
+  }
+
+  .branded-panel {
+    border: 1px solid hsl(var(--primary) / 0.18);
+    border-top: 3px solid hsl(var(--primary));
   }
 
   .fleet-card-hover {
@@ -388,6 +439,18 @@
 }
 
 @layer utilities {
+  .app-page-scroll {
+    overscroll-behavior-y: auto;
+    scrollbar-gutter: stable;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Cheap virtualization: skip layout/paint for off-screen rows */
+  .cv-auto {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 76px;
+  }
+
   .text-gradient {
     @apply bg-clip-text text-transparent;
     background-image: var(--gradient-primary);

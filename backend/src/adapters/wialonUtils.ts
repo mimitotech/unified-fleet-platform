@@ -94,6 +94,10 @@ export interface WialonSearchItem {
   bpact?: number;
   crt?: number;
   ld?: number;
+  /** Present with ADVANCED flag (0x100): 0/false = deactivated, 1/true = activated. */
+  act?: boolean | number;
+  /** Deactivation time (UNIX). Non-zero means the unit is deactivated. */
+  dactt?: number;
   zl?: Record<string, { id: number; n: string }>;
   rcfg?: { color?: number; descr?: string; units?: number[] };
   rep?: Record<string, { id: number; n: string; ct?: string }>;

@@ -22,7 +22,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
-  AlertTriangle, FileVideo, List, Play, Video, VideoOff, Radio, MapPin,
+  AlertTriangle, FileVideo, List, Play, Video, VideoOff, Radio, MapPin, FileText,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { clientApi, type WialonVideoClipRef, type WialonVideoFile, type WialonVideoUnit } from '@/lib/api';
@@ -33,6 +33,8 @@ import {
   findLiveCommand,
   findPlaybackCommand,
 } from '@/lib/surveillanceUtils';
+import { GenericModuleReports } from '@/components/reports/moduleReportPanels';
+import { CHART } from '@/lib/chartColors';
 
 export default function Surveillance() {
   const [params, setParams] = useSearchParams();
@@ -136,7 +138,7 @@ export default function Surveillance() {
     mutationFn: () => {
       if (!activeUnit) throw new Error('No unit selected');
       const cmd = playbackCmd?.name || liveCmd?.name;
-      if (!cmd) throw new Error('No playback command configured in Wialon for this unit');
+      if (!cmd) throw new Error('No playback command configured for this unit');
       const fromSec = Math.floor(new Date(playbackFrom).getTime() / 1000);
       const toSec = Math.floor(new Date(playbackTo).getTime() / 1000);
       const param = buildVideoCommandParam(playbackCmd || liveCmd, {
@@ -218,14 +220,14 @@ export default function Surveillance() {
   const streamCount = safeArray(streams).length;
 
   return (
-    <AppLayout title="Surveillance" subtitle="Wialon live video, playback, and saved files">
+    <AppLayout title="Surveillance" subtitle="Live video, playback, and saved files">
       <div className="space-y-4">
         <WialonContextBanner compact />
         <ModuleIntegrationBanner moduleKey="surveillance" />
 
         <div className="flex flex-wrap gap-3 text-sm">
           <span className="fleet-card px-4 py-2">
-            <span className="text-muted-foreground">Wialon video units: </span>
+            <span className="text-muted-foreground">Video units: </span>
             <strong>{unitList.length}</strong>
             <span className="text-status-moving ml-1">
               ({unitList.filter((u) => u.connected).length} online)
@@ -246,7 +248,7 @@ export default function Surveillance() {
         </div>
 
         {isError && (
-          <p className="text-sm text-destructive">{(error as Error)?.message || 'Could not load Wialon video units'}</p>
+          <p className="text-sm text-destructive">{(error as Error)?.message || 'Could not load video units'}</p>
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-[70vh]">
@@ -278,7 +280,7 @@ export default function Surveillance() {
                     </h2>
                     <p className="text-sm text-muted-foreground">
                       {activeUnit.hwType || 'MDVR'} · {activeUnit.cameraCount} camera(s) ·{' '}
-                      {activeUnit.source === 'wialon_local' ? 'Wialon Local' : 'Wialon Hosting'}
+                      {activeUnit.source === 'wialon_local' ? 'Local video' : 'Cloud video'}
                       {detailLoading && commands.length === 0 ? ' · loading commands…' : ''}
                     </p>
                   </div>
@@ -325,7 +327,7 @@ export default function Surveillance() {
                 )}
 
                 <Tabs value={tab} onValueChange={setTab}>
-                  <TabsList>
+                  <TabsList className="branded-tabs flex-wrap h-auto">
                     <TabsTrigger value="cameras" className="gap-1.5">
                       <Video className="h-3.5 w-3.5" />Cameras
                     </TabsTrigger>
@@ -343,6 +345,9 @@ export default function Surveillance() {
                     </TabsTrigger>
                     <TabsTrigger value="events" className="gap-1.5">
                       <AlertTriangle className="h-3.5 w-3.5" />Events
+                    </TabsTrigger>
+                    <TabsTrigger value="reports" className="gap-1.5">
+                      <FileText className="h-3.5 w-3.5" />Reports
                     </TabsTrigger>
                   </TabsList>
 
@@ -437,13 +442,61 @@ export default function Surveillance() {
                       <Skeleton className="h-10 w-full max-w-md" />
                     ) : (
                       <p className="text-sm text-muted-foreground">
-                        No commands configured in Wialon for this unit.
+                        No commands configured for this unit.
                       </p>
                     )}
                   </TabsContent>
 
                   <TabsContent value="events" className="fleet-card mt-4 p-4">
                     <SurveillanceEventsTab unitId={activeUnit.id} onPlayClip={openClipPreview} />
+                  </TabsContent>
+
+                  <TabsContent value="reports" className="mt-4">
+                    <GenericModuleReports
+                      moduleLabel="Surveillance"
+                      title="Surveillance executive"
+                      blurb="Video-capable units and camera coverage."
+                      kpis={[
+                        { label: 'Video units', value: unitList.length },
+                        {
+                          label: 'Cameras',
+                          value: unitList.reduce((s, u) => s + (u.cameras?.length || 0), 0),
+                        },
+                      ]}
+                      columns={[
+                        { key: 'name', label: 'Unit' },
+                        { key: 'cameras', label: 'Cameras', align: 'right' },
+                        { key: 'uid', label: 'Device ID' },
+                      ]}
+                      rows={unitList.map((u) => {
+                        const cams = u.cameras?.length ?? 0;
+                        const coverage =
+                          cams <= 0 ? 'No cameras' : cams === 1 ? '1 camera' : cams <= 4 ? '2–4 cameras' : '5+ cameras';
+                        return {
+                          name: u.name,
+                          cameras: cams,
+                          uid: u.uniqueId || String(u.id),
+                          coverage,
+                        };
+                      })}
+                      charts={{
+                        heading: 'Asset performance · surveillance analytics',
+                        categoryKey: 'name',
+                        bar: {
+                          title: 'Cameras by unit',
+                          subtitle: 'Standing bars — camera channels per video unit',
+                          metrics: [{ key: 'cameras', label: 'Cameras', color: CHART.brand }],
+                          topN: 8,
+                        },
+                        secondary: {
+                          type: 'category',
+                          title: 'Coverage mix',
+                          subtitle: 'Units by camera-count band',
+                          groupKey: 'coverage',
+                          as: 'pie',
+                        },
+                      }}
+                    />
                   </TabsContent>
                 </Tabs>
               </>
@@ -452,7 +505,7 @@ export default function Surveillance() {
             ) : (
               <div className="fleet-card p-12 text-center text-muted-foreground">
                 <Video className="h-12 w-12 mx-auto mb-3 opacity-40" />
-                <p>Select a unit with Wialon video billing / cameras configured.</p>
+                <p>Select a unit with video cameras configured.</p>
               </div>
             )}
           </div>

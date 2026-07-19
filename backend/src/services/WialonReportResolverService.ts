@@ -1,6 +1,7 @@
 import type { WialonClient } from '../adapters/wialonClient.js';
 import {
   accountIdFrom,
+  filterActiveWialonUnits,
   resourceSearchSpec,
   searchAll,
   searchGroupsForAccount,
@@ -261,7 +262,7 @@ export class WialonReportResolverService {
       return items.map((u) => ({ id: u.id, nm: u.nm }));
     }
     const items = await searchAll(client, unitSearchSpec(undefined), 1);
-    return items.slice(0, maxUnits).map((u) => ({ id: u.id, nm: u.nm }));
+    return filterActiveWialonUnits(items).slice(0, maxUnits).map((u) => ({ id: u.id, nm: u.nm }));
   }
 
   /** Full template catalog for tenant scope (for Reports workspace / debugging) */

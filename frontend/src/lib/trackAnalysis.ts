@@ -18,6 +18,23 @@ export type TrackStopEvent = {
   label: string;
 };
 
+export type TrackStateMarker = {
+  lat: number;
+  lng: number;
+  status: TrackMotionStatus;
+  time: number;
+  speed: number;
+};
+
+export type TrackDirectionMarker = {
+  lat: number;
+  lng: number;
+  course: number;
+};
+
+/** Primary route line — Wialon-style blue track. */
+export const ROUTE_LINE_COLOR = '#2563eb';
+
 const COLORS: Record<TrackMotionStatus, string> = {
   moving: '#16a34a',
   idle: '#f59e0b',
@@ -43,12 +60,17 @@ export function formatTrackDuration(sec: number): string {
 }
 
 function tripWindow(trip: Record<string, unknown>): { from: number; to: number; endLat?: number; endLng?: number } | null {
-  const from = Number(trip.t1 ?? trip.from ?? trip.tm ?? trip.begin ?? trip.time_begin);
-  const to = Number(trip.t2 ?? trip.to ?? trip.end ?? trip.time_end);
+  const from = Number(trip.t1 ?? trip.tm ?? trip.begin ?? trip.time_begin ?? trip.from);
+  const to = Number(trip.t2 ?? trip.end ?? trip.time_end);
   if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return null;
-  const end = trip.to as { y?: number; x?: number; lat?: number; lng?: number } | undefined;
-  const endLat = end?.y ?? end?.lat;
-  const endLng = end?.x ?? end?.lng;
+  const endPos = trip.to ?? trip.end_pos ?? trip.pos_end;
+  let endLat: number | undefined;
+  let endLng: number | undefined;
+  if (endPos && typeof endPos === 'object') {
+    const p = endPos as { y?: number; x?: number; lat?: number; lng?: number };
+    endLat = p.y ?? p.lat;
+    endLng = p.x ?? p.lng;
+  }
   return { from, to, endLat, endLng };
 }
 
@@ -189,7 +211,7 @@ export function buildTripColoredSegments(
   points: TrackPoint[],
   trips: Array<Record<string, unknown>>
 ): { tripIndex: number; color: string; positions: [number, number][] }[] {
-  const TRIP_COLORS = ['#2563eb', '#16a34a', '#dc2626', '#9333ea', '#ea580c', '#0891b2', '#ca8a04'];
+  const TRIP_COLORS = [ROUTE_LINE_COLOR, '#16a34a', '#dc2626', '#9333ea', '#ea580c', '#0891b2', '#ca8a04'];
   const windows = trips
     .map((t, i) => {
       const w = tripWindow(t);
@@ -221,3 +243,79 @@ export function buildTripColoredSegments(
 }
 
 export const TRACK_STATUS_COLORS = COLORS;
+
+function bearingDeg(from: TrackPoint, to: TrackPoint): number {
+  const lat1 = (from.lat * Math.PI) / 180;
+  const lat2 = (to.lat * Math.PI) / 180;
+  const dLng = ((to.lng - from.lng) * Math.PI) / 180;
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
+/** Markers where motion status changes along the route. */
+export function buildStateMarkers(points: TrackPoint[]): TrackStateMarker[] {
+  if (points.length < 2) return [];
+  const sorted = [...points].sort((a, b) => a.time - b.time);
+  const markers: TrackStateMarker[] = [];
+  let prevStatus = motionFromSpeed(sorted[0].speed);
+  markers.push({
+    lat: sorted[0].lat,
+    lng: sorted[0].lng,
+    status: prevStatus,
+    time: sorted[0].time,
+    speed: sorted[0].speed,
+  });
+
+  for (let i = 1; i < sorted.length; i++) {
+    const p = sorted[i];
+    const status = motionFromSpeed(p.speed);
+    if (status !== prevStatus) {
+      markers.push({ lat: p.lat, lng: p.lng, status, time: p.time, speed: p.speed });
+      prevStatus = status;
+    }
+  }
+  return markers;
+}
+
+/** Direction chevrons spaced along the blue route. */
+export function buildDirectionMarkers(points: TrackPoint[], step = 20): TrackDirectionMarker[] {
+  if (points.length < 2) return [];
+  const sorted = [...points].sort((a, b) => a.time - b.time);
+  const out: TrackDirectionMarker[] = [];
+  for (let i = step; i < sorted.length; i += step) {
+    const p = sorted[i];
+    const prev = sorted[i - 1];
+    if (motionFromSpeed(p.speed) === 'stopped') continue;
+    out.push({
+      lat: p.lat,
+      lng: p.lng,
+      course: p.course ?? bearingDeg(prev, p),
+    });
+  }
+  return out;
+}
+
+export function summarizeTrack(points: TrackPoint[], stops: TrackStopEvent[]) {
+  const sorted = [...points].sort((a, b) => a.time - b.time);
+  let movingSec = 0;
+  let idleSec = 0;
+  let stoppedSec = 0;
+  for (let i = 1; i < sorted.length; i++) {
+    const dt = sorted[i].time - sorted[i - 1].time;
+    if (dt <= 0 || dt > 3600) continue;
+    const status = motionFromSpeed(sorted[i - 1].speed);
+    if (status === 'moving') movingSec += dt;
+    else if (status === 'idle') idleSec += dt;
+    else stoppedSec += dt;
+  }
+  return {
+    pointCount: sorted.length,
+    stopCount: stops.length,
+    movingSec,
+    idleSec,
+    stoppedSec,
+    from: sorted[0]?.time ?? null,
+    to: sorted[sorted.length - 1]?.time ?? null,
+  };
+}

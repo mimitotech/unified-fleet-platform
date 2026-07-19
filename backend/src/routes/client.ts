@@ -1,5 +1,9 @@
 import { Router } from 'express';
+import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { query } from '../config/database.js';
+import { AuditService } from '../services/AuditService.js';
+import { isValidTenantRole } from '../utils/userAccess.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { tenantMiddleware, requireTenant, type TenantRequest } from '../middleware/tenant.js';
 import { getAllowedModules } from '../middleware/rbac.js';
@@ -181,16 +185,133 @@ router.put('/preferences', requireTenant, async (req: TenantRequest, res) => {
 });
 
 // Tenant users (tenant_admin only)
+function isTenantAdmin(req: TenantRequest): boolean {
+  return ['tenant_admin', 'platform_admin', 'super_admin'].includes(req.user?.role || '');
+}
+
 router.get('/users', requireTenant, async (req: TenantRequest, res) => {
-  if (!['tenant_admin', 'platform_admin', 'super_admin'].includes(req.user?.role || '')) {
-    return error(res, 'Forbidden', 403);
-  }
+  if (!isTenantAdmin(req)) return error(res, 'Forbidden', 403);
   const { rows } = await query(
     `SELECT id, email, full_name, role, is_active, last_login_at, created_at
      FROM users WHERE tenant_id = $1 ORDER BY full_name`,
     [req.tenantId]
   );
   return success(res, rows);
+});
+
+router.post('/users', requireTenant, async (req: TenantRequest, res) => {
+  if (!isTenantAdmin(req)) return error(res, 'Forbidden', 403);
+  const { email, password, fullName, role } = req.body as {
+    email?: string; password?: string; fullName?: string; role?: string;
+  };
+  if (!email || !/\S+@\S+\.\S+/.test(email)) return error(res, 'A valid email is required');
+  const userRole = role || 'viewer';
+  if (!isValidTenantRole(userRole)) return error(res, 'Invalid role');
+
+  const temporaryPassword = password || crypto.randomBytes(8).toString('hex');
+  const hash = await bcrypt.hash(temporaryPassword, 10);
+  try {
+    const { rows } = await query(
+      `INSERT INTO users (tenant_id, email, password_hash, full_name, role, force_password_change)
+       VALUES ($1, $2, $3, $4, $5, true)
+       RETURNING id, email, full_name, role, is_active, created_at`,
+      [req.tenantId, email.toLowerCase().trim(), hash, fullName || email, userRole]
+    );
+    await AuditService.log({
+      tenantId: req.tenantId,
+      userId: req.user?.id,
+      userEmail: req.user?.email,
+      action: 'user.create',
+      resourceType: 'user',
+      resourceId: rows[0].id as string,
+      details: { email, role: userRole, by: 'tenant_admin' },
+    });
+    return success(res, { ...rows[0], temporaryPassword: password ? undefined : temporaryPassword }, 201);
+  } catch (e) {
+    const msg = (e as Error).message || '';
+    if (msg.includes('duplicate') || msg.includes('unique')) {
+      return error(res, 'A user with this email already exists', 409);
+    }
+    throw e;
+  }
+});
+
+router.patch('/users/:userId', requireTenant, async (req: TenantRequest, res) => {
+  if (!isTenantAdmin(req)) return error(res, 'Forbidden', 403);
+  const userId = String(req.params.userId);
+  const { fullName, role, isActive } = req.body as {
+    fullName?: string; role?: string; isActive?: boolean;
+  };
+  if (role && !isValidTenantRole(String(role))) return error(res, 'Invalid role');
+  if (userId === req.user?.id && (role !== undefined || isActive === false)) {
+    return error(res, 'You cannot change your own role or deactivate yourself');
+  }
+  const { rows } = await query(
+    `UPDATE users SET full_name = COALESCE($3, full_name), role = COALESCE($4, role),
+                      is_active = COALESCE($5, is_active), updated_at = NOW()
+     WHERE id = $2 AND tenant_id = $1
+     RETURNING id, email, full_name, role, is_active`,
+    [req.tenantId, userId, fullName, role, isActive]
+  );
+  if (!rows[0]) return error(res, 'User not found', 404);
+  await AuditService.log({
+    tenantId: req.tenantId,
+    userId: req.user?.id,
+    userEmail: req.user?.email,
+    action: 'user.update',
+    resourceType: 'user',
+    resourceId: userId,
+    details: { fullName, role, isActive, by: 'tenant_admin' },
+  });
+  return success(res, rows[0]);
+});
+
+router.delete('/users/:userId', requireTenant, async (req: TenantRequest, res) => {
+  if (!isTenantAdmin(req)) return error(res, 'Forbidden', 403);
+  const userId = String(req.params.userId);
+  if (userId === req.user?.id) return error(res, 'You cannot remove your own account');
+  const { rows } = await query(
+    `UPDATE users SET is_active = false, updated_at = NOW()
+     WHERE id = $2 AND tenant_id = $1 RETURNING id`,
+    [req.tenantId, userId]
+  );
+  if (!rows[0]) return error(res, 'User not found', 404);
+  await AuditService.log({
+    tenantId: req.tenantId,
+    userId: req.user?.id,
+    userEmail: req.user?.email,
+    action: 'user.deactivate',
+    resourceType: 'user',
+    resourceId: userId,
+    details: { by: 'tenant_admin' },
+  });
+  return success(res, { deactivated: true });
+});
+
+router.post('/users/:userId/reset-password', requireTenant, async (req: TenantRequest, res) => {
+  if (!isTenantAdmin(req)) return error(res, 'Forbidden', 403);
+  const userId = String(req.params.userId);
+  if (userId === req.user?.id) {
+    return error(res, 'Use the change password form in Account to update your own password');
+  }
+  const temporaryPassword = (req.body?.password as string) || crypto.randomBytes(8).toString('hex');
+  const hash = await bcrypt.hash(temporaryPassword, 10);
+  const { rows } = await query(
+    `UPDATE users SET password_hash = $3, force_password_change = true, updated_at = NOW()
+     WHERE id = $2 AND tenant_id = $1 RETURNING id, email`,
+    [req.tenantId, userId, hash]
+  );
+  if (!rows[0]) return error(res, 'User not found', 404);
+  await AuditService.log({
+    tenantId: req.tenantId,
+    userId: req.user?.id,
+    userEmail: req.user?.email,
+    action: 'user.reset_password',
+    resourceType: 'user',
+    resourceId: userId,
+    details: { by: 'tenant_admin' },
+  });
+  return success(res, { reset: true, temporaryPassword });
 });
 
 // Dashboard KPIs
@@ -312,13 +433,51 @@ router.get('/assets/statuses', requireTenant, async (req: TenantRequest, res) =>
   return success(res, { ...payload, live: false });
 });
 
-// Alerts
+// Alerts — sync from Wialon when requested (throttled per tenant), then read inbox
+const alertSyncAt = new Map<string, number>();
+const ALERT_SYNC_MIN_MS = 20_000;
+
 router.get('/alerts', requireTenant, async (req: TenantRequest, res) => {
   const limit = parseInt(String(req.query.limit || '50'), 10);
   const acknowledged = req.query.acknowledged === 'true' ? true : req.query.acknowledged === 'false' ? false : undefined;
+  const parseDate = (v: unknown): Date | undefined => {
+    if (!v) return undefined;
+    const d = new Date(String(v));
+    return Number.isNaN(d.getTime()) ? undefined : d;
+  };
+  const from = parseDate(req.query.from);
+  const to = parseDate(req.query.to);
   const orch = new AlertOrchestrator(req.tenantId!);
-  const alerts = await orch.getAlerts(limit, acknowledged);
+  const wantSync = req.query.sync !== '0' && req.query.sync !== 'false';
+  if (wantSync) {
+    const last = alertSyncAt.get(req.tenantId!) || 0;
+    if (Date.now() - last >= ALERT_SYNC_MIN_MS) {
+      alertSyncAt.set(req.tenantId!, Date.now());
+      try {
+        await orch.syncFromAdapters();
+      } catch {
+        /* still return cached inbox */
+      }
+    }
+  }
+  const alerts = await orch.getAlerts(limit, acknowledged, from, to);
   return success(res, alerts);
+});
+
+router.post('/alerts/acknowledge-bulk', requireTenant, async (req: TenantRequest, res) => {
+  const ids = Array.isArray(req.body?.ids)
+    ? (req.body.ids as unknown[]).map(String).filter(Boolean)
+    : undefined;
+  const orch = new AlertOrchestrator(req.tenantId!);
+  const acknowledged = await orch.acknowledgeMany(ids);
+  return success(res, { acknowledged });
+});
+
+router.post('/alerts/sync', requireTenant, async (req: TenantRequest, res) => {
+  const orch = new AlertOrchestrator(req.tenantId!);
+  const inserted = await orch.syncFromAdapters();
+  alertSyncAt.set(req.tenantId!, Date.now());
+  return success(res, { inserted });
 });
 
 router.post('/alerts/:id/acknowledge', requireTenant, async (req: TenantRequest, res) => {
@@ -329,7 +488,7 @@ router.post('/alerts/:id/acknowledge', requireTenant, async (req: TenantRequest,
 
 router.use('/', clientWialonRoutes);
 
-// Domain modules (drivers, routes, fuel, workshop, emissions, surveillance, geofences, reports)
+// Domain modules (drivers, routes, fuel, workshop, emissions, surveillance, geofences)
 router.use('/', domainRoutes);
 
 export default router;

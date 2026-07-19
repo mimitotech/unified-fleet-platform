@@ -11,8 +11,12 @@ export function useDrivers() {
   });
 }
 
-export function useDriverStats() {
-  return useQuery({ queryKey: ['driverStats'], queryFn: () => clientApi.getDriverStats() });
+export function useDriverStats(enabled = true) {
+  return useQuery({
+    queryKey: ['driverStats'],
+    queryFn: () => clientApi.getDriverStats(),
+    enabled,
+  });
 }
 
 export function useRoutes() {
@@ -23,8 +27,12 @@ export function useRoutes() {
   });
 }
 
-export function useRouteStats() {
-  return useQuery({ queryKey: ['routeStats'], queryFn: () => clientApi.getRouteStats() });
+export function useRouteStats(enabled = true) {
+  return useQuery({
+    queryKey: ['routeStats'],
+    queryFn: () => clientApi.getRouteStats(),
+    enabled,
+  });
 }
 
 export function useTrips(limit = 50) {
@@ -42,11 +50,12 @@ export function useFuelTransactions(enabled = true) {
   });
 }
 
-export function useFuelKpis() {
+export function useFuelKpis(enabled = true) {
   return useQuery({
     queryKey: ['fuelKpis'],
     queryFn: () => clientApi.getFuelKpis(),
-    refetchInterval: pollWhenVisible(LIVE_POLL.fuel),
+    enabled,
+    refetchInterval: enabled ? pollWhenVisible(LIVE_POLL.fuel) : false,
   });
 }
 
@@ -58,8 +67,12 @@ export function useFuelTrend(enabled = true) {
   });
 }
 
-export function useWorkshopKpis() {
-  return useQuery({ queryKey: ['workshopKpis'], queryFn: () => clientApi.getWorkshopKpis() });
+export function useWorkshopKpis(enabled = true) {
+  return useQuery({
+    queryKey: ['workshopKpis'],
+    queryFn: () => clientApi.getWorkshopKpis(),
+    enabled,
+  });
 }
 
 export function useInspections() {
@@ -123,8 +136,12 @@ export function useDeleteGeofence() {
   });
 }
 
-export function useEmissionsMetrics() {
-  return useQuery({ queryKey: ['emissionsMetrics'], queryFn: () => clientApi.getEmissionsMetrics() });
+export function useEmissionsMetrics(enabled = true) {
+  return useQuery({
+    queryKey: ['emissionsMetrics'],
+    queryFn: () => clientApi.getEmissionsMetrics(),
+    enabled,
+  });
 }
 
 export function useEmissionsByVehicle() {
@@ -156,11 +173,12 @@ export function useSurveillanceViolations(enabled = true, unitId?: number) {
   });
 }
 
-export function useGeofences() {
+export function useGeofences(enabled = true) {
   return useQuery({
     queryKey: ['geofences'],
     queryFn: () => clientApi.getGeofences(),
-    refetchInterval: pollWhenVisible(LIVE_POLL.geofences),
+    enabled,
+    refetchInterval: enabled ? pollWhenVisible(LIVE_POLL.geofences) : false,
   });
 }
 

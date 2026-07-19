@@ -1,5 +1,6 @@
 import type { FuelTransaction } from './wialonFuelReport/types.js';
 import { effectiveConsumed, effectiveFilled, effectiveTheft } from './wialonFuelReport/metrics.js';
+import { isPlausibleBalanceLevel, isPlausibleFuelEvent } from './fuelEventPlausibility.js';
 
 export type FuelLedgerEventType = 'opening' | 'refill' | 'consumption' | 'theft' | 'balance';
 
@@ -229,45 +230,47 @@ export function applyBalanceConsumption(
   const supplements: FuelTransaction[] = [];
 
   for (const [unitId, unitRows] of byUnit) {
-    const hasSummary = unitRows.some(
+    const live = liveFuelByUnit?.get(unitId);
+    const plausibleRows = unitRows.filter((r) => isPlausibleFuelEvent(r, live));
+
+    const hasSummary = plausibleRows.some(
       (r) => r.section === 'consumption' && r.sensor === 'wialon_group_summary' && effectiveConsumed(r) > 0
     );
     if (hasSummary) continue;
 
-    const consumedFromReports = unitRows
-      .filter((r) => r.section === 'consumption')
+    // Prefer real Wialon consumption rows over invented balance math.
+    const consumedFromReports = plausibleRows
+      .filter((r) => r.section === 'consumption' && r.sensor !== 'balance')
       .reduce((s, r) => s + effectiveConsumed(r), 0);
     if (consumedFromReports > 0) continue;
 
-    const sorted = [...unitRows].sort((a, b) => a.timestamp - b.timestamp);
+    const sorted = [...plausibleRows].sort((a, b) => a.timestamp - b.timestamp);
     let opening = 0;
     for (const r of sorted) {
-      if (r.initialLevel > 0) {
-        opening = r.initialLevel;
-        break;
-      }
-      if (r.finalLevel > 0) {
-        opening = r.finalLevel;
+      const candidate = r.initialLevel > 0 ? r.initialLevel : r.finalLevel > 0 ? r.finalLevel : 0;
+      if (candidate > 0 && isPlausibleBalanceLevel(candidate, live)) {
+        opening = candidate;
         break;
       }
     }
 
-    const filled = unitRows.filter((r) => r.section === 'filling').reduce((s, r) => s + effectiveFilled(r), 0);
-    const lost = unitRows.filter((r) => r.section === 'theft').reduce((s, r) => s + effectiveTheft(r), 0);
+    const filled = sorted.filter((r) => r.section === 'filling').reduce((s, r) => s + effectiveFilled(r), 0);
+    const lost = sorted.filter((r) => r.section === 'theft').reduce((s, r) => s + effectiveTheft(r), 0);
 
-    let closing = liveFuelByUnit?.get(unitId) ?? 0;
+    let closing = live ?? 0;
     if (closing <= 0) {
       for (let i = sorted.length - 1; i >= 0; i--) {
-        if (sorted[i].finalLevel > 0) {
-          closing = sorted[i].finalLevel;
-          break;
-        }
-        if (sorted[i].initialLevel > 0) {
-          closing = sorted[i].initialLevel;
+        const candidate =
+          sorted[i].finalLevel > 0 ? sorted[i].finalLevel : sorted[i].initialLevel > 0 ? sorted[i].initialLevel : 0;
+        if (candidate > 0 && isPlausibleBalanceLevel(candidate, live)) {
+          closing = candidate;
           break;
         }
       }
     }
+
+    // Need a trustworthy opening; otherwise balance amplifies FLS noise into fake "Used".
+    if (!isPlausibleBalanceLevel(opening, live ?? closing)) continue;
 
     const derived =
       opening > 0 || filled > 0 || closing > 0
@@ -275,6 +278,9 @@ export function applyBalanceConsumption(
         : 0;
 
     if (derived <= 0) continue;
+    // Derived use cannot exceed a few tank-volumes for the period.
+    const tankRef = live && live > 0 ? live : closing;
+    if (tankRef > 0 && derived > tankRef * 3 && derived > 500) continue;
 
     const unitName = unitRows[0]?.unitName ?? `Unit ${unitId}`;
     const lastTs = sorted[sorted.length - 1]?.timestamp || Math.floor(Date.now() / 1000);
@@ -293,7 +299,7 @@ export function applyBalanceConsumption(
       filled: 0,
       sensor: 'balance',
       fuelUsed: round1(derived),
-      mileage: unitRows
+      mileage: plausibleRows
         .filter((r) => r.section === 'consumption')
         .reduce((s, r) => s + (r.mileage || 0), 0),
       duration: '',

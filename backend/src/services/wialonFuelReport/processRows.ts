@@ -8,7 +8,7 @@ import {
   parseDurationToSeconds,
   txId,
 } from './cells.js';
-import { applySectionMetrics } from './metrics.js';
+import { applySectionMetrics, deriveSuddenFuelDrop } from './metrics.js';
 import type { FuelSection, FuelTank, FuelTransaction, TankColumnMap, WialonCell } from './types.js';
 
 function resolveTimestamp(timeStr: string, cells: WialonCell[], timeIdx: number, reportFromTs: number): number {
@@ -133,18 +133,25 @@ export function processUnitGroupSummaryRow(
   columnMap: Record<string, number>,
   headers: string[],
   unit: { id: number; nm: string },
-  reportToTs: number
+  reportToTs: number,
+  section: FuelSection = 'consumption',
+  reportFromTs?: number,
 ): FuelTransaction | null {
   const unitName = getCellValue(cells, columnMap.unit ?? -1) || unit.nm;
   const beginning = getCellTimeString(cells, columnMap.time ?? -1);
   if (!beginning && !unitName) return null;
 
-  let timestamp = getCellTimestamp(cells, columnMap.time ?? -1);
-  if (!timestamp && beginning) {
-    const parsed = Math.floor(new Date(beginning.replace(' ', 'T') + 'Z').getTime() / 1000);
-    if (!Number.isNaN(parsed)) timestamp = parsed;
+  // Anchor period summaries to the report interval end so any date-range
+  // query covering that interval keeps the Wialon period totals.
+  let timestamp = reportToTs > 0 ? reportToTs : 0;
+  if (!timestamp) {
+    timestamp = getCellTimestamp(cells, columnMap.time ?? -1);
+    if (!timestamp && beginning) {
+      const parsed = Math.floor(new Date(beginning.replace(' ', 'T') + 'Z').getTime() / 1000);
+      if (!Number.isNaN(parsed)) timestamp = parsed;
+    }
   }
-  if (!timestamp) timestamp = reportToTs > 0 ? reportToTs : Math.floor(Date.now() / 1000);
+  if (!timestamp) timestamp = Math.floor(Date.now() / 1000);
 
   const fuelUsed = getCellNumber(cells, columnMap.fuelUsed ?? -1);
   const mileage = getCellNumber(cells, columnMap.mileage ?? -1);
@@ -156,23 +163,50 @@ export function processUnitGroupSummaryRow(
 
   // Prefer explicit filled-amount headers; fall back to mapped filling column if present.
   let filledAmountIdx = headerIndex(headers, /^filled amount$/i);
+  if (filledAmountIdx < 0) filledAmountIdx = headerIndex(headers, /^filled$/i);
   if (filledAmountIdx < 0) filledAmountIdx = headerIndex(headers, /fuel filled|filled volume|filling volume/i);
   const mappedFilled =
     columnMap.filled != null && columnMap.filled >= 0 ? getCellNumber(cells, columnMap.filled) : 0;
   const periodFilled =
     filledAmountIdx >= 0 ? getCellNumber(cells, filledAmountIdx) : mappedFilled;
 
-  if (fuelUsed <= 0 && mileage <= 0 && initialLevel <= 0 && finalLevel <= 0 && periodFilled <= 0) {
+  let suddenFuelDrop = 0;
+  if (section === 'theft') {
+    suddenFuelDrop =
+      columnMap.suddenFuelDrop != null && columnMap.suddenFuelDrop >= 0
+        ? getCellNumber(cells, columnMap.suddenFuelDrop)
+        : 0;
+    if (suddenFuelDrop <= 0) {
+      const drainedIdx = headerIndex(headers, /^drained$|sudden fuel drop|fuel drain|drain/i);
+      if (drainedIdx >= 0) suddenFuelDrop = getCellNumber(cells, drainedIdx);
+    }
+    suddenFuelDrop = deriveSuddenFuelDrop(suddenFuelDrop, initialLevel, finalLevel);
+  }
+
+  if (
+    fuelUsed <= 0 &&
+    mileage <= 0 &&
+    initialLevel <= 0 &&
+    finalLevel <= 0 &&
+    periodFilled <= 0 &&
+    suddenFuelDrop <= 0
+  ) {
     return null;
   }
 
+  // Skip empty placeholder group rows (----- / Count=0).
+  if (section === 'theft' && suddenFuelDrop <= 0) return null;
+
+  const periodFrom = reportFromTs && reportFromTs > 0 ? reportFromTs : timestamp;
+  const periodTo = reportToTs > 0 ? reportToTs : timestamp;
+
   return {
-    id: txId(unit.id, 'consumption', 'main', timestamp, 'wialon_group_summary'),
+    id: txId(unit.id, section, 'main', periodTo, `wialon_group_summary:${section}:${periodFrom}`),
     unitId: unit.id,
     unitName,
-    section: 'consumption',
+    section,
     tank: 'main',
-    timestamp,
+    timestamp: periodTo,
     time: beginning,
     location: '',
     initialLevel,
@@ -184,8 +218,10 @@ export function processUnitGroupSummaryRow(
     duration: durationStr,
     durationSeconds,
     avgConsumption,
-    suddenFuelDrop: 0,
-    count: 0,
+    suddenFuelDrop,
+    count: suddenFuelDrop > 0 ? 1 : 0,
+    periodFromTs: periodFrom,
+    periodToTs: periodTo,
   };
 }
 

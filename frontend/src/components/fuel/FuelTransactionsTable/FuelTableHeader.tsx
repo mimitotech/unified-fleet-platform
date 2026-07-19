@@ -145,7 +145,7 @@ export function FuelTableHeader({
               className="gap-1.5"
               onClick={onRefresh}
               disabled={isRefreshing}
-              title="Force refresh from Wialon"
+              title="Force refresh from telematics"
             >
               <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
               {isRefreshing ? 'Refreshing...' : 'Force refresh'}

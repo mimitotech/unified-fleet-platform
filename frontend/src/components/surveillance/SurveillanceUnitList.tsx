@@ -94,7 +94,7 @@ export function SurveillanceUnitList({
           ))
         ) : (
           <p className="text-sm text-muted-foreground text-center py-8">
-            No video units. Enable Video monitoring in Wialon and configure cameras on each unit.
+            No video units. Ask your administrator to enable video monitoring and configure cameras.
           </p>
         )}
       </div>

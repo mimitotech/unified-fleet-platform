@@ -111,7 +111,7 @@ export async function api<T>(
     });
   } catch (err) {
     if (controller?.signal.aborted) {
-      throw new Error('Request timed out — Wialon fuel reports can take several minutes. Try again or narrow the date range.');
+      throw new Error('Request timed out — fuel reports can take several minutes. Try again or narrow the date range.');
     }
     throw new Error(
       'Cannot reach the MAMS server. Start Docker Desktop, then run: docker compose up -d postgres redis && npm run dev'
@@ -510,9 +510,19 @@ export const clientApi = {
   getAssets: () => api<unknown[]>('/api/client/assets'),
   getAssetStatuses: () =>
     api<{ items: unknown[]; fetchedAt: string }>('/api/client/assets/statuses'),
-  getAlerts: (limit = 50) => api<unknown[]>(`/api/client/alerts?limit=${limit}`).then((d) => safeArray(d)),
+  getAlerts: (limit = 50, opts?: { from?: string; to?: string }) => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (opts?.from) q.set('from', opts.from);
+    if (opts?.to) q.set('to', opts.to);
+    return api<unknown[]>(`/api/client/alerts?${q}`).then((d) => safeArray(d));
+  },
   acknowledgeAlert: (id: string) =>
     api(`/api/client/alerts/${id}/acknowledge`, { method: 'POST' }),
+  acknowledgeAlertsBulk: (ids?: string[]) =>
+    api<{ acknowledged: number }>('/api/client/alerts/acknowledge-bulk', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    }),
 
   // Drivers
   getDrivers: () => api<Driver[]>('/api/client/drivers'),
@@ -579,6 +589,44 @@ export const clientApi = {
   getFuelTrend: () => api<unknown[]>('/api/client/fuel/monthly-trend'),
   triggerFuelDbSync: () =>
     api<{ started: boolean }>('/api/client/fuel/sync', { method: 'POST' }),
+
+  getFuelVariance: (from: string, to: string) =>
+    api<{
+      fromDate: string;
+      toDate: string;
+      summary: {
+        stationLiters: number;
+        flsLiters: number;
+        variance: number;
+        assets: number;
+        stationFills: number;
+      };
+      assets: Array<{
+        key: string;
+        registration: string;
+        unitId: string | null;
+        unitName: string;
+        stationLiters: number;
+        flsLiters: number;
+        variance: number;
+        stationFills: number;
+        flsFills: number;
+      }>;
+      details: Array<{
+        id: string;
+        filledAt: string;
+        registration: string;
+        unitName: string | null;
+        product: string;
+        stationLiters: number;
+        unitPrice: number | null;
+        amount: number | null;
+        cardNumber: string | null;
+        receiptNumber: string | null;
+        matchedFlsLiters: number | null;
+        variance: number | null;
+      }>;
+    }>(`/api/client/fuel/variance?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
 
   // Workshop
   getWorkshopKpis: () => api<WorkshopKpis>('/api/client/workshop/kpis'),
@@ -1377,6 +1425,20 @@ export const clientApi = {
   updatePreferences: (data: Record<string, unknown>) =>
     api('/api/client/preferences', { method: 'PUT', body: JSON.stringify(data) }),
   getTenantUsers: () => api<unknown[]>('/api/client/users'),
+  createTenantUser: (data: { email: string; password?: string; fullName?: string; role?: string }) =>
+    api<{ id: string; email: string; temporaryPassword?: string }>('/api/client/users', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateTenantUser: (userId: string, data: { fullName?: string; role?: string; isActive?: boolean }) =>
+    api(`/api/client/users/${userId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  removeTenantUser: (userId: string) =>
+    api(`/api/client/users/${userId}`, { method: 'DELETE' }),
+  resetTenantUserPassword: (userId: string, password?: string) =>
+    api<{ reset: boolean; temporaryPassword: string }>(`/api/client/users/${userId}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    }),
 
   sendCommand: (assetId: string, command: string, params?: Record<string, unknown>) =>
     api(`/api/client/commands/${assetId}`, { method: 'POST', body: JSON.stringify({ command, params }) }),
@@ -1470,6 +1532,48 @@ export const adminApi = {
       motherAccountCount?: number;
       motherAccounts?: WialonMotherAccount[];
     }>('/api/admin/centers/wialon'),
+  getLocoNavCenterStatus: () =>
+    api<{
+      sourceType: 'loconav';
+      configured: boolean;
+      connected: boolean;
+      tenantCount: number;
+      connectedTenants: number;
+      totalAssets: number;
+      webhookNote?: string;
+      tenants: Array<{
+        tenantId: string;
+        tenantName: string;
+        tenantSlug: string;
+        isActive: boolean;
+        verifiedAt: string | null;
+        lastSyncAt: string | null;
+        lastError: string | null;
+        assetCount: number;
+        alerts24h: number;
+      }>;
+    }>('/api/admin/centers/loconav'),
+  getTrackSolidCenterStatus: () =>
+    api<{
+      sourceType: 'tracksolid';
+      configured: boolean;
+      connected: boolean;
+      tenantCount: number;
+      connectedTenants: number;
+      totalAssets: number;
+      webhookNote?: string;
+      tenants: Array<{
+        tenantId: string;
+        tenantName: string;
+        tenantSlug: string;
+        isActive: boolean;
+        verifiedAt: string | null;
+        lastSyncAt: string | null;
+        lastError: string | null;
+        assetCount: number;
+        alerts24h: number;
+      }>;
+    }>('/api/admin/centers/tracksolid'),
   listWialonMotherAccounts: () =>
     api<{ mothers: WialonMotherAccount[]; count: number }>('/api/admin/centers/wialon/mothers'),
   createWialonMotherAccount: (data: { name: string; token: string; baseUrl?: string }) =>
@@ -1657,6 +1761,8 @@ export const adminApi = {
         isGroupReport?: boolean;
       }>;
       visibleColumns: string[];
+      columnsByCategory?: Partial<Record<'vehicle' | 'generator' | 'machinery', string[]>>;
+      fuelPricePerLiter?: number | null;
       updatedAt: string | null;
     }>(`/api/admin/tenants/${id}/fuel-module-config`),
   saveFuelModuleConfig: (
@@ -1670,12 +1776,72 @@ export const adminApi = {
         isGroupReport?: boolean;
       }>;
       visibleColumns: string[];
+      columnsByCategory?: Partial<Record<'vehicle' | 'generator' | 'machinery', string[]>>;
+      fuelPricePerLiter?: number | null;
     },
   ) =>
     api(`/api/admin/tenants/${id}/fuel-module-config`, {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
+
+  listFuelStationSheets: (id: string) =>
+    api<{
+      uploads: Array<{
+        id: string;
+        fileName: string;
+        periodFrom: string | null;
+        periodTo: string | null;
+        rowCount: number;
+        importedCount: number;
+        skippedCount: number;
+        createdAt: string;
+        notes: string | null;
+      }>;
+    }>(`/api/admin/tenants/${id}/fuel-station-sheets`),
+
+  uploadFuelStationSheet: (tenantId: string, file: File, notes?: string) =>
+    new Promise<{
+      uploadId: string;
+      fileName: string;
+      periodFrom: string | null;
+      periodTo: string | null;
+      rowCount: number;
+      importedCount: number;
+      skippedCount: number;
+    }>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const data = reader.result as string;
+          const result = await api<{
+            uploadId: string;
+            fileName: string;
+            periodFrom: string | null;
+            periodTo: string | null;
+            rowCount: number;
+            importedCount: number;
+            skippedCount: number;
+          }>(`/api/admin/tenants/${tenantId}/fuel-station-sheets`, {
+            method: 'POST',
+            body: JSON.stringify({
+              fileName: file.name,
+              mimeType: file.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              data,
+              notes,
+            }),
+          });
+          resolve(result);
+        } catch (e) {
+          reject(e);
+        }
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    }),
+
+  deleteFuelStationSheet: (tenantId: string, uploadId: string) =>
+    api(`/api/admin/tenants/${tenantId}/fuel-station-sheets/${uploadId}`, { method: 'DELETE' }),
 
   listTenantUsers: (id: string) => api<unknown[]>(`/api/admin/tenants/${id}/users`),
   listTenantWialonUsers: (id: string) =>

@@ -2,14 +2,20 @@ import { useState, useMemo } from 'react';
 import { format } from 'date-fns';
 import { Droplets, Flame, Gauge, TrendingDown, X, Truck, Clock, MapPin } from 'lucide-react';
 import { FuelTransaction } from '@/types/entities';
+import type { FuelAssetCategory } from '@/lib/fuelTypes';
 import { cn } from '@/lib/utils';
 import { MetricCard } from '@/components/app/MetricCard';
 import type { FuelReportKpis } from './fuelReportStats';
+import { isWialonGroupSummary } from './fuelTransactionFilters';
+import { effectiveSuddenDropVolume, fuelTheftEventKey } from './fuelTheftVolume';
 
 interface FuelKpiCardsProps {
   kpis: FuelReportKpis;
   fuelTransactions?: FuelTransaction[];
   isLoading: boolean;
+  assetCategory?: FuelAssetCategory;
+  unitLabel?: string;
+  unitLabelPlural?: string;
 }
 
 interface SuddenDropAlert {
@@ -22,22 +28,38 @@ interface SuddenDropAlert {
   volume: number;
 }
 
-export function FuelKpiCards({ kpis, fuelTransactions = [], isLoading }: FuelKpiCardsProps) {
+export function FuelKpiCards({
+  kpis,
+  fuelTransactions = [],
+  isLoading,
+  assetCategory = 'vehicle',
+  unitLabel = 'Vehicle',
+  unitLabelPlural = 'vehicles',
+}: FuelKpiCardsProps) {
   const [showDropModal, setShowDropModal] = useState(false);
+  const isVehicle = assetCategory === 'vehicle';
 
   const suddenDropAlerts = useMemo((): SuddenDropAlert[] => {
-    return fuelTransactions
-      .filter((t) => t.section === 'theft' && t.suddenFuelDrop > 0)
-      .map((t) => ({
+    const seen = new Set<string>();
+    const out: SuddenDropAlert[] = [];
+    for (const t of fuelTransactions) {
+      if (isWialonGroupSummary(t) || t.section !== 'theft') continue;
+      const volume = effectiveSuddenDropVolume(t);
+      if (volume <= 0) continue;
+      const key = fuelTheftEventKey({ ...t, suddenFuelDrop: volume });
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
         id: t.id,
         unitName: t.unitName,
         tank: t.tank || 'unknown',
         timestamp: t.timestamp,
         time: t.time,
         location: t.location,
-        volume: t.suddenFuelDrop,
-      }))
-      .sort((a, b) => b.timestamp - a.timestamp);
+        volume,
+      });
+    }
+    return out.sort((a, b) => b.timestamp - a.timestamp);
   }, [fuelTransactions]);
 
   const totalDropVolume = suddenDropAlerts.reduce((sum, a) => sum + a.volume, 0);
@@ -67,15 +89,29 @@ export function FuelKpiCards({ kpis, fuelTransactions = [], isLoading }: FuelKpi
         <MetricCard
           title="Total Consumed"
           value={`${kpis.totalConsumed.toLocaleString()} L`}
-          subtitle={`${kpis.totalMileage.toLocaleString()} km`}
+          subtitle={
+            isVehicle
+              ? `${kpis.totalMileage.toLocaleString()} km`
+              : `${kpis.consumptionCount} event${kpis.consumptionCount !== 1 ? 's' : ''}`
+          }
           icon={Flame}
           variant="warning"
           size="xs"
         />
         <MetricCard
-          title="Fleet Efficiency"
-          value={kpis.avgConsumption > 0 ? `${kpis.avgConsumption} L/100km` : '—'}
-          subtitle={`${kpis.vehiclesTracked} vehicle${kpis.vehiclesTracked !== 1 ? 's' : ''}`}
+          title={isVehicle ? 'Fleet Efficiency' : 'Assets tracked'}
+          value={
+            isVehicle
+              ? kpis.avgConsumption > 0
+                ? `${kpis.avgConsumption} L/100km`
+                : '—'
+              : String(kpis.vehiclesTracked)
+          }
+          subtitle={
+            isVehicle
+              ? `${kpis.vehiclesTracked} ${kpis.vehiclesTracked === 1 ? unitLabel.toLowerCase() : unitLabelPlural}`
+              : `${unitLabelPlural} in period`
+          }
           icon={Gauge}
           variant="success"
           size="xs"
@@ -83,7 +119,7 @@ export function FuelKpiCards({ kpis, fuelTransactions = [], isLoading }: FuelKpi
         <MetricCard
           title="Sudden Drops"
           value={`${suddenDropAlerts.length}`}
-          subtitle={`${totalDropVolume.toFixed(1)} L · ${uniqueVehiclesWithDrops} unit${uniqueVehiclesWithDrops !== 1 ? 's' : ''}`}
+          subtitle={`${totalDropVolume.toFixed(1)} L · ${uniqueVehiclesWithDrops} ${uniqueVehiclesWithDrops === 1 ? unitLabel.toLowerCase() : unitLabelPlural}`}
           icon={TrendingDown}
           variant={suddenDropAlerts.length > 0 ? 'destructive' : 'default'}
           size="xs"

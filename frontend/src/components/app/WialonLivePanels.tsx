@@ -41,7 +41,7 @@ function LiveHeader({
           <CardTitle className="text-base flex items-center gap-2">
             <Icon className="h-4 w-4 text-primary" />
             {title}
-            <Badge variant="outline" className="text-[10px] font-normal">Live from Wialon</Badge>
+            <Badge variant="outline" className="text-[10px] font-normal">Live</Badge>
           </CardTitle>
           <CardDescription>{description}</CardDescription>
         </div>
@@ -75,7 +75,7 @@ export function WialonLiveUnitsPanel() {
 
   return (
     <Card className="border-primary/20 mb-6">
-      <LiveHeader title="Live units" description="Real-time Wialon units for your linked account — vehicles, trackers, sensors, cameras, and more." count={data?.counts?.total} icon={Satellite} />
+      <LiveHeader title="Live units" description="Real-time units for your linked account — vehicles, trackers, sensors, cameras, and more." count={data?.counts?.total} icon={Satellite} />
       <CardContent className="space-y-4">
         {isLoading ? <Skeleton className="h-32" /> : isError ? (
           <p className="text-sm text-destructive">Could not load live units.</p>
@@ -147,12 +147,12 @@ export function WialonRoutesPanel() {
 
   return (
     <Card className="border-primary/20 mb-6">
-      <LiveHeader title="Wialon routes" description="Route objects from Wialon — expand to see rounds/schedules." count={data?.count} icon={Route} />
+      <LiveHeader title="Routes" description="Route objects from your linked account — expand to see rounds/schedules." count={data?.count} icon={Route} />
       <CardContent>
         {isLoading ? <Skeleton className="h-32" /> : isError ? (
-          <p className="text-sm text-destructive">Could not load Wialon routes.</p>
+          <p className="text-sm text-destructive">Could not load routes.</p>
         ) : !data?.routes?.length ? (
-          <p className="text-sm text-muted-foreground">No Wialon routes for this account.</p>
+          <p className="text-sm text-muted-foreground">No routes for this account.</p>
         ) : (
           <div className="space-y-2">
             {data.routes.map((r) => (
@@ -167,7 +167,7 @@ export function WialonRoutesPanel() {
                 </button>
                 {expandedRoute === r.id && (
                   <div className="px-3 pb-3 text-xs text-muted-foreground">
-                    {roundsLoading ? 'Loading rounds…' : `${rounds?.count ?? 0} round(s) in Wialon`}
+                    {roundsLoading ? 'Loading rounds…' : `${rounds?.count ?? 0} round(s)`}
                   </div>
                 )}
               </div>
@@ -214,7 +214,7 @@ export function WialonReportsPanel() {
         onSuccess: (res) => {
           const rows = (res.rows || []) as Record<string, unknown>[];
           setReportRows(rows);
-          notify.success('Wialon report ready', `${rows.length} rows`);
+          notify.success('Report ready', `${rows.length} rows`);
         },
         onError: (e) => notify.error('Report failed', e.message),
       }
@@ -223,7 +223,7 @@ export function WialonReportsPanel() {
 
   return (
     <Card className="border-primary/20 mb-6">
-      <LiveHeader title="Wialon reports" description="Run Wialon report templates live against your fleet units." count={data?.count} icon={FileText} />
+      <LiveHeader title="Reports" description="Run report templates live against your fleet units." count={data?.count} icon={FileText} />
       <CardContent className="space-y-4">
         {isLoading ? <Skeleton className="h-32" /> : isError ? (
           <p className="text-sm text-destructive">Could not load report templates.</p>
@@ -250,7 +250,7 @@ export function WialonReportsPanel() {
               </Select>
             </div>
             <LoadingButton loading={exec.isPending} onClick={runReport} disabled={!template || !selectedUnit}>
-              Run Wialon report (last 7 days)
+              Run report (last 7 days)
             </LoadingButton>
             {reportRows.length > 0 && (
               <div className="space-y-2">
@@ -280,7 +280,12 @@ export function WialonNotificationsPanel() {
 
   return (
     <Card className="border-primary/20 mb-6">
-      <LiveHeader title="Wialon notifications" description="Notification rules from Wialon resources." count={data?.count} icon={Bell} />
+      <LiveHeader
+        title="Configured notification rules"
+        description="Rules active on this account. When they fire, events appear in the inbox above automatically."
+        count={data?.count}
+        icon={Bell}
+      />
       <CardContent>
         {isLoading ? <Skeleton className="h-32" /> : isError ? (
           <p className="text-sm text-destructive">Could not load notifications.</p>
@@ -323,7 +328,7 @@ export function WialonGeofencesLivePanel() {
 
   return (
     <Card className="border-primary/20 mb-6">
-      <LiveHeader title="Wialon geofences" description="Zones configured in Wialon for this account." count={data?.count} icon={MapPin} />
+      <LiveHeader title="Geofences" description="Zones configured for this account." count={data?.count} icon={MapPin} />
       <CardContent>
         {isLoading ? <Skeleton className="h-24" /> : isError ? (
           <p className="text-sm text-destructive">Could not load geofences.</p>
@@ -352,7 +357,7 @@ export function WialonSensorsPanel() {
 
   return (
     <Card className="border-primary/20 mb-6">
-      <LiveHeader title="Wialon sensors" description="Latest sensor values from Wialon calc_last_message." icon={Gauge} />
+      <LiveHeader title="Sensors" description="Latest sensor values for the selected unit." icon={Gauge} />
       <CardContent className="space-y-3">
         <Select value={unitId ? String(unitId) : ''} onValueChange={(v) => setUnitId(parseInt(v, 10))}>
           <SelectTrigger><SelectValue placeholder="Select unit" /></SelectTrigger>

@@ -28,6 +28,8 @@ export type FleetSnapshotUnit = {
   netconn?: boolean;
   motionState?: string;
   status: string;
+  assetCategory?: 'vehicle' | 'generator' | 'machinery';
+  stationary?: boolean;
   fuelLevel?: number;
   iconUrl?: string;
   iconUgi?: number;
@@ -97,6 +99,8 @@ export type FleetUnit = {
   netconn?: boolean;
   motionState?: string;
   status: 'moving' | 'idle' | 'stopped' | 'offline';
+  assetCategory?: 'vehicle' | 'generator' | 'machinery';
+  stationary?: boolean;
   speed?: number;
   fuelLevel?: number;
   fuelLiters?: number;
@@ -223,6 +227,21 @@ function snapshotUnitToFleetUnit(u: FleetSnapshotUnit): FleetUnit {
     netconn: u.netconn,
     motionState: u.motionState,
     status: normalizeStatus(u.status),
+    assetCategory: u.assetCategory,
+    stationary:
+      u.stationary === true ||
+      u.assetCategory === 'generator' ||
+      u.assetCategory === 'machinery' ||
+      isFleetGenerator({
+        name: u.name,
+        plate,
+        engineHours: u.engineHours,
+        mileage: u.mileage,
+        flds: u.flds,
+        sens: u.sens,
+        prp: u.prp,
+        hwName: u.hwName,
+      }),
     speed: u.position?.speed,
     fuelLevel: u.fuelLevel,
     fuelLiters: u.fuel?.levelLiters,

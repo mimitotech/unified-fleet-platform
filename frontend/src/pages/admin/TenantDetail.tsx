@@ -22,7 +22,7 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { ExternalLink, RefreshCw } from 'lucide-react';
+import { ExternalLink, RefreshCw, FileSpreadsheet, Trash2, Upload } from 'lucide-react';
 import { PasswordInput } from '@/components/shared/PasswordInput';
 import { useAuth } from '@/providers/AuthProvider';
 import { isSuperAdmin, ROLE_LABELS } from '@/lib/systemRoles';
@@ -34,6 +34,7 @@ import { PortalLinksCard } from '@/components/admin/PortalLinksCard';
 import { WialonUserImportCard } from '@/components/admin/WialonUserImportCard';
 import { defaultModulesForRole } from '@/lib/userAccess';
 import { FUEL_TABLE_COLUMN_DEFS } from '@/lib/fuelModuleConfig';
+import { format } from 'date-fns';
 
 type Tenant = Record<string, unknown>;
 type Usage = { vehicles_used?: number; users_used?: number };
@@ -73,6 +74,12 @@ export default function TenantDetail() {
   const { data: fuelModuleConfig } = useQuery({
     queryKey: ['tenantFuelModuleConfig', id],
     queryFn: () => adminApi.getFuelModuleConfig(id!),
+    enabled: isValidId,
+  });
+
+  const { data: stationSheets } = useQuery({
+    queryKey: ['tenantFuelStationSheets', id],
+    queryFn: () => adminApi.listFuelStationSheets(id!),
     enabled: isValidId,
   });
 
@@ -158,6 +165,14 @@ export default function TenantDetail() {
     Array<{ resourceId: number; templateId: number; templateName: string; module?: string; isGroupReport?: boolean }>
   >([]);
   const [visibleFuelColumns, setVisibleFuelColumns] = useState<string[]>([]);
+  const [columnsByCategory, setColumnsByCategory] = useState<
+    Record<'vehicle' | 'generator' | 'machinery', string[]>
+  >({
+    vehicle: [],
+    generator: [],
+    machinery: [],
+  });
+  const [fuelColumnCategory, setFuelColumnCategory] = useState<'vehicle' | 'generator' | 'machinery'>('vehicle');
 
   useEffect(() => {
     if (t) {
@@ -214,9 +229,17 @@ export default function TenantDetail() {
     const cfg = fuelModuleConfig as {
       selectedReports?: Array<{ resourceId: number; templateId: number; templateName: string; module?: string; isGroupReport?: boolean }>;
       visibleColumns?: string[];
+      columnsByCategory?: Partial<Record<'vehicle' | 'generator' | 'machinery', string[]>>;
     };
+    const defaults = FUEL_TABLE_COLUMN_DEFS.map((c) => c.key);
+    const visible = cfg.visibleColumns?.length ? cfg.visibleColumns : defaults;
     setSelectedFuelReports(cfg.selectedReports ?? []);
-    setVisibleFuelColumns(cfg.visibleColumns ?? FUEL_TABLE_COLUMN_DEFS.map((c) => c.key));
+    setVisibleFuelColumns(visible);
+    setColumnsByCategory({
+      vehicle: cfg.columnsByCategory?.vehicle?.length ? cfg.columnsByCategory.vehicle : visible,
+      generator: cfg.columnsByCategory?.generator?.length ? cfg.columnsByCategory.generator : visible,
+      machinery: cfg.columnsByCategory?.machinery?.length ? cfg.columnsByCategory.machinery : visible,
+    });
   }, [fuelModuleConfig]);
 
   const saveGeneral = useMutation({
@@ -445,10 +468,10 @@ export default function TenantDetail() {
     onSuccess: (data, _vars, context) => {
       if (context?.toastId) notify.dismiss(context.toastId);
       if (data.warnings?.length) {
-        notify.success('Tenant activated', data.warnings[0]);
+        notify.success('Client activated', data.warnings[0]);
       } else {
         notify.success(
-          'Tenant activated',
+          'Client activated',
           `${data.verifiedIntegrations} integration(s) verified — users can sign in with MAMS credentials.`
         );
       }
@@ -546,6 +569,7 @@ export default function TenantDetail() {
         adminApi.saveFuelModuleConfig(id!, {
           selectedReports: selectedFuelReports,
           visibleColumns: visibleFuelColumns,
+          columnsByCategory,
         }),
         {
           loading: 'Saving Fuel module config...',
@@ -571,10 +595,45 @@ export default function TenantDetail() {
   };
 
   const toggleFuelColumn = (key: string) => {
-    setVisibleFuelColumns((prev) =>
-      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
-    );
+    setColumnsByCategory((prev) => {
+      const current = prev[fuelColumnCategory] ?? [];
+      let next = current.includes(key) ? current.filter((k) => k !== key) : [...current, key];
+      // Enabling variance also enables station column (needed for comparison).
+      if (key === 'variance' && next.includes('variance') && !next.includes('filledStation')) {
+        next = [...next, 'filledStation'];
+      }
+      const updated = { ...prev, [fuelColumnCategory]: next };
+      // Keep legacy flat list = vehicle set for older clients.
+      if (fuelColumnCategory === 'vehicle') setVisibleFuelColumns(next);
+      return updated;
+    });
   };
+
+  const uploadStationSheet = useMutation({
+    mutationFn: (file: File) =>
+      withToast(adminApi.uploadFuelStationSheet(id!, file), {
+        loading: 'Importing petrol-station sheet…',
+        success: 'Station sheet imported',
+      }),
+    onSuccess: (result) => {
+      notify.success(
+        'Station fills imported',
+        `${result.importedCount} rows · ${result.periodFrom || '?'} → ${result.periodTo || '?'}`,
+      );
+      qc.invalidateQueries({ queryKey: ['tenantFuelStationSheets', id] });
+    },
+  });
+
+  const deleteStationSheet = useMutation({
+    mutationFn: (uploadId: string) =>
+      withToast(adminApi.deleteFuelStationSheet(id!, uploadId), {
+        loading: 'Removing sheet…',
+        success: 'Sheet removed',
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tenantFuelStationSheets', id] }),
+  });
+
+  const varianceEnabledForTenant = Object.values(columnsByCategory).some((cols) => cols?.includes('variance'));
 
   if (id === 'new') {
     return <Navigate to="/admin/tenants/new" replace />;
@@ -585,13 +644,13 @@ export default function TenantDetail() {
 
   return (
     <AdminLayout
-      title={String(t?.name || 'Tenant')}
+      title={String(t?.name || 'Client')}
       subtitle={`Slug: ${String(t?.slug || '')}`}
       actions={
         <div className="flex gap-2">
           {String(t?.status) === 'draft' && (
             <LoadingButton size="sm" loading={activateTenant.isPending} onClick={() => activateTenant.mutate()}>
-              Activate Tenant
+              Activate Client
             </LoadingButton>
           )}
           {String(t?.status) === 'active' && verifiedIntegrationCount === 0 && (
@@ -612,7 +671,7 @@ export default function TenantDetail() {
         </div>
       }
     >
-      <Link to="/admin/tenants" className="text-sm text-primary mb-4 inline-block">← Back to Tenants</Link>
+      <Link to="/admin/tenants" className="text-sm text-primary mb-4 inline-block">← Back to Clients</Link>
 
       <Tabs defaultValue="general">
         <TabsList className="flex flex-wrap h-auto gap-1">
@@ -642,7 +701,7 @@ export default function TenantDetail() {
           <Card>
             <CardHeader><CardTitle>General Settings</CardTitle></CardHeader>
             <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div><Label>Tenant Name</Label><Input value={general.name} onChange={(e) => setGeneral({ ...general, name: e.target.value })} /></div>
+              <div><Label>Client Name</Label><Input value={general.name} onChange={(e) => setGeneral({ ...general, name: e.target.value })} /></div>
               <div><Label>Subdomain / Slug</Label><Input value={general.slug} onChange={(e) => setGeneral({ ...general, slug: e.target.value })} /></div>
               <div><Label>Contact Email</Label><Input value={general.contactEmail} onChange={(e) => setGeneral({ ...general, contactEmail: e.target.value })} /></div>
               <div><Label>Phone</Label><Input value={general.phone} onChange={(e) => setGeneral({ ...general, phone: e.target.value })} /></div>
@@ -767,22 +826,134 @@ export default function TenantDetail() {
             <CardHeader>
               <CardTitle>Fuel usage table columns</CardTitle>
               <CardDescription>
-                Choose the columns this client needs. Hidden columns are removed from Fuel Usage table.
+                Customise columns separately for vehicles, generators, and machinery for this client.
               </CardDescription>
             </CardHeader>
-            <CardContent className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
-              {FUEL_TABLE_COLUMN_DEFS.map((c) => (
-                <label
-                  key={c.key}
-                  className="flex items-center gap-2 rounded-md border border-border/60 px-2.5 py-2 cursor-pointer"
+            <CardContent className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                {([
+                  ['vehicle', 'Vehicles'],
+                  ['generator', 'Generators'],
+                  ['machinery', 'Machinery'],
+                ] as const).map(([key, label]) => (
+                  <Button
+                    key={key}
+                    type="button"
+                    size="sm"
+                    variant={fuelColumnCategory === key ? 'default' : 'outline'}
+                    onClick={() => setFuelColumnCategory(key)}
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+                {FUEL_TABLE_COLUMN_DEFS.map((c) => (
+                  <label
+                    key={c.key}
+                    className="flex items-center gap-2 rounded-md border border-border/60 px-2.5 py-2 cursor-pointer"
+                  >
+                    <Checkbox
+                      checked={(columnsByCategory[fuelColumnCategory] ?? []).includes(c.key)}
+                      onCheckedChange={() => toggleFuelColumn(c.key)}
+                    />
+                    <span className="text-sm">{c.label}</span>
+                  </label>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileSpreadsheet className="h-4 w-4" />
+                Petrol-station sheets (variance)
+              </CardTitle>
+              <CardDescription>
+                Upload the station transaction export (Registration num., Date, Hour, Quantity, Product, Amount…).
+                Enable the <strong>Variance</strong> column above so this client sees Filled(Station), Variance, and the Fuel → Variance tab.
+                Station liters are the reference; variance = FLS filled − station filled.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {!varianceEnabledForTenant && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                  Variance column is not enabled for any asset category yet. Enable it in the columns list so the client can see the Variance tab.
+                </p>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <Label
+                  htmlFor="station-sheet-upload"
+                  className="inline-flex items-center gap-2 h-9 px-3 rounded-md border border-input bg-background text-sm cursor-pointer hover:bg-muted/50"
                 >
-                  <Checkbox
-                    checked={visibleFuelColumns.includes(c.key)}
-                    onCheckedChange={() => toggleFuelColumn(c.key)}
-                  />
-                  <span className="text-sm">{c.label}</span>
-                </label>
-              ))}
+                  <Upload className="h-3.5 w-3.5" />
+                  {uploadStationSheet.isPending ? 'Uploading…' : 'Upload .xlsx / .xls'}
+                </Label>
+                <input
+                  id="station-sheet-upload"
+                  type="file"
+                  accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                  className="hidden"
+                  disabled={uploadStationSheet.isPending}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = '';
+                    if (file) uploadStationSheet.mutate(file);
+                  }}
+                />
+                <span className="text-xs text-muted-foreground">
+                  Expected columns: Registration num., Date, Hour, Quantity, Product, Unit price, Amount, Card num.
+                </span>
+              </div>
+              <div className="rounded-md border border-border/60 overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>File</TableHead>
+                      <TableHead>Period</TableHead>
+                      <TableHead className="text-right">Rows</TableHead>
+                      <TableHead>Uploaded</TableHead>
+                      <TableHead className="w-12" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(stationSheets?.uploads ?? []).length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-sm text-muted-foreground text-center py-6">
+                          No station sheets uploaded for this client yet.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      (stationSheets?.uploads ?? []).map((u) => (
+                        <TableRow key={u.id}>
+                          <TableCell className="text-sm font-medium">{u.fileName}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {u.periodFrom || '—'} → {u.periodTo || '—'}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-sm">{u.importedCount}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {u.createdAt ? format(new Date(u.createdAt), 'dd MMM yyyy HH:mm') : '—'}
+                            {u.notes ? <span className="block text-[10px]">{u.notes}</span> : null}
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-destructive"
+                              disabled={deleteStationSheet.isPending}
+                              onClick={() => deleteStationSheet.mutate(u.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
           </Card>
 
@@ -1076,7 +1247,7 @@ export default function TenantDetail() {
             <p className="text-sm font-medium mb-2">Preview</p>
             <div className="flex items-center gap-3 p-3 rounded border" style={{ backgroundColor: branding.primaryColor, color: '#fff' }}>
               {branding.logoUrl && <img src={branding.logoUrl} alt="" className="h-8" />}
-              <span className="font-bold">{general.name || 'Tenant Preview'}</span>
+              <span className="font-bold">{general.name || 'Client Preview'}</span>
             </div>
           </div>
           <LoadingButton loading={saveBranding.isPending} onClick={() => saveBranding.mutate()}>Save Branding</LoadingButton>

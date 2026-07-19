@@ -129,7 +129,7 @@ export default function WialonCenter() {
     onSuccess: (data) => {
       notify.success(
         'Connection OK',
-        `${data.probe.counts.accounts} accounts · ${data.probe.counts.units} units`
+        `${data.probe.counts.accounts} accounts · ${data.probe.counts.units} active units`
       );
       qc.invalidateQueries({ queryKey: ['wialon-center-status'] });
     },
@@ -148,7 +148,7 @@ export default function WialonCenter() {
   return (
     <AdminLayout
       title="Wialon Center"
-      subtitle="Manage multiple mother account tokens — browse each account tree and link tenants at any level"
+      subtitle="Manage mother account tokens — browse each account tree and link clients at any level"
       actions={
         activeMotherId ? (
           <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
@@ -181,7 +181,7 @@ export default function WialonCenter() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Linked to tenants</CardDescription>
+            <CardDescription>Linked to clients</CardDescription>
             <CardTitle className="text-2xl">{status?.assignedAccountCount ?? '—'}</CardTitle>
           </CardHeader>
         </Card>
@@ -203,7 +203,7 @@ export default function WialonCenter() {
           </TabsTrigger>
           <TabsTrigger value="tenants" disabled={!mothers.length} className="gap-1.5">
             <Building2 className="h-3.5 w-3.5" />
-            Tenant links
+            Client links
           </TabsTrigger>
         </TabsList>
 
@@ -357,7 +357,7 @@ export default function WialonCenter() {
             <div className="text-xs text-muted-foreground flex flex-wrap gap-2">
               <Badge variant="secondary">{tierLabel[activeMother.accountTier || ''] || activeMother.accountTier}</Badge>
               {activeMother.counts && (
-                <span>{activeMother.counts.units ?? '—'} units · {activeMother.counts.accounts ?? '—'} accounts</span>
+                <span>{activeMother.counts.units ?? '—'} active units · {activeMother.counts.accounts ?? '—'} accounts</span>
               )}
             </div>
           )}
@@ -398,7 +398,7 @@ export default function WialonCenter() {
                     <div>
                       <p className="font-semibold">{accountDetail.accountName}</p>
                       <p className="text-xs text-muted-foreground">
-                        {accountDetail.unitCount} units · {accountDetail.userCount} Wialon users
+                        {accountDetail.unitCount} active units · {accountDetail.userCount} Wialon users
                       </p>
                       {accountDetail.assignedTenant && (
                         <p className="text-xs mt-2">
@@ -423,7 +423,7 @@ export default function WialonCenter() {
                       <Link
                         to={`/admin/tenants/new?wialonMotherAccountId=${activeMotherId}&wialonAccountId=${accountDetail.accountId}&wialonAccountName=${encodeURIComponent(accountDetail.accountName)}`}
                       >
-                        <Button size="sm" className="w-full">Create tenant for this account</Button>
+                        <Button size="sm" className="w-full">Create client for this account</Button>
                       </Link>
                     )}
                   </div>
@@ -453,7 +453,7 @@ export default function WialonCenter() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Wialon account</TableHead>
-                      <TableHead>Units</TableHead>
+                      <TableHead>Active units</TableHead>
                       <TableHead>MAMS tenant</TableHead>
                       <TableHead />
                     </TableRow>

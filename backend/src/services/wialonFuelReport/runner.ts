@@ -88,17 +88,49 @@ export async function processGroupFuelData(
     const detectedTables = detectFuelTables(tables);
     for (const detected of detectedTables) {
       const unitColIdx = detected.columnMap.unit ?? -1;
-      const leafCells = await fetchLeafRows(client, detected.tableIndex, detected.rowCount);
+
+      // Top-level rows on group tables are the Wialon period totals per unit
+      // (e.g. GENERATOR 1 Consumed=20.14). Children are event breakdowns.
+      // Sudden-drop tables are different: tops are either event groups or the
+      // event itself — never use them as inflated period "summaries" for Drop.
+      if (detected.isGroupUnitSummary && detected.section !== 'theft' && detected.rowCount > 0) {
+        const topRows = await client.request<
+          Array<{ n?: number; c?: import('./types.js').WialonCell[]; d?: number }>
+        >('report/get_result_rows', {
+          tableIndex: detected.tableIndex,
+          indexFrom: 0,
+          indexTo: detected.rowCount - 1,
+        });
+        const tops = Array.isArray(topRows) ? topRows : [];
+        for (const row of tops) {
+          const cells = row.c ?? [];
+          if (!cells.length) continue;
+          const unitName = unitColIdx >= 0 ? getCellValue(cells, unitColIdx) : '';
+          const unitId = unitName ? unitIndex.resolve(unitName) : 0;
+          const unit = { id: unitId, nm: unitName || 'unknown' };
+          const summary = processUnitGroupSummaryRow(
+            cells,
+            detected.columnMap,
+            detected.headers,
+            unit,
+            toTs,
+            detected.section,
+            fromTs,
+          );
+          if (summary) transactions.push(summary);
+        }
+      }
+
+      // Leaf rows = individual events for expand/detail (never treat as period summary).
+      // Skip orphan tops on consumption group tables — already stored as summaries.
+      // For filling + theft, keep orphan tops as events (genset flat tables have no children).
+      const leafCells = await fetchLeafRows(client, detected.tableIndex, detected.rowCount, 6, {
+        skipOrphanTops: detected.isGroupUnitSummary && detected.section === 'consumption',
+      });
       for (const cells of leafCells) {
         const unitName = unitColIdx >= 0 ? getCellValue(cells, unitColIdx) : '';
         const unitId = unitName ? unitIndex.resolve(unitName) : 0;
         const unit = { id: unitId, nm: unitName || 'unknown' };
-
-        if (detected.isGroupUnitSummary) {
-          const tx = processUnitGroupSummaryRow(cells, detected.columnMap, detected.headers, unit, toTs);
-          if (tx) transactions.push(tx);
-          continue;
-        }
 
         if (detected.isAggregateStats) {
           const tx = processAggregateStatsRow(cells, detected.columnMap, unit, toTs);

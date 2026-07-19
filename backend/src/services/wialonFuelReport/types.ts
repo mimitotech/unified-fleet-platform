@@ -25,6 +25,9 @@ export type FuelTransaction = {
   longitude?: number;
   mainTankLevel?: number;
   reserveTankLevel?: number;
+  /** Exact Wialon report interval (group period totals). Unix seconds. */
+  periodFromTs?: number;
+  periodToTs?: number;
 };
 
 export type FuelReportTemplate = {

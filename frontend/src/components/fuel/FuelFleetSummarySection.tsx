@@ -22,7 +22,7 @@ export function FuelFleetSummarySection({
           <PieChart className="w-5 h-5 text-primary" />
           <h3 className="font-semibold">{summaryTitle}</h3>
         </div>
-        <span className="text-xs text-muted-foreground">From Wialon fuel reports</span>
+        <span className="text-xs text-muted-foreground">From fuel reports</span>
       </div>
 
       {isLoading ? (

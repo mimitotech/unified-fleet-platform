@@ -8,7 +8,7 @@ import { WialonCommandButton } from '@/components/fleet/WialonCommandButton';
 import { UnitTypeIcon } from '@/components/fleet/UnitTypeIcon';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { useWialonUnitCommands } from '@/hooks/useWialonLive';
-import { History } from 'lucide-react';
+import { History, FileText } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { FleetUnit } from '@/lib/fleetUnits';
@@ -16,6 +16,9 @@ import { safeArray } from '@/lib/safeArray';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { GenericModuleReports } from '@/components/reports/moduleReportPanels';
+import { CHART } from '@/lib/chartColors';
 
 function UnitCommandsCard({ unit }: { unit: FleetUnit }) {
   const wialonId = unit.wialonId;
@@ -33,7 +36,7 @@ function UnitCommandsCard({ unit }: { unit: FleetUnit }) {
         </div>
       </div>
       {!wialonId ? (
-        <p className="text-xs text-muted-foreground">No Wialon link for this unit.</p>
+        <p className="text-xs text-muted-foreground">No telematics link for this unit.</p>
       ) : isLoading ? (
         <Skeleton className="h-9 w-full" />
       ) : commands.length ? (
@@ -51,7 +54,7 @@ function UnitCommandsCard({ unit }: { unit: FleetUnit }) {
         </div>
       ) : (
         <p className="text-xs text-muted-foreground">
-          No commands configured for this unit in Wialon. Add commands in Wialon → unit → Commands.
+          No commands configured for this unit. Ask your administrator to add remote commands.
         </p>
       )}
     </div>
@@ -76,11 +79,17 @@ export default function Commands() {
   }
 
   return (
-    <AppLayout title="Commands" subtitle="Remote commands configured per device in Wialon">
+    <AppLayout title="Commands" subtitle="Remote commands configured per device">
+      <Tabs defaultValue="live" className="space-y-4">
+        <TabsList className="branded-tabs">
+          <TabsTrigger value="live">Commands</TabsTrigger>
+          <TabsTrigger value="reports" className="gap-1"><FileText className="h-3.5 w-3.5" />Reports</TabsTrigger>
+        </TabsList>
+        <TabsContent value="live" className="mt-0">
       <AnimatedPage className="space-y-6">
         <WialonContextBanner />
         <p className="text-sm text-muted-foreground">
-          Each unit shows only the commands defined for it in Wialon (lock, locate, camera on, etc.).
+          Each unit shows only the commands defined for it (lock, locate, camera on, etc.).
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {commandable.map((u) => (
@@ -88,13 +97,13 @@ export default function Commands() {
           ))}
           {!commandable.length && (
             <p className="text-muted-foreground text-center py-12 col-span-full">
-              No Wialon units — link your account and sync fleet data first.
+              No commandable units — ask your administrator to complete fleet sync first.
             </p>
           )}
         </div>
 
-        <div className="fleet-card">
-          <h3 className="font-semibold flex items-center gap-2 mb-4">
+        <div className="fleet-card branded-panel">
+          <h3 className="font-semibold flex items-center gap-2 mb-4 text-primary">
             <History className="w-4 h-4" /> Command History
           </h3>
           <Table>
@@ -107,7 +116,7 @@ export default function Commands() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {safeArray(history as Array<Record<string, unknown>>).slice(0, 20).map((h) => (
+              {(safeArray(history) as Array<Record<string, unknown>>).slice(0, 20).map((h) => (
                 <TableRow key={String(h.id)}>
                   <TableCell className="text-xs">
                     {new Date(String(h.createdAt || h.created_at)).toLocaleString()}
@@ -129,6 +138,54 @@ export default function Commands() {
           </Table>
         </div>
       </AnimatedPage>
+        </TabsContent>
+        <TabsContent value="reports" className="mt-0">
+          <GenericModuleReports
+            moduleLabel="Commands"
+            title="Command executive"
+            blurb="Commandable units and recent history."
+            kpis={[
+              { label: 'Commandable units', value: commandable.length },
+              { label: 'History rows', value: (safeArray(history) as unknown[]).length },
+            ]}
+            columns={[
+              { key: 'when', label: 'Time' },
+              { key: 'asset', label: 'Asset' },
+              { key: 'command', label: 'Command' },
+              { key: 'status', label: 'Status' },
+            ]}
+            rows={(safeArray(history) as Array<Record<string, unknown>>).slice(0, 80).map((h) => {
+              const raw = String(h.createdAt || h.created_at || '');
+              const ts = Date.parse(raw);
+              const day = Number.isNaN(ts) ? '' : new Date(ts).toISOString().slice(0, 10);
+              return {
+                when: Number.isNaN(ts) ? '—' : new Date(ts).toLocaleString(),
+                asset: String(h.assetName || h.asset_name || '—'),
+                command: String(h.command || '—'),
+                status: String(h.status || '—'),
+                _day: day,
+                count: 1,
+              };
+            })}
+            charts={{
+              heading: 'Asset performance · command analytics',
+              categoryKey: 'asset',
+              bar: {
+                title: 'Commands by asset',
+                subtitle: 'Standing bars — command volume per unit',
+                metrics: [{ key: 'count', label: 'Commands', color: CHART.brand }],
+                topN: 8,
+              },
+              secondary: {
+                type: 'timeline',
+                title: 'Commands over time',
+                subtitle: 'Daily command volume in the selected period',
+                dateKey: '_day',
+              },
+            }}
+          />
+        </TabsContent>
+      </Tabs>
     </AppLayout>
   );
 }

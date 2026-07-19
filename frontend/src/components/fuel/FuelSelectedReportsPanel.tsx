@@ -134,7 +134,7 @@ export function FuelSelectedReportsPanel({
           <CollapsibleTrigger asChild>
             <Button variant="ghost" className="w-full justify-between h-9 px-2 text-left">
               <span className="text-sm font-semibold">
-                Wialon reports ({filtered.length}) — click to view full report contents
+                Reports ({filtered.length}) — click to view full report contents
               </span>
               <ChevronDown className={cn('w-4 h-4 transition-transform', open && 'rotate-180')} />
             </Button>
@@ -146,7 +146,7 @@ export function FuelSelectedReportsPanel({
       <Card className="xl:col-span-4">
         <CardContent className="p-3 space-y-3">
           <div>
-            <p className="text-sm font-semibold">Enabled Wialon reports</p>
+            <p className="text-sm font-semibold">Enabled reports</p>
             <p className="text-xs text-muted-foreground">
               Click a report, set filter, and run to view all contents/structure.
             </p>
@@ -240,7 +240,7 @@ export function FuelSelectedReportsPanel({
       <Card className="xl:col-span-8">
         <CardContent className="p-3">
           {reportError && (
-            <QueryErrorBanner message="Could not run selected Wialon report." onRetry={refetch} className="mb-3" />
+            <QueryErrorBanner message="Could not run selected report." onRetry={refetch} className="mb-3" />
           )}
           {!runParams && (
             <div className="text-sm text-muted-foreground py-12 text-center">
@@ -251,6 +251,7 @@ export function FuelSelectedReportsPanel({
             <ReportResultsView
               data={reportResult}
               templateName={selectedReport?.templateName}
+              moduleLabel="Fuel"
               unitName={
                 selectedReport?.isGroupReport
                   ? catalog?.groups?.find((g) => String(g.id) === selectedGroupId)?.nm

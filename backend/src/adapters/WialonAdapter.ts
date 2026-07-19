@@ -4,8 +4,10 @@ import { WialonClient } from './wialonClient.js';
 import {
   WIALON_SEARCH_PAGE_SIZE,
   WIALON_UNIT_FLAGS,
+  type WialonSearchItem,
   type WialonSearchResult,
 } from './wialonUtils.js';
+import { filterActiveWialonUnits } from '../services/wialonLiveUtils.js';
 
 export class WialonAdapter extends BaseAdapter {
   private client: WialonClient;
@@ -67,30 +69,28 @@ export class WialonAdapter extends BaseAdapter {
   }
 
   async getAssets(): Promise<FleetAsset[]> {
-    const assets: FleetAsset[] = [];
+    const items: WialonSearchItem[] = [];
     let from = 0;
 
     while (true) {
       const to = from + WIALON_SEARCH_PAGE_SIZE - 1;
       const result = await this.searchUnits(from, to);
-      const items = result.items || [];
-      for (const item of items) {
-        assets.push({
-          id: String(item.id),
-          name: item.nm,
-          registrationPlate: item.prp?.registration_plate || item.prp?.plate || undefined,
-          vin: item.prp?.vin,
-          make: item.prp?.brand,
-          model: item.prp?.model,
-          year: item.prp?.year ? parseInt(item.prp.year, 10) : undefined,
-        });
-      }
-      const total = result.totalItemsCount ?? assets.length;
-      if (items.length === 0 || assets.length >= total) break;
+      const page = result.items || [];
+      items.push(...page);
+      const total = result.totalItemsCount ?? items.length;
+      if (page.length === 0 || items.length >= total) break;
       from += WIALON_SEARCH_PAGE_SIZE;
     }
 
-    return assets;
+    return filterActiveWialonUnits(items).map((item) => ({
+      id: String(item.id),
+      name: item.nm,
+      registrationPlate: item.prp?.registration_plate || item.prp?.plate || undefined,
+      vin: item.prp?.vin,
+      make: item.prp?.brand,
+      model: item.prp?.model,
+      year: item.prp?.year ? parseInt(item.prp.year, 10) : undefined,
+    }));
   }
 
   async getBulkAssetStatus(unitIds: string[]): Promise<Map<string, AssetStatus>> {
@@ -181,71 +181,69 @@ export class WialonAdapter extends BaseAdapter {
   }
 
   async getAlerts(from: Date, to: Date): Promise<FleetAlert[]> {
+    const {
+      harvestTaskMessageAlerts,
+      harvestUnitEventAndNotificationAlerts,
+      harvestEcoReportAlerts,
+    } = await import('../services/wialonAlertHarvest.js');
+
     const assets = await this.getAssets();
-    const unitIds = assets
+    const allUnitIds = assets
       .map((a) => parseInt(a.id, 10))
-      .filter((id) => !Number.isNaN(id))
-      .slice(0, 50);
-    if (!unitIds.length) return [];
+      .filter((id) => !Number.isNaN(id));
+    if (!allUnitIds.length) return [];
 
     const timeFrom = Math.floor(from.getTime() / 1000);
     const timeTo = Math.floor(to.getTime() / 1000);
+    const unitNameById = new Map(
+      assets
+        .map((a) => [parseInt(a.id, 10), a.name] as const)
+        .filter(([id]) => !Number.isNaN(id)),
+    );
+    const byExternal = new Map<string, FleetAlert>();
 
-    try {
-      const result = await this.request<{
-        count?: number;
-        messages?: Array<{
-          item_id?: number;
-          t: number;
-          f?: number;
-          tp?: string;
-          et?: string;
-          x?: number;
-          y?: number;
-          p?: Record<string, unknown>;
-        }>;
-      }>('messages/get_task_messages', {
-        itemIds: unitIds,
+    const addAll = (list: FleetAlert[]) => {
+      for (const a of list) byExternal.set(a.externalId || a.id, a);
+    };
+
+    const scopeKey = `${this.config.accountId || this.config.token?.slice(0, 12) || 'wialon'}`;
+
+    // 1) Task / registered notification messages for all units.
+    addAll(await harvestTaskMessageAlerts(this.client, allUnitIds, unitNameById, timeFrom, timeTo));
+
+    // 2) Triggered notifications + unit events (power, sensors, speed, etc.) — rotating deep scan.
+    addAll(
+      await harvestUnitEventAndNotificationAlerts(
+        this.client,
+        scopeKey,
+        allUnitIds,
+        unitNameById,
         timeFrom,
         timeTo,
-        loadCount: 500,
-      });
+      ),
+    );
 
-      const unitToAsset = new Map(
-        assets.map((a) => [parseInt(a.id, 10), a.id])
-      );
+    // 3) Eco/safety report enrichment — never a random group that can leak other fleets.
+    addAll(
+      await harvestEcoReportAlerts(
+        {
+          token: this.config.token || '',
+          baseUrl: this.config.baseUrl,
+          operateAs: this.config.operateAs,
+          accountId: this.config.accountId,
+        },
+        this.client,
+        scopeKey,
+        timeFrom,
+        timeTo,
+        allUnitIds,
+        unitNameById,
+      ),
+    );
 
-      return (result.messages || []).map((m) => {
-        const p = m.p || {};
-        const title =
-          (p.task_evt_name as string) ||
-          (p.name as string) ||
-          m.et ||
-          'Wialon event';
-        const description =
-          (p.task_description as string) ||
-          (p.text as string) ||
-          undefined;
-        const severity =
-          m.f && (m.f & 1) ? ('critical' as const) : ('warning' as const);
-        return {
-          id: `wialon-${m.item_id}-${m.t}`,
-          type: m.tp || 'wialon_event',
-          severity,
-          title,
-          description,
-          latitude: m.y,
-          longitude: m.x,
-          timestamp: new Date(m.t * 1000),
-          sourceType: 'wialon' as const,
-          externalId: `${m.item_id}-${m.t}`,
-          assetId: m.item_id ? unitToAsset.get(m.item_id) : undefined,
-          acknowledged: false,
-        };
-      });
-    } catch {
-      return [];
-    }
+    const alerts = [...byExternal.values()];
+    alerts.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+    return alerts;
   }
 
   private resourceSearchSpec(): Record<string, unknown> {

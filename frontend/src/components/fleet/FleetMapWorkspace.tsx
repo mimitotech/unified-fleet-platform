@@ -42,14 +42,19 @@ export function FleetMapSidebar({
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState<VehicleStatus[]>([]);
 
+  const mostlyStationary =
+    units.length > 0 && units.filter((u) => u.stationary).length >= units.length / 2;
+
   const filtered = useMemo(() => {
     const hay = q.trim().toLowerCase();
     return units.filter((u) => {
       if (hay && !`${u.name} ${u.plate || ''}`.toLowerCase().includes(hay)) return false;
-      if (statusFilter.length && !statusFilter.includes(u.status)) return false;
-      return true;
+      if (!statusFilter.length) return true;
+      if (statusFilter.includes(u.status)) return true;
+      if (mostlyStationary && statusFilter.includes('idle') && u.status === 'moving') return true;
+      return false;
     });
-  }, [units, q, statusFilter]);
+  }, [units, q, statusFilter, mostlyStationary]);
 
   const toggleStatus = (s: VehicleStatus) => {
     setStatusFilter((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
@@ -61,26 +66,35 @@ export function FleetMapSidebar({
         <div className="relative">
           <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
           <Input
-            placeholder="Search units…"
+            placeholder="Search assets…"
             className="pl-8 h-8 text-xs"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
         <div className="flex flex-wrap gap-1">
-          {STATUS_FILTERS.map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => toggleStatus(s)}
-              className={cn(
-                'rounded-full transition-opacity',
-                statusFilter.length > 0 && !statusFilter.includes(s) && 'opacity-40'
-              )}
-            >
-              <StatusBadge status={s} size="sm" showDot={false} />
-            </button>
-          ))}
+          {STATUS_FILTERS.map((s) => {
+            if (mostlyStationary && s === 'moving') return null;
+            return (
+              <button
+                key={s}
+                type="button"
+                onClick={() => toggleStatus(s)}
+                className={cn(
+                  'rounded-full transition-opacity',
+                  statusFilter.length > 0 && !statusFilter.includes(s) && 'opacity-40'
+                )}
+              >
+                <StatusBadge
+                  status={s}
+                  label={mostlyStationary && s === 'idle' ? 'Running' : undefined}
+                  stationary={mostlyStationary && s === 'idle'}
+                  size="sm"
+                  showDot={false}
+                />
+              </button>
+            );
+          })}
         </div>
         <p className="text-[10px] text-muted-foreground flex items-center gap-1">
           <ListFilter className="h-3 w-3" />
@@ -104,10 +118,19 @@ export function FleetMapSidebar({
                 <p className="text-[10px] text-muted-foreground mt-0.5">{u.plate || u.id}</p>
               </div>
               <div className="shrink-0 text-right">
-                <StatusBadge status={u.status} size="sm" showDot={false} />
-                <p className="text-[10px] text-muted-foreground mt-0.5 tabular-nums">
-                  {u.speed != null ? `${Math.round(u.speed)}` : '0'} km/h
-                </p>
+                <StatusBadge
+                  status={u.status}
+                  label={u.motionState}
+                  assetCategory={u.assetCategory}
+                  stationary={u.stationary}
+                  size="sm"
+                  showDot={false}
+                />
+                {!u.stationary && (
+                  <p className="text-[10px] text-muted-foreground mt-0.5 tabular-nums">
+                    {u.speed != null ? `${Math.round(u.speed)}` : '0'} km/h
+                  </p>
+                )}
               </div>
             </button>
           </li>

@@ -1,7 +1,7 @@
 import type { FuelTransaction } from './types.js';
 
 export function isWialonGroupSummary(row: FuelTransaction): boolean {
-  return row.sensor === 'wialon_group_summary';
+  return row.sensor === 'wialon_group_summary' || row.sensor.startsWith('wialon_group_summary');
 }
 
 function monthBoundsFromTs(ts: number): { start: string; end: string } {
@@ -43,6 +43,38 @@ export function isCompleteMonthSpan(fromDate: string, toDate: string): boolean {
   return true;
 }
 
+function dateFromTs(ts: number): string {
+  return new Date(ts * 1000).toISOString().slice(0, 10);
+}
+
+/**
+ * Keep a group-summary when it represents the selected report period.
+ * Prefer stamped periodFrom/periodTo; fall back to timestamp/Beginning in range.
+ */
+export function summaryCoversSelectedRange(
+  row: FuelTransaction,
+  fromDate: string,
+  toDate: string
+): boolean {
+  if (!isWialonGroupSummary(row)) return false;
+
+  if (row.periodFromTs && row.periodToTs) {
+    const pFrom = dateFromTs(row.periodFromTs);
+    const pTo = dateFromTs(row.periodToTs);
+    // Exact range match (what Force Refresh / exact sync wrote)
+    if (pFrom === fromDate && pTo === toDate) return true;
+    // Selected range fully inside the stamped report period
+    if (fromDate >= pFrom && toDate <= pTo) return true;
+    return false;
+  }
+
+  if (!row.timestamp) return false;
+  const rowDate = dateFromTs(row.timestamp);
+  if (rowDate >= fromDate && rowDate <= toDate) return true;
+  const { start, end } = monthBoundsFromTs(row.timestamp);
+  return fromDate <= start && toDate >= end;
+}
+
 /** Summary row belongs in a date-range result if its calendar month overlaps the range. */
 export function summaryMonthOverlapsRange(
   row: FuelTransaction,
@@ -50,21 +82,11 @@ export function summaryMonthOverlapsRange(
   toDate: string
 ): boolean {
   if (!isWialonGroupSummary(row) || !row.timestamp) return false;
+  if (row.periodFromTs && row.periodToTs) {
+    return summaryCoversSelectedRange(row, fromDate, toDate);
+  }
   const { start, end } = monthBoundsFromTs(row.timestamp);
   return end >= fromDate && start <= toDate;
-}
-
-/** Use period totals from summary when it matches the selected range (exact or full month). */
-export function summaryCoversSelectedRange(
-  row: FuelTransaction,
-  fromDate: string,
-  toDate: string
-): boolean {
-  if (!isWialonGroupSummary(row) || !row.timestamp) return false;
-  const rowDate = new Date(row.timestamp * 1000).toISOString().slice(0, 10);
-  if (rowDate >= fromDate && rowDate <= toDate) return true;
-  const { start, end } = monthBoundsFromTs(row.timestamp);
-  return fromDate <= start && toDate >= end;
 }
 
 export function effectiveSummaryUnitIds(
@@ -88,14 +110,14 @@ export function filterTransactionsByDateRange(
 ): FuelTransaction[] {
   const fromTs = Math.floor(new Date(fromDate + 'T00:00:00Z').getTime() / 1000);
   const toTs = Math.floor(new Date(toDate + 'T23:59:59Z').getTime() / 1000);
-  const allowSummaries = isCompleteMonthSpan(fromDate, toDate);
   const deduped = new Map<string, FuelTransaction>();
 
   for (const r of rows) {
     if (isWialonGroupSummary(r)) {
+      // Always prefer covering period summaries for any range (not only full months).
       if (summaryCoversSelectedRange(r, fromDate, toDate)) {
         deduped.set(r.id, r);
-      } else if (allowSummaries && summaryMonthOverlapsRange(r, fromDate, toDate)) {
+      } else if (isCompleteMonthSpan(fromDate, toDate) && summaryMonthOverlapsRange(r, fromDate, toDate)) {
         deduped.set(r.id, r);
       }
       continue;

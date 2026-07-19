@@ -1,5 +1,8 @@
 import { query } from '../config/database.js';
 import { WialonFuelReportService } from './WialonFuelReportService.js';
+import { WialonFuelFleetService } from './WialonFuelFleetService.js';
+import { filterPlausibleFuelEvents } from './fuelEventPlausibility.js';
+import { encodePeriodLocation } from './wialonFuelReport/periodMeta.js';
 import type { FuelAssetCategory } from './wialonAssetCategory.js';
 import type { FuelTransaction } from './wialonFuelReport/types.js';
 
@@ -16,6 +19,7 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
 }
 
 function fuelTxToDbRow(tenantId: string, tx: FuelTransaction, assetCategory?: FuelAssetCategory) {
+  const isSummary = tx.sensor === 'wialon_group_summary' || tx.sensor.startsWith('wialon_group_summary');
   return {
     id: tx.id,
     tenantId,
@@ -27,7 +31,9 @@ function fuelTxToDbRow(tenantId: string, tx: FuelTransaction, assetCategory?: Fu
     tank: tx.tank,
     timestamp: tx.timestamp,
     timeStr: tx.time,
-    location: tx.location ?? '',
+    location: isSummary
+      ? encodePeriodLocation(tx.periodFromTs, tx.periodToTs, tx.location)
+      : tx.location ?? '',
     latitude: toDbNumber(tx.latitude),
     longitude: toDbNumber(tx.longitude),
     initialLevel: tx.initialLevel ?? 0,
@@ -57,8 +63,26 @@ export class WialonFuelDbSyncService {
   ): Promise<void> {
     if (!txs.length) return;
 
+    // Never persist invented balance rows — recompute at read time with live guards.
+    let toStore = txs.filter((tx) => tx.sensor !== 'balance');
+
+    // Drop impossible FLS noise before it lands in Postgres (e.g. BOWSER ±34k L swings).
+    let liveFuelByUnit: Map<number, number> | undefined;
+    try {
+      const { assets } = await WialonFuelFleetService.listAssets(tenantId);
+      liveFuelByUnit = new Map(
+        assets
+          .filter((a) => a.fuelLiters != null && a.fuelLiters >= 0)
+          .map((a) => [a.unitId, a.fuelLiters as number]),
+      );
+    } catch {
+      liveFuelByUnit = undefined;
+    }
+    toStore = filterPlausibleFuelEvents(toStore, liveFuelByUnit);
+    if (!toStore.length) return;
+
     const BATCH_SIZE = 250;
-    const batches = chunkArray(txs, BATCH_SIZE);
+    const batches = chunkArray(toStore, BATCH_SIZE);
 
     const columns = [
       'id',

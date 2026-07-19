@@ -8,10 +8,10 @@ const ROLE_MODULES: Record<string, string[]> = {
   tenant_admin: ['*'],
   manager: [
     'dashboard', 'monitoring', 'surveillance', 'drivers', 'routes', 'fuel',
-    'emissions', 'workshop', 'reports', 'alerts', 'trailers', 'sensors', 'geofencing',
+    'emissions', 'workshop', 'alerts', 'trailers', 'sensors', 'geofencing',
   ],
   operator: ['dashboard', 'monitoring', 'alerts', 'routes'],
-  viewer: ['dashboard', 'monitoring', 'alerts', 'reports'],
+  viewer: ['dashboard', 'monitoring', 'alerts'],
 };
 
 const WRITE_ROLES = ['super_admin', 'platform_admin', 'tenant_admin', 'manager'];

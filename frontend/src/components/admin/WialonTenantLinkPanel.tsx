@@ -170,7 +170,7 @@ export function WialonTenantLinkPanel({
                     </p>
                     {(unitCount != null || userCount != null) && (
                       <p className="text-xs text-primary font-medium mt-0.5">
-                        {unitCount ?? '—'} units · {userCount ?? '—'} Wialon users
+                        {unitCount ?? '—'} active units · {userCount ?? '—'} Wialon users
                       </p>
                     )}
                   </div>

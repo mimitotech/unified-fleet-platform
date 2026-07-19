@@ -20,7 +20,7 @@ export function ExternalStreamsPanel({ streams, selectedUnitId }: Props) {
     <div className="fleet-card p-3 space-y-2">
       <h3 className="text-sm font-semibold">External camera streams</h3>
       <p className="text-[10px] text-muted-foreground">
-        Direct feeds from integrated platforms (e.g. TrackSolid). Wialon MDVR units use the live player above.
+        Direct feeds from integrated platforms. MDVR units use the live player above.
       </p>
       <div className="grid gap-3 sm:grid-cols-2">
         {external.map((s) => (

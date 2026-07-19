@@ -1,7 +1,5 @@
-import { Link } from 'react-router-dom';
-import { Satellite, Settings, ChevronRight } from 'lucide-react';
+import { Satellite } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { useWialonContext } from '@/hooks/useWialon';
 import { useFleetAssetProfile } from '@/hooks/useFleetAssetProfile';
 import { cn } from '@/lib/utils';
@@ -28,16 +26,11 @@ export function WialonContextBanner({ className, compact }: Props) {
         <div className="flex items-center gap-2 text-sm">
           <Satellite className="h-4 w-4 text-destructive shrink-0" />
           <span>
-            Wialon is configured but not connected
+            Telematics is configured but not connected
             {ctx?.lastError ? `: ${ctx.lastError}` : '.'}
+            {' '}Contact your account manager to restore the connection.
           </span>
         </div>
-        <Button variant="outline" size="sm" asChild>
-          <Link to="/app/settings?tab=wialon">
-            <Settings className="h-3.5 w-3.5 mr-1.5" />
-            Check connection
-          </Link>
-        </Button>
       </div>
     );
   }
@@ -58,7 +51,7 @@ export function WialonContextBanner({ className, compact }: Props) {
       <div className="flex flex-wrap items-center gap-2 min-w-0">
         <Satellite className="h-4 w-4 text-primary shrink-0" />
         <span className="text-sm font-medium truncate">
-          {ctx?.accountName || 'Wialon'}
+          {ctx?.accountName || 'Connected account'}
         </span>
         {tierName && (
           <Badge variant="secondary" className="text-xs">
@@ -88,12 +81,6 @@ export function WialonContextBanner({ className, compact }: Props) {
           </>
         )}
       </div>
-      <Button variant="ghost" size="sm" className="shrink-0 h-8" asChild>
-        <Link to="/app/settings?tab=wialon">
-          Wialon
-          <ChevronRight className="h-3.5 w-3.5 ml-0.5" />
-        </Link>
-      </Button>
     </div>
   );
 }

@@ -319,7 +319,7 @@ export function MapUnitDetailCard({ unit, lat, lng, speed, course, live = false,
         {detailPending && !sensors.length && !detail ? (
           <div className="p-4 text-sm text-muted-foreground flex items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin" />
-            Loading Wialon sensors…
+            Loading sensors…
           </div>
         ) : null}
 

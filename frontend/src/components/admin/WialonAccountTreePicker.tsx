@@ -86,7 +86,7 @@ export function WialonAccountTreePicker({
           <div className="min-w-0 flex-1">
             <div className="font-medium truncate">{a.name}</div>
             <div className="text-[10px] text-muted-foreground flex flex-wrap gap-x-2">
-              <span>{a.unitCount ?? '—'} units</span>
+              <span>{a.unitCount ?? '—'} active</span>
               <span>{a.userCount ?? '—'} users</span>
               <span>ID {a.id}</span>
             </div>

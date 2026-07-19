@@ -6,7 +6,7 @@ import {
   type WialonSearchItem,
   type WialonSearchResult,
 } from '../adapters/wialonUtils.js';
-import { searchUnitsForAccount } from './wialonLiveUtils.js';
+import { filterActiveWialonUnits, searchUnitsForAccount, WIALON_UNIT_SEARCH_FLAGS } from './wialonLiveUtils.js';
 
 export type WialonAccountTier = 'mother' | 'dealer' | 'admin' | 'user';
 
@@ -222,7 +222,7 @@ export class WialonHierarchyService {
         }
       }
 
-      const units = !Number.isNaN(scopedAccountId)
+      const rawUnits = !Number.isNaN(scopedAccountId)
         ? await this.getUnitsForAccount(credentials, scopedAccountId, 10_000, client)
         : await searchAll(
             client,
@@ -232,8 +232,9 @@ export class WialonHierarchyService {
               propValueMask: '*',
               sortType: 'sys_name',
             },
-            5
+            WIALON_UNIT_SEARCH_FLAGS,
           );
+      const units = filterActiveWialonUnits(rawUnits);
 
       const unitCountByAccount = new Map<number, number>();
       for (const u of units) {

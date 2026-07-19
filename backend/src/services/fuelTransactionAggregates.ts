@@ -5,28 +5,79 @@ import {
   isWialonGroupSummary,
 } from './wialonFuelReport/rangeFilter.js';
 
+/**
+ * Fleet KPIs aligned with Wialon group-report period totals:
+ * units with a covering summary use summary only; others sum plausible leaves.
+ */
 export function computeFuelKpis(rows: FuelTransaction[], fromDate?: string, toDate?: string) {
   const summaryUnitIds = effectiveSummaryUnitIds(rows, fromDate, toDate);
 
-  let totalFilled = 0;
+  const filledByUnit = new Map<number, number>();
+  const usedByUnit = new Map<number, number>();
+  const dropByUnit = new Map<number, number>();
+  let theftEvents = 0;
+  let fillingCount = 0;
+  let consumptionCount = 0;
+  let totalMileage = 0;
+
   for (const r of rows) {
-    if (r.sensor === 'wialon_group_summary' && summaryUnitIds.has(r.unitId) && r.filled > 0) {
-      totalFilled += r.filled;
-    } else if (r.section === 'filling' && !summaryUnitIds.has(r.unitId)) {
-      totalFilled += effectiveFilled(r);
+    if (isWialonGroupSummary(r)) {
+      if (!summaryUnitIds.has(r.unitId)) continue;
+      if (r.filled > 0) {
+        filledByUnit.set(r.unitId, Math.max(filledByUnit.get(r.unitId) ?? 0, r.filled));
+      }
+      if (r.fuelUsed > 0) {
+        usedByUnit.set(r.unitId, Math.max(usedByUnit.get(r.unitId) ?? 0, r.fuelUsed));
+      }
+      const drop = effectiveTheft(r);
+      if (drop > 0) {
+        dropByUnit.set(r.unitId, Math.max(dropByUnit.get(r.unitId) ?? 0, drop));
+        theftEvents += r.count > 0 ? r.count : 1;
+      }
+      continue;
+    }
+
+    // Units in the group report: leaves never contribute to KPI totals.
+    if (summaryUnitIds.has(r.unitId)) continue;
+
+    if (r.section === 'filling') {
+      const v = effectiveFilled(r);
+      if (v > 0) {
+        filledByUnit.set(r.unitId, (filledByUnit.get(r.unitId) ?? 0) + v);
+        fillingCount += 1;
+      }
+    }
+    if (r.section === 'consumption') {
+      const v = effectiveConsumed(r);
+      if (v > 0) {
+        usedByUnit.set(r.unitId, (usedByUnit.get(r.unitId) ?? 0) + v);
+        consumptionCount += 1;
+        if (r.tank === 'main') totalMileage += r.mileage || 0;
+      }
+    }
+    if (r.section === 'theft') {
+      const v = effectiveTheft(r);
+      if (v > 0) {
+        dropByUnit.set(r.unitId, (dropByUnit.get(r.unitId) ?? 0) + v);
+        theftEvents += r.count > 0 ? r.count : 1;
+      }
     }
   }
 
-  const consumption = rows.filter((r) => {
-    if (isWialonGroupSummary(r)) return summaryUnitIds.has(r.unitId);
-    return r.section === 'consumption' && !summaryUnitIds.has(r.unitId);
-  });
-  const filling = rows.filter((r) => r.section === 'filling' && !summaryUnitIds.has(r.unitId));
-  const theft = rows.filter((r) => r.section === 'theft' && effectiveTheft(r) > 0);
-  const totalConsumed = consumption.reduce((a, r) => a + effectiveConsumed(r), 0);
-  const totalMileage = consumption.filter((r) => r.tank === 'main').reduce((a, r) => a + (r.mileage || 0), 0);
-  const theftEvents = theft.reduce((a, r) => a + (r.count > 0 ? r.count : 1), 0);
+  // Count fill/consumption events for summary units from leaf rows (display only counts).
+  for (const r of rows) {
+    if (isWialonGroupSummary(r) || !summaryUnitIds.has(r.unitId)) continue;
+    if (r.section === 'filling' && effectiveFilled(r) > 0) fillingCount += 1;
+    if (r.section === 'consumption' && effectiveConsumed(r) > 0) {
+      consumptionCount += 1;
+      if (r.tank === 'main') totalMileage += r.mileage || 0;
+    }
+  }
+
+  const totalFilled = [...filledByUnit.values()].reduce((a, b) => a + b, 0);
+  const totalConsumed = [...usedByUnit.values()].reduce((a, b) => a + b, 0);
   const avgConsumption = totalMileage > 0 ? Math.round((totalConsumed / totalMileage) * 1000) / 10 : 0;
+
   return {
     totalFilled: Math.round(totalFilled * 10) / 10,
     totalConsumed: Math.round(totalConsumed * 10) / 10,
@@ -34,9 +85,9 @@ export function computeFuelKpis(rows: FuelTransaction[], fromDate?: string, toDa
     avgConsumption,
     theftEvents,
     vehiclesTracked: new Set(rows.map((r) => r.unitId).filter(Boolean)).size,
-    consumptionCount: consumption.length,
-    fillingCount: filling.length,
-    theftCount: theft.length,
+    consumptionCount,
+    fillingCount,
+    theftCount: theftEvents,
   };
 }
 
@@ -44,6 +95,7 @@ export function monthlyFuelTrend(rows: FuelTransaction[]) {
   const byMonth = new Map<string, { filled: number; consumed: number }>();
   for (const r of rows) {
     if (!r.timestamp) continue;
+    if (isWialonGroupSummary(r)) continue; // avoid double-counting month trend with leaves
     const month = new Date(r.timestamp * 1000).toISOString().slice(0, 7);
     const row = byMonth.get(month) ?? { filled: 0, consumed: 0 };
     if (r.section === 'filling') row.filled += effectiveFilled(r);

@@ -94,4 +94,23 @@ router.post('/sync', requireTenant, async (req: TenantRequest, res) => {
   return success(res, { started: true });
 });
 
+/** FLS vs petrol-station variance (requires admin-uploaded station sheets + variance column). */
+router.get('/variance', requireTenant, async (req: TenantRequest, res) => {
+  const from = String(req.query.from || req.query.startDate || '');
+  const to = String(req.query.to || req.query.endDate || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return success(res, {
+      fromDate: from,
+      toDate: to,
+      summary: { stationLiters: 0, flsLiters: 0, variance: 0, assets: 0, stationFills: 0 },
+      assets: [],
+      details: [],
+      error: 'from and to dates (YYYY-MM-DD) required',
+    });
+  }
+  const { FuelVarianceService } = await import('../../services/FuelVarianceService.js');
+  const data = await FuelVarianceService.getVarianceReport(req.tenantId!, from, to);
+  return success(res, data);
+});
+
 export default router;

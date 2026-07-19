@@ -13,7 +13,6 @@ import RoutesPage from '@/pages/app/Routes';
 import Fuel from '@/pages/app/Fuel';
 import Emissions from '@/pages/app/Emissions';
 import Workshop from '@/pages/app/Workshop';
-import Reports from '@/pages/app/Reports';
 import Geofencing from '@/pages/app/Geofencing';
 import Commands from '@/pages/app/Commands';
 import Trailers from '@/pages/app/Trailers';
@@ -31,6 +30,8 @@ import TenantDetail from '@/pages/admin/TenantDetail';
 import SystemUsersPage from '@/pages/admin/SystemUsersPage';
 import AdminAccountPage from '@/pages/admin/AccountPage';
 import WialonCenter from '@/pages/admin/WialonCenter';
+import LocoNavCenter from '@/pages/admin/LocoNavCenter';
+import TrackSolidCenter from '@/pages/admin/TrackSolidCenter';
 
 export default function App() {
   return (
@@ -50,7 +51,7 @@ export default function App() {
           <Route path="fuel" element={<ClientModulePage moduleKey="fuel"><Fuel /></ClientModulePage>} />
           <Route path="emissions" element={<ClientModulePage moduleKey="emissions"><Emissions /></ClientModulePage>} />
           <Route path="workshop" element={<ClientModulePage moduleKey="workshop"><Workshop /></ClientModulePage>} />
-          <Route path="reports" element={<ClientModulePage moduleKey="reports"><Reports /></ClientModulePage>} />
+          <Route path="reports" element={<Navigate to="/app/dashboard" replace />} />
           <Route path="alerts" element={<ClientModulePage moduleKey="alerts"><AlertsPage /></ClientModulePage>} />
           <Route path="geofencing" element={<ClientModulePage moduleKey="geofencing"><Geofencing /></ClientModulePage>} />
           <Route path="commands" element={<ClientModulePage moduleKey="commands"><Commands /></ClientModulePage>} />
@@ -70,6 +71,8 @@ export default function App() {
           <Route path="system" element={<AdminSystemPage />} />
           <Route path="marketplace" element={<AdminMarketplacePage />} />
           <Route path="wialon" element={<WialonCenter />} />
+          <Route path="loconav" element={<LocoNavCenter />} />
+          <Route path="tracksolid" element={<TrackSolidCenter />} />
           <Route path="support" element={<AdminSupportPage />} />
           <Route path="account" element={<AdminAccountPage />} />
         </Route>

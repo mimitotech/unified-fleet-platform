@@ -9,6 +9,8 @@ const WIALON_TABLE_SECTION: Record<string, FuelSection> = {
   unit_stats: 'consumption',
   unit_fuel: 'consumption',
   unit_fuel_consumption: 'consumption',
+  unit_engine_hours: 'consumption',
+  unit_group_engine_hours: 'consumption',
   unit_group_generic: 'consumption',
   unit_group_stats: 'consumption',
   unit_fillings: 'filling',
@@ -16,6 +18,15 @@ const WIALON_TABLE_SECTION: Record<string, FuelSection> = {
   unit_thefts: 'theft',
   unit_group_thefts: 'theft',
 };
+
+/** Group tables whose top-level rows are per-unit period totals (children = events). */
+const WIALON_GROUP_PERIOD_SUMMARY = new Set([
+  'unit_group_generic',
+  'unit_group_stats',
+  'unit_group_engine_hours',
+  'unit_group_fillings',
+  'unit_group_thefts',
+]);
 
 const FUEL_TABLE_SCHEMAS: Record<
   FuelSection,
@@ -390,7 +401,7 @@ function buildTankColumnMaps(headers: string[], _section: FuelSection): TankColu
 }
 
 function isPerUnitPeriodSummaryTable(headers: string[], section: FuelSection): boolean {
-  if (section !== 'consumption' && section !== 'filling') return false;
+  if (section !== 'consumption' && section !== 'filling' && section !== 'theft') return false;
   const norm = headers.map((h) => h.toLowerCase().trim());
   const hasUnit = norm.some(
     (h) =>
@@ -400,10 +411,13 @@ function isPerUnitPeriodSummaryTable(headers: string[], section: FuelSection): b
       h === 'name',
   );
   const hasPeriod =
-    norm.some((h) => /beginning|begin|period start|^from$/.test(h)) &&
-    norm.some((h) => /^end$|end time|period end|^to$|finish/.test(h));
+    (norm.some((h) => /beginning|begin|period start|^from$/.test(h)) &&
+      norm.some((h) => /^end$|end time|period end|^to$|finish/.test(h))) ||
+    norm.some((h) => /^time$|date/.test(h));
   const hasFuelMetric = norm.some((h) =>
-    /fuel used|fuel consumed|consumed|filled amount|fuel filled|final fuel|initial fuel|fuel level/.test(h),
+    /fuel used|fuel consumed|consumed|filled amount|fuel filled|filled|drained|sudden fuel|drain|final fuel|initial fuel|fuel level/.test(
+      h,
+    ),
   );
   return hasUnit && hasPeriod && hasFuelMetric;
 }
@@ -432,7 +446,9 @@ export function detectFuelTables(tables: ReportTableMeta[]): DetectedTable[] {
       tankColumnMaps,
       isAggregateStats: WIALON_AGGREGATE_TABLES.has(sysName),
       isGroupUnitSummary:
-        WIALON_GROUP_UNIT_SUMMARY.has(sysName) || isPerUnitPeriodSummaryTable(table.header, section),
+        WIALON_GROUP_UNIT_SUMMARY.has(sysName) ||
+        WIALON_GROUP_PERIOD_SUMMARY.has(sysName) ||
+        isPerUnitPeriodSummaryTable(table.header, section),
     });
   }
   return detectedTables;

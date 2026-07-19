@@ -3,7 +3,7 @@ const API_URL = import.meta.env.VITE_API_URL || '';
 /** Single fetch size — scaled in UI; keeps cache stable across map/list. */
 export const FLEET_ICON_CANONICAL_SIZE = 48;
 
-const PRELOAD_CONCURRENCY = 10;
+const PRELOAD_CONCURRENCY = 3;
 
 const blobCache = new Map<string, string>();
 const inflight = new Map<string, Promise<string | undefined>>();

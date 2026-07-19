@@ -842,6 +842,8 @@ router.put('/tenants/:id/fuel-module-config', async (req: AuthRequest, res) => {
     const config = await TenantFuelModuleConfigService.saveConfig(String(req.params.id), {
       selectedReports: req.body?.selectedReports,
       visibleColumns: req.body?.visibleColumns,
+      columnsByCategory: req.body?.columnsByCategory,
+      fuelPricePerLiter: req.body?.fuelPricePerLiter,
     });
     await AuditService.log({
       tenantId: String(req.params.id),
@@ -852,6 +854,68 @@ router.put('/tenants/:id/fuel-module-config', async (req: AuthRequest, res) => {
       resourceId: String(req.params.id),
     });
     return success(res, config);
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
+
+router.get('/tenants/:id/fuel-station-sheets', async (req, res) => {
+  try {
+    const { FuelStationSheetService } = await import('../services/FuelStationSheetService.js');
+    const uploads = await FuelStationSheetService.listUploads(String(req.params.id));
+    return success(res, { uploads });
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
+
+router.post('/tenants/:id/fuel-station-sheets', async (req: AuthRequest, res) => {
+  try {
+    const { fileName, mimeType, data, notes } = req.body as {
+      fileName?: string;
+      mimeType?: string;
+      data?: string;
+      notes?: string;
+    };
+    if (!fileName || !data) return error(res, 'fileName and data (base64) required');
+    const base64 = data.includes(',') ? data.split(',')[1] : data;
+    const buffer = Buffer.from(base64, 'base64');
+    if (!buffer.length) return error(res, 'Empty file');
+    const { FuelStationSheetService } = await import('../services/FuelStationSheetService.js');
+    const result = await FuelStationSheetService.importSheet(String(req.params.id), {
+      fileName,
+      buffer,
+      uploadedBy: req.user?.id,
+      notes,
+    });
+    await AuditService.log({
+      tenantId: String(req.params.id),
+      userId: req.user?.id,
+      userEmail: req.user?.email,
+      action: 'fuel_station_sheet.upload',
+      resourceType: 'fuel_station_upload',
+      resourceId: result.uploadId,
+    });
+    return success(res, result);
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
+
+router.delete('/tenants/:id/fuel-station-sheets/:uploadId', async (req: AuthRequest, res) => {
+  try {
+    const { FuelStationSheetService } = await import('../services/FuelStationSheetService.js');
+    const ok = await FuelStationSheetService.deleteUpload(String(req.params.id), String(req.params.uploadId));
+    if (!ok) return error(res, 'Upload not found', 404);
+    await AuditService.log({
+      tenantId: String(req.params.id),
+      userId: req.user?.id,
+      userEmail: req.user?.email,
+      action: 'fuel_station_sheet.delete',
+      resourceType: 'fuel_station_upload',
+      resourceId: String(req.params.uploadId),
+    });
+    return success(res, { deleted: true });
   } catch (e) {
     return error(res, (e as Error).message);
   }

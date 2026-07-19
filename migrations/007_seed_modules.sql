@@ -8,7 +8,6 @@ INSERT INTO module_definitions (key, label, description, icon, sort_order, defau
     ('fuel', 'Fuel', 'Fuel management', 'Fuel', 6, true, '{wialon}'),
     ('emissions', 'Emissions', 'CO2 tracking', 'Leaf', 7, true, '{wialon}'),
     ('workshop', 'Workshop', 'Maintenance and inspections', 'Wrench', 8, true, '{}'),
-    ('reports', 'Reports', 'Exportable reports', 'BarChart3', 9, true, '{}'),
     ('alerts', 'Alerts', 'Unified alert inbox', 'Bell', 10, true, '{}'),
     ('trailers', 'Trailers', 'Trailer tracking', 'Truck', 11, false, '{wialon,tracksolid}'),
     ('sensors', 'Sensors', 'Sensor dashboards', 'Gauge', 12, false, '{wialon}'),

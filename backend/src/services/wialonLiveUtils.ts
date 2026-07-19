@@ -14,13 +14,44 @@ export const WIALON_UNIT_SEARCH_FLAGS =
   WIALON_UNIT_FLAG.CUSTOM_PROPS |
   WIALON_UNIT_FLAG.CUSTOM_FIELDS |
   WIALON_UNIT_FLAG.IMAGE |
+  WIALON_UNIT_FLAG.ADVANCED |
   WIALON_UNIT_FLAG.LAST_MSG_POS |
   WIALON_UNIT_FLAG.SENSORS |
   WIALON_UNIT_FLAG.COUNTERS |
   WIALON_UNIT_FLAG.MSG_PARAMS |
   WIALON_UNIT_FLAG.CONNECTION;
 
-const UNIT_FLAG_FALLBACKS = [WIALON_UNIT_FLAGS, WIALON_UNIT_SEARCH_FLAGS, 0x1 | 0x10 | 0x400 | 0x1000 | 0x2000, 0x1 | 0x10 | 0x400, 0x1];
+const UNIT_FLAG_FALLBACKS = [
+  WIALON_UNIT_FLAGS,
+  WIALON_UNIT_SEARCH_FLAGS,
+  WIALON_UNIT_FLAG.BASE | WIALON_UNIT_FLAG.ADVANCED | WIALON_UNIT_FLAG.CONNECTION | WIALON_UNIT_FLAG.LAST_MSG_POS,
+  0x1 | 0x10 | 0x100 | 0x400 | 0x1000 | 0x2000,
+  0x1 | 0x100 | 0x400,
+  0x1 | 0x100,
+  0x1,
+];
+
+/** Wialon advanced `act` / `dactt` — deactivated units must not appear in fleet or reports. */
+export function isWialonUnitActive(item: Pick<WialonSearchItem, 'act' | 'dactt' | 'nm'>): boolean {
+  if (item.act === 0 || item.act === false) return false;
+  if (typeof item.dactt === 'number' && item.dactt > 0) return false;
+  return true;
+}
+
+export function filterActiveWialonUnits<T extends Pick<WialonSearchItem, 'act' | 'dactt' | 'nm' | 'id'>>(
+  items: T[],
+): T[] {
+  return items.filter((item) => isWialonUnitActive(item));
+}
+
+export function activeUnitNameSet(items: Array<{ nm?: string; name?: string }>): Set<string> {
+  const set = new Set<string>();
+  for (const u of items) {
+    const n = String(u.nm ?? u.name ?? '').trim().toLowerCase();
+    if (n) set.add(n);
+  }
+  return set;
+}
 
 export function accountIdFrom(credentials: WialonCredentialsInput): string | undefined {
   const raw = credentials.accountId;
@@ -150,8 +181,11 @@ export async function searchUnitsForAccount(
           spec.propValueMask === '*'
             ? items.filter((u) => Number(u.bact) === accountId)
             : items;
-        if (filtered.length) return filtered.slice(0, limit);
-        if (items.length && spec.propValueMask !== '*') return items.slice(0, limit);
+        const active = filterActiveWialonUnits(filtered);
+        if (active.length) return active.slice(0, limit);
+        if (filtered.length && spec.propValueMask !== '*') {
+          return filterActiveWialonUnits(filtered).slice(0, limit);
+        }
       } catch (err) {
         lastErr = err as Error;
       }
@@ -254,7 +288,8 @@ export async function searchUnitsBasicForAccount(
 ): Promise<WialonSearchItem[]> {
   const accountKey = String(accountId);
   const specs = unitSearchSpecs(accountKey);
-  const MIN_FLAGS = WIALON_UNIT_FLAG.BASE | WIALON_UNIT_FLAG.CONNECTION;
+  const MIN_FLAGS =
+    WIALON_UNIT_FLAG.BASE | WIALON_UNIT_FLAG.ADVANCED | WIALON_UNIT_FLAG.CONNECTION;
   let lastErr: Error | undefined;
 
   for (const spec of specs) {
@@ -264,8 +299,11 @@ export async function searchUnitsBasicForAccount(
         spec.propValueMask === '*'
           ? items.filter((u) => Number(u.bact) === accountId)
           : items;
-      if (filtered.length) return filtered.slice(0, limit);
-      if (items.length && spec.propValueMask !== '*') return items.slice(0, limit);
+      const active = filterActiveWialonUnits(filtered);
+      if (active.length) return active.slice(0, limit);
+      if (filtered.length && spec.propValueMask !== '*') {
+        return filterActiveWialonUnits(filtered).slice(0, limit);
+      }
     } catch (err) {
       lastErr = err as Error;
     }

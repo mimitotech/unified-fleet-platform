@@ -183,7 +183,7 @@ export default function AdminDashboard() {
         <div className="stat-strip">
           {[
             { id: 'tenants', title: 'Tenants', value: stats?.totalTenants ?? 0, sub: `${stats?.activeTenants ?? 0} active`, icon: Building2, variant: 'primary' as const },
-            { id: 'fleet', title: 'Assets', value: stats?.totalVehicles ?? 0, sub: `${stats?.activeVehiclesPct ?? 0}% online`, icon: Truck, variant: 'info' as const },
+            { id: 'fleet', title: 'Synced assets', value: stats?.totalVehicles ?? 0, sub: `${stats?.activeVehiclesPct ?? 0}% online`, icon: Truck, variant: 'info' as const },
             { id: 'users', title: 'Users', value: stats?.totalUsers ?? 0, sub: `${stats?.logins24h ?? 0} logins`, icon: Users, variant: 'success' as const },
             { id: 'alerts', title: 'Alerts', value: stats?.pendingAlerts ?? 0, sub: 'pending', icon: AlertTriangle, variant: 'destructive' as const },
             { id: 'sync', title: 'Sync', value: `${syncRate24h}%`, sub: `${stats?.syncs24h ?? 0} today`, icon: RefreshCw, variant: 'warning' as const },
@@ -396,7 +396,7 @@ export default function AdminDashboard() {
             </div>
           </AnalyticsPanel>
 
-          <AnalyticsPanel title="Top tenants" description="Fleet size ranking" tone="brand" icon={Building2}>
+          <AnalyticsPanel title="Top tenants" description="Synced fleet size ranking" tone="brand" icon={Building2}>
             <div className="h-[180px]">
               {topTenantsChart.length > 0 ? (
                 <ChartContainer config={{ count: { label: 'Assets', color: CHART.brand } }} className="h-full w-full">

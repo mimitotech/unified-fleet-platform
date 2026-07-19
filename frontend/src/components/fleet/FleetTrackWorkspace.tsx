@@ -43,23 +43,28 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
   const withPosition = useMemo(() => units.filter((u) => u.lat != null && u.lng != null), [units]);
   const filtered = useMemo(() => {
     const hay = q.trim().toLowerCase();
-    if (!hay) return withPosition;
-    return withPosition.filter((u) => `${u.name} ${u.plate || ''}`.toLowerCase().includes(hay));
-  }, [withPosition, q]);
+    // Keep units without GPS in the picker so generators aren't dropped silently.
+    const pool = units;
+    if (!hay) return pool;
+    return pool.filter((u) => `${u.name} ${u.plate || ''}`.toLowerCase().includes(hay));
+  }, [units, q]);
 
   const selected =
-    filtered.find((u) => u.id === selectedId) || withPosition.find((u) => u.id === selectedId) || filtered[0] || null;
+    filtered.find((u) => u.id === selectedId) ||
+    units.find((u) => u.id === selectedId) ||
+    null;
 
   useEffect(() => {
-    if (!selectedId && filtered[0]?.id && onSelectId) {
-      onSelectId(filtered[0].id);
-    }
-  }, [selectedId, filtered, onSelectId]);
+    // Only auto-pick when nothing is selected and there is a GPS-capable unit.
+    if (selectedId || !onSelectId) return;
+    const firstWithGps = filtered.find((u) => u.lat != null && u.lng != null) || withPosition[0];
+    if (firstWithGps?.id) onSelectId(firstWithGps.id);
+  }, [selectedId, filtered, withPosition, onSelectId]);
 
   const minutes = trackPeriodToMinutes(period, amount);
   const wialonId = selected?.wialonId ?? (selected && Number.isFinite(Number(selected.id)) ? Number(selected.id) : null);
   const liveRecent = minutes <= 24 * 60;
-  const { stops, isLoading, isFetching, pointCount } = useWialonTrackHistory(
+  const { stops, summary, isLoading, isFetching, pointCount } = useWialonTrackHistory(
     wialonId,
     connected && wialonId != null,
     minutes,
@@ -110,7 +115,7 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
               </p>
             </div>
             <Input
-              placeholder="Search vehicle…"
+              placeholder="Search asset…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
               className="h-8 text-xs"
@@ -135,15 +140,40 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
                       {formatFuelDisplay(u)} · {u.plate || u.id}
                     </p>
                   </div>
-                  <StatusBadge status={u.status} size="sm" showDot={false} />
+                  <StatusBadge
+                    status={u.status}
+                    label={u.motionState}
+                    assetCategory={u.assetCategory}
+                    stationary={u.stationary}
+                    size="sm"
+                    showDot={false}
+                  />
                 </button>
               </li>
             ))}
           </ul>
 
-          <div className="flex-1 overflow-auto min-h-0 p-2">
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
-              Stops & idle periods
+          <div className="flex-1 overflow-auto min-h-0 p-2 space-y-3">
+            {selected && pointCount > 0 && !trackLoading && (
+              <div className="rounded-lg border border-primary/20 bg-primary/5 px-2 py-2 text-[10px] space-y-1">
+                <p className="font-semibold text-primary uppercase tracking-wide">Route summary</p>
+                <div className="grid grid-cols-2 gap-1 tabular-nums">
+                  <span className="text-muted-foreground">GPS points</span>
+                  <span className="font-medium text-right">{summary.pointCount}</span>
+                  <span className="text-muted-foreground">Stops</span>
+                  <span className="font-medium text-right">{summary.stopCount}</span>
+                  <span className="text-muted-foreground">Moving</span>
+                  <span className="font-medium text-right">{formatTrackDuration(summary.movingSec)}</span>
+                  <span className="text-muted-foreground">Idle</span>
+                  <span className="font-medium text-right">{formatTrackDuration(summary.idleSec)}</span>
+                  <span className="text-muted-foreground">Stopped</span>
+                  <span className="font-medium text-right">{formatTrackDuration(summary.stoppedSec)}</span>
+                </div>
+              </div>
+            )}
+
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+              {selected?.stationary ? 'Stops & offline periods' : 'Stops along route'}
             </p>
             {trackLoading && selected && (
               <div className="flex items-center gap-2 text-xs text-muted-foreground py-4 justify-center">

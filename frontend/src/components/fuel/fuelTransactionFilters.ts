@@ -2,7 +2,7 @@ import type { FuelTransaction } from '@/types/entities';
 
 /** Wialon Fuel Report(Group) per-vehicle period summary row. */
 export function isWialonGroupSummary(t: FuelTransaction): boolean {
-  return t.sensor === 'wialon_group_summary';
+  return t.sensor === 'wialon_group_summary' || t.sensor?.startsWith('wialon_group_summary');
 }
 
 function monthBoundsFromTs(ts: number): { start: string; end: string } {
@@ -15,28 +15,8 @@ function monthBoundsFromTs(ts: number): { start: string; end: string } {
   };
 }
 
-/** Include summary rows when their calendar month overlaps the selected range. */
-export function summaryMonthOverlapsRange(
-  t: FuelTransaction,
-  fromDate: string,
-  toDate: string,
-): boolean {
-  if (!isWialonGroupSummary(t) || !t.timestamp) return false;
-  const { start, end } = monthBoundsFromTs(t.timestamp);
-  return end >= fromDate && start <= toDate;
-}
-
-/** Use period totals from summary when it matches the selected range (exact or full month). */
-export function summaryCoversSelectedRange(
-  t: FuelTransaction,
-  fromDate: string,
-  toDate: string,
-): boolean {
-  if (!isWialonGroupSummary(t) || !t.timestamp) return false;
-  const rowDate = new Date(t.timestamp * 1000).toISOString().slice(0, 10);
-  if (rowDate >= fromDate && rowDate <= toDate) return true;
-  const { start, end } = monthBoundsFromTs(t.timestamp);
-  return fromDate <= start && toDate >= end;
+function dateFromTs(ts: number): string {
+  return new Date(ts * 1000).toISOString().slice(0, 10);
 }
 
 export function isCompleteMonthSpan(fromDate: string, toDate: string): boolean {
@@ -61,7 +41,59 @@ export function isCompleteMonthSpan(fromDate: string, toDate: string): boolean {
   return months.length > 0;
 }
 
-/** Filter transactions to a date range; keep overlapping period summary rows. */
+/** Include summary rows when their calendar month overlaps the selected range. */
+export function summaryMonthOverlapsRange(
+  t: FuelTransaction,
+  fromDate: string,
+  toDate: string,
+): boolean {
+  if (!isWialonGroupSummary(t) || !t.timestamp) return false;
+  if (t.periodFromTs && t.periodToTs) {
+    return summaryCoversSelectedRange(t, fromDate, toDate);
+  }
+  const { start, end } = monthBoundsFromTs(t.timestamp);
+  return end >= fromDate && start <= toDate;
+}
+
+/**
+ * Keep group-summary period totals when they represent the selected range.
+ * Exact match preferred; wider nested covers kept only for filter membership
+ * (aggregation uses exact-range summaries so week views are not inflated by months).
+ */
+export function summaryCoversSelectedRange(
+  t: FuelTransaction,
+  fromDate: string,
+  toDate: string,
+): boolean {
+  if (!isWialonGroupSummary(t)) return false;
+
+  if (t.periodFromTs && t.periodToTs) {
+    const pFrom = dateFromTs(t.periodFromTs);
+    const pTo = dateFromTs(t.periodToTs);
+    if (pFrom === fromDate && pTo === toDate) return true;
+    // Nested cover: selected range fully inside summary period (month cache).
+    if (fromDate >= pFrom && toDate <= pTo) return true;
+    return false;
+  }
+
+  if (!t.timestamp) return false;
+  const rowDate = dateFromTs(t.timestamp);
+  if (rowDate >= fromDate && rowDate <= toDate) return true;
+  const { start, end } = monthBoundsFromTs(t.timestamp);
+  return fromDate <= start && toDate >= end;
+}
+
+/** Exact selected-range summaries only (for collapsed totals / KPIs). */
+export function isExactRangeSummary(
+  t: FuelTransaction,
+  fromDate: string,
+  toDate: string,
+): boolean {
+  if (!isWialonGroupSummary(t) || !t.periodFromTs || !t.periodToTs) return false;
+  return dateFromTs(t.periodFromTs) === fromDate && dateFromTs(t.periodToTs) === toDate;
+}
+
+/** Filter transactions to a date range; keep covering Wialon period summary rows. */
 export function filterFuelTransactionsByDate(
   transactions: FuelTransaction[],
   fromDate?: string,
@@ -69,12 +101,13 @@ export function filterFuelTransactionsByDate(
 ): FuelTransaction[] {
   const from = fromDate ?? '';
   const to = toDate ?? '';
-  const allowSummaries = from && to ? isCompleteMonthSpan(from, to) : true;
   return transactions.filter((t) => {
     if (isWialonGroupSummary(t)) {
       if (!from || !to) return true;
-      if (!allowSummaries) return summaryCoversSelectedRange(t, from, to);
-      return summaryMonthOverlapsRange(t, from, to);
+      if (summaryCoversSelectedRange(t, from, to)) return true;
+      // Full calendar months: also accept month-grain summaries that overlap.
+      if (isCompleteMonthSpan(from, to)) return summaryMonthOverlapsRange(t, from, to);
+      return false;
     }
     if (!t.timestamp) return true;
     const txDateStr = new Date(t.timestamp * 1000).toISOString().split('T')[0];
@@ -99,6 +132,17 @@ export function groupSummaryUnitIds(
   return ids;
 }
 
+/**
+ * When a unit has any covering group-summary row, collapsed totals come only from
+ * Wialon period totals — never leaf FLS events (which can be noisy).
+ */
+export function unitHasPeriodSummary(
+  unitId: string | number,
+  summaryUnits: Set<string>,
+): boolean {
+  return summaryUnits.has(String(unitId));
+}
+
 /** True when a period summary row already carries filled volume for this unit. */
 export function summaryProvidesFilled(
   transactions: FuelTransaction[],
@@ -107,13 +151,13 @@ export function summaryProvidesFilled(
   fromDate?: string,
   toDate?: string,
 ): boolean {
-  if (!fromDate || !toDate || !isCompleteMonthSpan(fromDate, toDate)) return false;
   if (!summaryUnits.has(String(unitId))) return false;
   return transactions.some(
     (t) =>
       isWialonGroupSummary(t) &&
       String(t.unitId) === String(unitId) &&
-      (t.filled ?? 0) > 0,
+      (t.filled ?? 0) > 0 &&
+      (!fromDate || !toDate || summaryCoversSelectedRange(t, fromDate, toDate)),
   );
 }
 
@@ -125,17 +169,35 @@ export function summaryProvidesUsed(
   fromDate?: string,
   toDate?: string,
 ): boolean {
-  if (!fromDate || !toDate || !isCompleteMonthSpan(fromDate, toDate)) return false;
   if (!summaryUnits.has(String(unitId))) return false;
   return transactions.some(
     (t) =>
       isWialonGroupSummary(t) &&
       String(t.unitId) === String(unitId) &&
-      (t.fuelUsed ?? 0) > 0,
+      (t.fuelUsed ?? 0) > 0 &&
+      (!fromDate || !toDate || summaryCoversSelectedRange(t, fromDate, toDate)),
+  );
+}
+
+/** True when a period summary row already carries drop/drain volume for this unit. */
+export function summaryProvidesDrop(
+  transactions: FuelTransaction[],
+  unitId: string | number,
+  summaryUnits: Set<string>,
+  fromDate?: string,
+  toDate?: string,
+): boolean {
+  if (!summaryUnits.has(String(unitId))) return false;
+  return transactions.some(
+    (t) =>
+      isWialonGroupSummary(t) &&
+      String(t.unitId) === String(unitId) &&
+      (t.suddenFuelDrop ?? 0) > 0 &&
+      (!fromDate || !toDate || summaryCoversSelectedRange(t, fromDate, toDate)),
   );
 }
 
 /** Synthetic rows produced by balance enrichment — not shown as line items. */
 export function isSyntheticFuelRow(t: FuelTransaction): boolean {
-  return t.sensor === 'wialon_group_summary' || t.sensor === 'balance';
+  return isWialonGroupSummary(t) || t.sensor === 'balance';
 }

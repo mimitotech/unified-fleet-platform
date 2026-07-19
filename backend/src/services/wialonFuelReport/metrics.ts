@@ -22,15 +22,24 @@ export function deriveFilled(filled: number, initialLevel: number, finalLevel: n
   return filled;
 }
 
-/** Derive theft/drain volume from level drop only when both levels are present. */
+/** Derive theft/drain volume from tank levels when both bookends exist.
+ * Prefer Initial − Final over the Sudden fuel drop column when they disagree —
+ * Wialon sometimes puts cumulative / heuristic volume that does not match the
+ * Before/After levels shown on the same row.
+ */
 export function deriveSuddenFuelDrop(
   suddenFuelDrop: number,
   initialLevel: number,
   finalLevel: number
 ): number {
-  if (suddenFuelDrop > 0) return suddenFuelDrop;
-  if (initialLevel > 0 && finalLevel > 0 && initialLevel > finalLevel) {
-    return initialLevel - finalLevel;
+  if (initialLevel > 0 && finalLevel >= 0 && initialLevel > finalLevel) {
+    const fromLevels = initialLevel - finalLevel;
+    if (suddenFuelDrop <= 0) return fromLevels;
+    // Column vs levels diverge → trust the sensor levels on this row.
+    if (Math.abs(suddenFuelDrop - fromLevels) > Math.max(5, fromLevels * 0.15)) {
+      return fromLevels;
+    }
+    return suddenFuelDrop;
   }
   return suddenFuelDrop;
 }

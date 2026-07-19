@@ -18,8 +18,12 @@ import { LoadingButton } from '@/components/shared/LoadingButton';
 import { notify } from '@/lib/notify';
 import { WialonGeofencesLivePanel } from '@/components/app/WialonLivePanels';
 import { WialonContextBanner } from '@/components/app/WialonContextBanner';
-import { MapPin, Plus, Trash2 } from 'lucide-react';
+import { MapPin, Plus, Trash2, FileText } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { GenericModuleReports } from '@/components/reports/moduleReportPanels';
+import { safeArray } from '@/lib/safeArray';
+import { CHART } from '@/lib/chartColors';
 
 export default function Geofencing() {
   const { data: geofences, isLoading } = useGeofences();
@@ -62,10 +66,10 @@ export default function Geofencing() {
             { name: form.name, type: 'circle', center, radius },
             {
               onSuccess: () => {
-                notify.success('Zone pushed to Wialon');
+                notify.success('Zone pushed to live telematics');
                 qc.invalidateQueries({ queryKey: ['wialon-geofences-live'] });
               },
-              onError: (e) => notify.error('Wialon sync failed', e.message),
+              onError: (e) => notify.error('Live sync failed', e.message),
             }
           );
         }
@@ -77,6 +81,12 @@ export default function Geofencing() {
 
   return (
     <AppLayout title="Geofencing" subtitle="Geographic zones and alerts">
+      <Tabs defaultValue="zones" className="space-y-4">
+        <TabsList className="branded-tabs">
+          <TabsTrigger value="zones">Zones</TabsTrigger>
+          <TabsTrigger value="reports" className="gap-1"><FileText className="h-3.5 w-3.5" />Reports</TabsTrigger>
+        </TabsList>
+        <TabsContent value="zones" className="mt-0 space-y-4">
       <WialonContextBanner />
       <div className="flex justify-end mb-4">
         <Dialog open={open} onOpenChange={setOpen}>
@@ -123,7 +133,7 @@ export default function Geofencing() {
               {connected && (
                 <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={syncWialon} onChange={(e) => setSyncWialon(e.target.checked)} />
-                  Also create in Wialon (real-time)
+                  Also create in live telematics
                 </label>
               )}
             </div>
@@ -187,6 +197,44 @@ export default function Geofencing() {
           )}
         </div>
       )}
+        </TabsContent>
+        <TabsContent value="reports" className="mt-0">
+          <GenericModuleReports
+            moduleLabel="Geofencing"
+            title="Geofence executive"
+            blurb="Configured zones for this client."
+            kpis={[{ label: 'Zones', value: safeArray(geofences).length }]}
+            columns={[
+              { key: 'name', label: 'Name' },
+              { key: 'type', label: 'Type' },
+              { key: 'radius', label: 'Radius', align: 'right' },
+            ]}
+            rows={(safeArray(geofences) as Array<{ name?: string; type?: string; radiusMeters?: number; radius?: number }>).map((g) => ({
+              name: g.name || '—',
+              type: g.type || '—',
+              radius: g.radiusMeters ?? g.radius ?? '—',
+              radiusM: Number(g.radiusMeters ?? g.radius ?? 0) || 0,
+            }))}
+            charts={{
+              heading: 'Zone performance · geofence analytics',
+              categoryKey: 'name',
+              bar: {
+                title: 'Zone radius',
+                subtitle: 'Standing bars — coverage radius (m) by zone',
+                metrics: [{ key: 'radiusM', label: 'Radius (m)', color: CHART.brand }],
+                topN: 8,
+              },
+              secondary: {
+                type: 'category',
+                title: 'Zones by type',
+                subtitle: 'Share of geofences by type',
+                groupKey: 'type',
+                as: 'pie',
+              },
+            }}
+          />
+        </TabsContent>
+      </Tabs>
     </AppLayout>
   );
 }

@@ -5,6 +5,7 @@ import type { ReportRunParams, WialonReportResult } from '@/lib/reportUtils';
 import type { WialonCatalogTemplate } from '@/lib/reportCatalog';
 
 const REPORT_LIVE_MS = 60_000;
+const REPORT_CATALOG_REFRESH_MS = 5 * 60_000;
 
 export function useWialonReportCatalog(enabled = true) {
   return useQuery({
@@ -12,6 +13,8 @@ export function useWialonReportCatalog(enabled = true) {
     queryFn: () => clientApi.getWialonReportCatalog(),
     enabled,
     staleTime: 5 * 60_000,
+    refetchInterval: enabled ? pollWhenVisible(REPORT_CATALOG_REFRESH_MS) : false,
+    refetchOnWindowFocus: false,
     select: (d) => ({
       templates: (d.templates ?? []).map(
         (t): WialonCatalogTemplate => ({
@@ -45,7 +48,14 @@ export function wialonReportRunKey(params: ReportRunParams | null) {
 
 /** Execute a Wialon report via resolver-assisted /reports/run or legacy /reports/exec. */
 export function useWialonReportRun(
-  params: (ReportRunParams & { useRunEndpoint?: boolean; module?: string; objectKind?: 'unit' | 'group' }) | null,
+  params: (
+    ReportRunParams & {
+      useRunEndpoint?: boolean;
+      module?: string;
+      objectKind?: 'unit' | 'group';
+      maxRowsPerTable?: number;
+    }
+  ) | null,
   live = false
 ) {
   return useQuery({
@@ -60,6 +70,7 @@ export function useWialonReportRun(
           objectKind: params.objectKind ?? 'unit',
           from: params.from,
           to: params.to,
+          maxRowsPerTable: params.maxRowsPerTable,
         }) as Promise<WialonReportResult>;
       }
       return clientApi.execWialonReport(params!) as Promise<WialonReportResult>;

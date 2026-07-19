@@ -3,6 +3,7 @@ import type { FuelTransaction } from '@/types/entities';
 import type { FuelTableUnit, VehicleGroup, FuelTableFilters } from './types';
 import { aggregateUnitFuelColumns } from '../fuelColumnMetrics';
 import { filterFuelTransactionsByDate, isWialonGroupSummary } from '../fuelTransactionFilters';
+import { filterPlausibleFuelEvents } from '../fuelEventPlausibility';
 
 interface UseFuelTableDataProps {
   transactions: FuelTransaction[];
@@ -56,13 +57,14 @@ export function useFuelTableData({
     for (const [unitName, unitTxs] of groupMap) {
       const driverName = unitTxs.find((t) => t.driverName)?.driverName;
       const liveLevel = vehicleFuelLevels?.get(unitName);
-      const cols = aggregateUnitFuelColumns(unitTxs, { fromDate, toDate, liveLevel });
+      const plausibleTxs = filterPlausibleFuelEvents(unitTxs, liveLevel);
+      const cols = aggregateUnitFuelColumns(plausibleTxs, { fromDate, toDate, liveLevel });
 
       groups.push({
         unitName,
         driverName,
-        // Keep derived balance rows visible so expanded details explain period totals.
-        transactions: unitTxs.filter((t) => !isWialonGroupSummary(t)),
+        // Expanded rows match collapsed totals (no group summaries, no FLS noise).
+        transactions: plausibleTxs.filter((t) => !isWialonGroupSummary(t) && t.sensor !== 'balance'),
         filledMain: cols.filledMain,
         filledReserve: cols.filledReserve,
         filledStation: cols.filledStation,

@@ -168,13 +168,20 @@ export function ReportsWorkspace() {
 
   const selectedUnitName = units.find((u) => (u.wialonId ?? Number(u.id)) === wialonUnitId)?.name;
 
+  const periodLabel = useMemo(() => {
+    if (!needsPeriod) return 'Live snapshot';
+    const preset = DATE_PRESETS.find((p) => p.id === datePreset);
+    const { from, to } = reportPresetRange(datePreset);
+    return `${preset?.label ?? datePreset} (${from} → ${to})`;
+  }, [datePreset, needsPeriod]);
+
   if (!connected) {
     return (
       <div className="space-y-4">
         <WialonContextBanner />
         <div className="fleet-card py-16 text-center text-muted-foreground">
           <FileText className="h-10 w-10 mx-auto mb-3 opacity-40" />
-          <p className="font-medium">Connect Wialon for live reports</p>
+          <p className="font-medium">Connect telematics for live reports</p>
         </div>
       </div>
     );
@@ -190,7 +197,7 @@ export function ReportsWorkspace() {
             <h2 className="text-lg font-semibold">Reports</h2>
             <p className="text-xs text-muted-foreground flex items-center gap-1.5">
               <Radio className="h-3 w-3 text-status-moving" />
-              Live tables auto-refresh {livePollLabel(LIVE_POLL.fleet)} · Wialon templates run on demand
+              Live tables auto-refresh {livePollLabel(LIVE_POLL.fleet)} · Saved templates run on demand
             </p>
           </div>
         </div>
@@ -221,7 +228,7 @@ export function ReportsWorkspace() {
             )}
 
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-2 mb-1 mt-4">
-              Wialon templates
+              Report templates
             </p>
             {catalogLoading ? (
               <p className="text-xs text-muted-foreground px-2 py-4">Loading templates…</p>
@@ -252,7 +259,7 @@ export function ReportsWorkspace() {
               })
             )}
             {!catalogLoading && !catalog?.templates.length && (
-              <p className="text-xs text-muted-foreground px-2 py-2">No Wialon report templates in this account.</p>
+              <p className="text-xs text-muted-foreground px-2 py-2">No report templates in this account.</p>
             )}
           </div>
 
@@ -375,7 +382,7 @@ export function ReportsWorkspace() {
                 )}
                 {templateError && (
                   <QueryErrorBanner
-                    message="Could not run Wialon report."
+                    message="Could not run report."
                     onRetry={refetchTemplate}
                     className="mb-3"
                   />
@@ -389,6 +396,7 @@ export function ReportsWorkspace() {
                   <ReportResultsView
                     data={templateResult}
                     templateName={selectedTemplate?.templateName}
+                    moduleLabel="Monitoring"
                     unitName={selectedUnitName}
                     className="flex-1 min-h-0"
                   />
@@ -413,6 +421,9 @@ export function ReportsWorkspace() {
                       isLoading={canLoadLive ? isLoading : false}
                       isFetching={canLoadLive ? isFetching : false}
                       onRefresh={canLoadLive ? refetch : undefined}
+                      periodLabel={periodLabel}
+                      objectLabel={scope === 'unit' && selectedUnitName ? selectedUnitName : undefined}
+                      moduleLabel="Reports"
                       emptyHint={
                         needsUnit && !wialonUnitId
                           ? 'Select an asset above — column structure is ready, rows fill automatically.'

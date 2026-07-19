@@ -23,7 +23,7 @@ export function FuelReportMonetaryPanel({ kpis, fuelPrice, onFuelPriceChange }: 
         <div>
           <h3 className="text-sm font-semibold">Fuel spend estimate</h3>
           <p className="text-xs text-muted-foreground">
-            Litres from Wialon fuel reports × your price per litre. Does not change report volumes.
+            Litres from fuel reports × your price per litre. Does not change report volumes.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -67,7 +67,7 @@ export function FuelReportMonetaryPanel({ kpis, fuelPrice, onFuelPriceChange }: 
               Total filled
             </div>
             <p className="text-lg font-semibold tabular-nums">{kpis.totalFilled} L</p>
-            <p className="text-[10px] text-muted-foreground">Wialon report</p>
+            <p className="text-[10px] text-muted-foreground">Fuel report</p>
           </div>
           {costs.lossCost > 0 ? (
             <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">

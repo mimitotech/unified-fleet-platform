@@ -8,17 +8,17 @@ export default function AdminSupportPage() {
         <Card>
           <CardHeader><CardTitle>Getting Started</CardTitle></CardHeader>
           <CardContent className="text-sm text-muted-foreground space-y-2">
-            <p>1. Create a tenant under Tenants → New Tenant</p>
-            <p>2. Configure Wialon, LocoNav, or TrackSolid under tenant Integrations tab</p>
+            <p>1. Create a client under Clients → New Client</p>
+            <p>2. Configure Wialon, LocoNav, or TrackSolid under the client Integrations tab</p>
             <p>3. Enable modules and set branding</p>
-            <p>4. Create tenant users and share login credentials</p>
+            <p>4. Create client users and share login credentials</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader><CardTitle>Demo Credentials</CardTitle></CardHeader>
           <CardContent className="text-sm font-mono space-y-1">
             <p>Platform Admin: admin@ufp.local / admin123</p>
-            <p>Tenant Admin: demo@mimito.ug / demo123 (slug: demo)</p>
+            <p>Client Admin: demo@mimito.ug / demo123 (slug: demo)</p>
           </CardContent>
         </Card>
         <Card>

@@ -1,4 +1,5 @@
 import type { WialonSearchItem } from '../adapters/wialonUtils.js';
+import { filterActiveWialonUnits } from './wialonLiveUtils.js';
 
 const TTL_MS = 45_000;
 const cache = new Map<string, { items: WialonSearchItem[]; expires: number }>();
@@ -11,11 +12,11 @@ export const WialonUnitItemsCache = {
       cache.delete(accountKey);
       return null;
     }
-    return row.items;
+    return filterActiveWialonUnits(row.items);
   },
 
   set(accountKey: string, items: WialonSearchItem[], ttlMs = TTL_MS): void {
-    cache.set(accountKey, { items, expires: Date.now() + ttlMs });
+    cache.set(accountKey, { items: filterActiveWialonUnits(items), expires: Date.now() + ttlMs });
   },
 
   byId(accountKey: string): Map<number, WialonSearchItem> | null {

@@ -1,30 +1,17 @@
 import cron from 'node-cron';
 import { query } from '../config/database.js';
 import { AssetOrchestrator } from '../orchestrators/AssetOrchestrator.js';
+import { AlertOrchestrator } from '../orchestrators/AlertOrchestrator.js';
 import { FuelSyncService } from './FuelSyncService.js';
-import { isWialonTenantConnected } from './wialonConnectionStatus.js';
+import { DomainSyncService } from './DomainSyncService.js';
 import { delayBetweenTenants } from './wialonLoginGate.js';
+import { listActiveTenants } from './tenantSyncStatus.js';
 import { logger } from '../config/logger.js';
-
-type ConnectedTenant = {
-  id: string;
-  is_active: boolean;
-  connection_verified_at: string | null;
-  wialon_resource_id: number | null;
-};
 
 let tenantCycleRunning = false;
 let fuelDbCycleRunning = false;
-
-async function listConnectedTenants(): Promise<ConnectedTenant[]> {
-  const { rows } = await query<ConnectedTenant>(
-    `SELECT t.id, ds.is_active, ds.connection_verified_at, ds.wialon_resource_id
-     FROM tenants t
-     INNER JOIN data_sources ds ON ds.tenant_id = t.id AND ds.source_type = 'wialon'
-     WHERE t.is_active = true`,
-  );
-  return rows.filter((row) => isWialonTenantConnected(row));
-}
+let alertCycleRunning = false;
+let domainCycleRunning = false;
 
 async function runTenantCycle(): Promise<void> {
   if (tenantCycleRunning) {
@@ -33,7 +20,7 @@ async function runTenantCycle(): Promise<void> {
   }
   tenantCycleRunning = true;
   try {
-    const tenants = await listConnectedTenants();
+    const tenants = await listActiveTenants();
     let assetCount = 0;
     let snapshotCount = 0;
 
@@ -43,18 +30,23 @@ async function runTenantCycle(): Promise<void> {
         const orch = new AssetOrchestrator(tenant.id);
         await orch.initialize();
         await orch.getUnifiedAssets();
-        await query(`UPDATE data_sources SET last_sync_at = NOW() WHERE tenant_id = $1`, [tenant.id]);
+        await query(
+          `UPDATE data_sources SET last_sync_at = NOW() WHERE tenant_id = $1 AND is_active = true`,
+          [tenant.id],
+        );
         assetCount++;
       } catch (err) {
         logger.warn(`[SyncScheduler] asset sync skipped for tenant ${tenant.id}`, err);
       }
 
-      try {
-        await delayBetweenTenants();
-        await FuelSyncService.syncTenantLiveSnapshots(tenant.id);
-        snapshotCount++;
-      } catch (err) {
-        logger.warn(`[SyncScheduler] live snapshot skipped for tenant ${tenant.id}`, err);
+      if (tenant.sources.includes('wialon')) {
+        try {
+          await delayBetweenTenants();
+          await FuelSyncService.syncTenantLiveSnapshots(tenant.id);
+          snapshotCount++;
+        } catch (err) {
+          logger.warn(`[SyncScheduler] live snapshot skipped for tenant ${tenant.id}`, err);
+        }
       }
     }
 
@@ -83,14 +75,72 @@ async function runFuelDbCycle(): Promise<void> {
   }
 }
 
+async function runDomainCycle(): Promise<void> {
+  if (domainCycleRunning) {
+    logger.debug('[DomainSync] cycle already running — skip');
+    return;
+  }
+  domainCycleRunning = true;
+  try {
+    const count = await DomainSyncService.syncAllConnectedTenants();
+    if (count > 0) logger.info(`[DomainSync] synced trips/eco for ${count} Wialon tenants`);
+  } catch (err) {
+    logger.error('[DomainSync] scheduler error', err);
+  } finally {
+    domainCycleRunning = false;
+  }
+}
+
+/** Pull telematics alerts into the tenant inbox (Wialon, TrackSolid, LocoNav). */
+async function runAlertCycle(): Promise<void> {
+  if (alertCycleRunning) {
+    logger.debug('[AlertSync] cycle already running — skip');
+    return;
+  }
+  alertCycleRunning = true;
+  try {
+    const tenants = await listActiveTenants(['wialon', 'tracksolid', 'loconav']);
+    let synced = 0;
+    let inserted = 0;
+    for (const tenant of tenants) {
+      try {
+        await delayBetweenTenants();
+        const orch = new AlertOrchestrator(tenant.id);
+        const n = await orch.syncFromAdapters();
+        synced++;
+        inserted += n;
+      } catch (err) {
+        logger.warn(`[AlertSync] skipped tenant ${tenant.id}`, err);
+      }
+    }
+    if (synced > 0) {
+      logger.info(`[AlertSync] checked ${synced} tenants, inserted ${inserted} new alerts`);
+    }
+  } catch (err) {
+    logger.error('[AlertSync] scheduler error', err);
+  } finally {
+    alertCycleRunning = false;
+  }
+}
+
 export function startSyncScheduler(): void {
-  // One sequential tenant loop every 5 minutes (assets + live snapshots).
   cron.schedule('*/5 * * * *', () => {
     void runTenantCycle();
   });
 
-  // Fuel report → Postgres every 15 minutes (today only; rolling history hourly per tenant).
   cron.schedule('*/15 * * * *', () => {
     void runFuelDbCycle();
   });
+
+  cron.schedule('*/30 * * * *', () => {
+    void runDomainCycle();
+  });
+
+  cron.schedule('* * * * *', () => {
+    void runAlertCycle();
+  });
+
+  setTimeout(() => {
+    void runAlertCycle();
+  }, 10_000);
 }

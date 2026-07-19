@@ -165,20 +165,20 @@ export function FuelDrainAlerts({ alerts }: FuelDrainAlertsProps) {
             </span>
             {hasMultipleVehicles && (
               <span className="text-xs text-muted-foreground border-l border-border pl-2 ml-1">
-                {vehicleGroups.length} vehicles affected
+                {vehicleGroups.length} assets affected
               </span>
             )}
           </div>
 
-          {/* Vehicle Filter Dropdown */}
+          {/* Asset filter */}
           {hasMultipleVehicles && (
             <Select value={selectedVehicle} onValueChange={setSelectedVehicle}>
               <SelectTrigger className="w-[180px] h-8 text-xs">
                 <Truck className="w-3.5 h-3.5 mr-1.5" />
-                <SelectValue placeholder="Filter by vehicle" />
+                <SelectValue placeholder="Filter by asset" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Vehicles ({alerts.length})</SelectItem>
+                <SelectItem value="all">All assets ({alerts.length})</SelectItem>
                 {vehicleGroups.map((group) => (
                   <SelectItem key={group.unitName} value={group.unitName}>
                     <div className="flex items-center justify-between w-full gap-2">
@@ -200,7 +200,7 @@ export function FuelDrainAlerts({ alerts }: FuelDrainAlertsProps) {
             <thead>
               <tr className="border-b border-border bg-muted/30">
                 <th className="text-left py-1.5 px-2 text-[10px] font-medium text-muted-foreground uppercase">Date & Time</th>
-                <th className="text-left py-1.5 px-2 text-[10px] font-medium text-muted-foreground uppercase">Vehicle</th>
+                <th className="text-left py-1.5 px-2 text-[10px] font-medium text-muted-foreground uppercase">Asset</th>
                 <th className="text-right py-1.5 px-2 text-[10px] font-medium text-muted-foreground uppercase">Volume</th>
                 <th className="text-right py-1.5 px-2 text-[10px] font-medium text-muted-foreground uppercase">Before</th>
                 <th className="text-right py-1.5 px-2 text-[10px] font-medium text-muted-foreground uppercase">After</th>

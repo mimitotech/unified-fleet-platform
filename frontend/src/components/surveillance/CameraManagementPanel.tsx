@@ -36,7 +36,7 @@ export function CameraManagementPanel({ unit, allCameras }: Props) {
     onSuccess: (detail) => {
       qc.setQueryData(['surveillance-unit', unit.id], detail);
       void qc.invalidateQueries({ queryKey: ['surveillance-units'] });
-      notify.success('Camera settings saved', 'Wialon video settings updated.');
+      notify.success('Camera settings saved', 'Video settings updated.');
     },
     onError: (e: Error) => notify.error('Could not save cameras', e.message),
   });
@@ -63,7 +63,7 @@ export function CameraManagementPanel({ unit, allCameras }: Props) {
   if (!cameras.length) {
     return (
       <p className="text-sm text-muted-foreground">
-        No cameras configured in Wialon for this unit. Enable Video monitoring in Wialon unit settings first.
+        No cameras configured for this unit. Ask your administrator to enable video monitoring and configure cameras.
       </p>
     );
   }
@@ -71,7 +71,7 @@ export function CameraManagementPanel({ unit, allCameras }: Props) {
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground">
-        Camera profiles from Wialon <code className="text-[10px]">unit/get_video_settings</code>. Flag 1 = live stream, flag 2 = auto-save on events.
+        Camera profiles for this unit. Live stream and auto-save on events can be toggled below.
       </p>
       {cameras.map((cam) => {
         const ch = cam.channel ?? cam.index + 1;
@@ -116,7 +116,7 @@ export function CameraManagementPanel({ unit, allCameras }: Props) {
       })}
       {save.isPending && (
         <p className="text-xs text-muted-foreground flex items-center gap-1">
-          <Loader2 className="h-3 w-3 animate-spin" /> Saving to Wialon…
+          <Loader2 className="h-3 w-3 animate-spin" /> Saving…
         </p>
       )}
       <Button
