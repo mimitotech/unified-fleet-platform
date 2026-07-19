@@ -1,9 +1,17 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const rootEnv = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.env');
+dotenv.config({ path: rootEnv });
+dotenv.config();
+
 import { createApp } from './app.js';
 import { connectDatabase } from './config/database.js';
 import { connectRedis } from './config/redis.js';
 import { startSyncScheduler } from './services/SyncScheduler.js';
 import { logger } from './config/logger.js';
+import { validateEnv } from './config/env.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
@@ -34,6 +42,7 @@ Postgres is not running. To fix:
 
 async function main() {
   try {
+    validateEnv();
     await waitForDatabase();
     logger.info('Database connected');
 
@@ -48,7 +57,10 @@ async function main() {
       logger.info(`Server running on port ${PORT}`);
     });
 
-    process.on('SIGTERM', () => process.exit(0));
+    process.on('SIGTERM', async () => {
+      logger.info('SIGTERM received, shutting down');
+      process.exit(0);
+    });
   } catch (err) {
     logger.error('Failed to start', err);
     process.exit(1);

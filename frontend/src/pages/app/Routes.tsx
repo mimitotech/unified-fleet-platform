@@ -1,11 +1,32 @@
+import { useState } from 'react';
 import { AppLayout } from '@/components/app/AppLayout';
 import { MetricCard } from '@/components/app/MetricCard';
-import { useRoutes, useRouteStats } from '@/hooks/useDomain';
+import { useRoutes, useRouteStats, useCreateRoute } from '@/hooks/useDomain';
+import { useDrivers } from '@/hooks/useDomain';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Route, Clock, Play, CheckCircle } from 'lucide-react';
+import {
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
+} from '@/components/ui/dialog';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+import { FleetUnitSelect } from '@/components/fleet/FleetUnitSelect';
+import { LoadingButton } from '@/components/shared/LoadingButton';
+import { notify } from '@/lib/notify';
+import { Route, Clock, Play, CheckCircle, Plus, FileText } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { WialonRoutesPanel } from '@/components/app/WialonLivePanels';
+import type { FleetUnit } from '@/lib/fleetUnits';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { GenericModuleReports } from '@/components/reports/moduleReportPanels';
+import { safeArray } from '@/lib/safeArray';
+import { CHART } from '@/lib/chartColors';
 
 const statusConfig: Record<string, { label: string; className: string }> = {
   scheduled: { label: 'Scheduled', className: 'bg-info/15 text-info' },
@@ -17,19 +38,123 @@ const statusConfig: Record<string, { label: string; className: string }> = {
 export default function RoutesPage() {
   const { data: routes, isLoading } = useRoutes();
   const { data: stats } = useRouteStats();
+  const { data: drivers } = useDrivers();
+  const createRoute = useCreateRoute();
+  const [open, setOpen] = useState(false);
+  const [unit, setUnit] = useState<FleetUnit | null>(null);
+  const [form, setForm] = useState({
+    name: '',
+    driverId: '',
+    distance: '0',
+    estimatedDuration: '60',
+    notes: '',
+    startTime: new Date().toISOString().slice(0, 16),
+  });
+
+  const submit = () => {
+    if (!form.name) {
+      notify.error('Route name is required');
+      return;
+    }
+    const driver = drivers?.find((d) => d.id === form.driverId);
+    createRoute.mutate(
+      {
+        name: form.name,
+        status: 'scheduled',
+        assetId: unit?.id,
+        assetName: unit?.name,
+        assetPlate: unit?.plate,
+        driverId: driver?.id,
+        driverName: driver?.name,
+        startTime: new Date(form.startTime).toISOString(),
+        distance: Number(form.distance) || 0,
+        estimatedDuration: Number(form.estimatedDuration) || 0,
+        notes: form.notes || undefined,
+        color: 'blue',
+      },
+      {
+        onSuccess: () => {
+          notify.success('Route planned');
+          setOpen(false);
+        },
+        onError: (e) => notify.error('Failed', e.message),
+      }
+    );
+  };
 
   return (
     <AppLayout title="Routes" subtitle="Route planning and tracking">
+      <Tabs defaultValue="routes" className="space-y-4">
+        <TabsList className="branded-tabs">
+          <TabsTrigger value="routes">Routes</TabsTrigger>
+          <TabsTrigger value="reports" className="gap-1"><FileText className="h-3.5 w-3.5" />Reports</TabsTrigger>
+        </TabsList>
+        <TabsContent value="routes" className="mt-0 space-y-6">
       <div className="space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <MetricCard title="Total Routes" value={stats?.total ?? 0} icon={Route} variant="primary" />
-          <MetricCard title="In Progress" value={stats?.inProgress ?? 0} icon={Play} variant="success" />
-          <MetricCard title="Scheduled" value={stats?.scheduled ?? 0} icon={Clock} variant="info" />
-          <MetricCard title="Completed" value={stats?.completed ?? 0} icon={CheckCircle} variant="default" />
+        <WialonRoutesPanel />
+        <div className="stat-strip-4">
+          <MetricCard title="Total Routes" value={stats?.total ?? 0} icon={Route} variant="primary" size="xxs" />
+          <MetricCard title="In Progress" value={stats?.inProgress ?? 0} icon={Play} variant="success" size="xxs" />
+          <MetricCard title="Scheduled" value={stats?.scheduled ?? 0} icon={Clock} variant="info" size="xxs" />
+          <MetricCard title="Completed" value={stats?.completed ?? 0} icon={CheckCircle} variant="default" size="xxs" />
         </div>
 
         <div className="fleet-card">
-          <h3 className="font-semibold mb-4">Active & Scheduled Routes</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold">Active & Scheduled Routes</h3>
+            <Dialog open={open} onOpenChange={setOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm" onClick={() => setUnit(null)}>
+                  <Plus className="h-4 w-4 mr-1" /> Plan route
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-md">
+                <DialogHeader><DialogTitle>Plan route</DialogTitle></DialogHeader>
+                <div className="space-y-3">
+                  <div>
+                    <Label>Route name</Label>
+                    <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+                  </div>
+                  <div>
+                    <Label>Vehicle</Label>
+                    <FleetUnitSelect value={unit?.id} onValueChange={(_, u) => setUnit(u)} />
+                  </div>
+                  <div>
+                    <Label>Driver</Label>
+                    <Select value={form.driverId} onValueChange={(v) => setForm((f) => ({ ...f, driverId: v }))}>
+                      <SelectTrigger><SelectValue placeholder="Optional" /></SelectTrigger>
+                      <SelectContent>
+                        {(drivers || []).map((d) => (
+                          <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label>Start</Label>
+                      <Input type="datetime-local" value={form.startTime} onChange={(e) => setForm((f) => ({ ...f, startTime: e.target.value }))} />
+                    </div>
+                    <div>
+                      <Label>Distance (km)</Label>
+                      <Input type="number" value={form.distance} onChange={(e) => setForm((f) => ({ ...f, distance: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <Label>Est. duration (min)</Label>
+                    <Input type="number" value={form.estimatedDuration} onChange={(e) => setForm((f) => ({ ...f, estimatedDuration: e.target.value }))} />
+                  </div>
+                  <div>
+                    <Label>Notes</Label>
+                    <Textarea value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <LoadingButton loading={createRoute.isPending} onClick={submit}>Create route</LoadingButton>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
           {isLoading ? (
             <Skeleton className="h-48" />
           ) : (
@@ -63,7 +188,7 @@ export default function RoutesPage() {
                 {!routes?.length && (
                   <TableRow>
                     <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                      No routes yet
+                      No routes yet — plan one above
                     </TableCell>
                   </TableRow>
                 )}
@@ -72,6 +197,51 @@ export default function RoutesPage() {
           )}
         </div>
       </div>
+        </TabsContent>
+        <TabsContent value="reports" className="mt-0">
+          <GenericModuleReports
+            moduleLabel="Routes"
+            title="Routes executive"
+            blurb="Planned and active routes for operations."
+            kpis={[
+              { label: 'Total', value: stats?.total ?? safeArray(routes).length },
+              { label: 'Active', value: stats?.inProgress ?? 0 },
+              { label: 'Scheduled', value: stats?.scheduled ?? 0 },
+              { label: 'Completed', value: stats?.completed ?? 0 },
+            ]}
+            columns={[
+              { key: 'name', label: 'Route' },
+              { key: 'asset', label: 'Asset' },
+              { key: 'status', label: 'Status' },
+              { key: 'distance', label: 'Distance', align: 'right' },
+            ]}
+            rows={(safeArray(routes) as Array<{ name?: string; assetPlate?: string; assetName?: string; status?: string; distance?: number }>).map((r) => ({
+              name: r.name || '—',
+              asset: r.assetPlate || r.assetName || '—',
+              status: r.status || '—',
+              distance: `${r.distance ?? 0} km`,
+              distanceKm: r.distance ?? 0,
+            }))}
+            charts={{
+              heading: 'Asset performance · route analytics',
+              categoryKey: 'name',
+              bar: {
+                title: 'Distance by route',
+                subtitle: 'Standing bars — planned / recorded kilometres',
+                metrics: [{ key: 'distanceKm', label: 'Distance (km)', color: CHART.brand }],
+                topN: 8,
+              },
+              secondary: {
+                type: 'category',
+                title: 'Route status mix',
+                subtitle: 'Share of routes by operational status',
+                groupKey: 'status',
+                as: 'pie',
+              },
+            }}
+          />
+        </TabsContent>
+      </Tabs>
     </AppLayout>
   );
 }

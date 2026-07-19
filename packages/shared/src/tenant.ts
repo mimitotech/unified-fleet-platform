@@ -17,7 +17,7 @@ export interface DataSourceConfig {
   lastSyncAt?: string;
 }
 
-export type UserRole = 'platform_admin' | 'tenant_admin' | 'manager' | 'operator' | 'viewer';
+export type UserRole = 'super_admin' | 'platform_admin' | 'tenant_admin' | 'manager' | 'operator' | 'viewer';
 
 export interface User {
   id: string;

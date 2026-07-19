@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { query } from '../../config/database.js';
 import { requireTenant, type TenantRequest } from '../../middleware/tenant.js';
+import { requireModule, requireWriteAccess } from '../../middleware/rbac.js';
 import { success, error } from '../../utils/response.js';
 import { toCamelRows } from '../../utils/mapper.js';
 
 const router = Router();
+const mod = requireModule('geofencing');
 
-router.get('/', requireTenant, async (req: TenantRequest, res) => {
+router.get('/', requireTenant, mod, async (req: TenantRequest, res) => {
   const { rows } = await query(
     `SELECT * FROM geofences WHERE tenant_id = $1 AND deleted_at IS NULL ORDER BY name`,
     [req.tenantId]
@@ -14,7 +16,7 @@ router.get('/', requireTenant, async (req: TenantRequest, res) => {
   return success(res, toCamelRows(rows));
 });
 
-router.post('/', requireTenant, async (req: TenantRequest, res) => {
+router.post('/', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
   const { name, type, center, radius, points, color, isActive } = req.body;
   if (!name || !type) return error(res, 'name and type required');
   const { rows } = await query(
@@ -25,7 +27,7 @@ router.post('/', requireTenant, async (req: TenantRequest, res) => {
   return success(res, toCamelRows(rows)[0], 201);
 });
 
-router.delete('/:id', requireTenant, async (req: TenantRequest, res) => {
+router.delete('/:id', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
   await query(`UPDATE geofences SET deleted_at = NOW() WHERE id = $1 AND tenant_id = $2`, [
     req.params.id, req.tenantId,
   ]);

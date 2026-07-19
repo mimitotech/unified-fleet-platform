@@ -1,6 +1,8 @@
 import { AssetOrchestrator } from './AssetOrchestrator.js';
 import { AlertOrchestrator } from './AlertOrchestrator.js';
 import { query } from '../config/database.js';
+import { WialonFleetService } from '../services/WialonFleetService.js';
+import { logger } from '../config/logger.js';
 
 export class DashboardOrchestrator {
   private tenantId: string;
@@ -10,16 +12,6 @@ export class DashboardOrchestrator {
   }
 
   async getKpis() {
-    const assetOrch = new AssetOrchestrator(this.tenantId);
-    await assetOrch.initialize();
-    const assets = await assetOrch.getUnifiedAssets();
-    const statuses = await assetOrch.getAllStatuses();
-
-    const moving = statuses.filter((s) => (s.status as { status?: string } | null)?.status === 'moving').length;
-    const idle = statuses.filter((s) => (s.status as { status?: string } | null)?.status === 'idle').length;
-    const stopped = statuses.filter((s) => (s.status as { status?: string } | null)?.status === 'stopped').length;
-    const offline = statuses.filter((s) => (s.status as { status?: string } | null)?.status === 'offline').length;
-
     const alertOrch = new AlertOrchestrator(this.tenantId);
     const alerts = await alertOrch.getAlerts(100);
     const critical = alerts.filter((a) => a.severity === 'critical' || a.severity === 'emergency').length;
@@ -52,13 +44,7 @@ export class DashboardOrchestrator {
       [this.tenantId]
     );
 
-    return {
-      totalVehicles: assets.length,
-      moving,
-      idle,
-      stopped,
-      offline,
-      activeVehicles: moving + idle + stopped,
+    const shared = {
       criticalAlerts: critical,
       unacknowledgedAlerts: alerts.filter((a) => !a.acknowledged).length,
       totalDrivers: driverStats[0]?.total || 0,
@@ -67,6 +53,47 @@ export class DashboardOrchestrator {
       scheduledRoutes: routeStats[0]?.scheduled_routes || 0,
       fuelConsumedMonth: Math.round((fuelStats[0]?.fuel_consumed_month as number || 0) * 10) / 10,
       pendingMaintenance: workshopStats[0]?.pending_maintenance || 0,
+    };
+
+    if (await WialonFleetService.isLiveAvailable(this.tenantId)) {
+      try {
+        const fleet = await WialonFleetService.getCachedLiveFleet(this.tenantId);
+        const { counts } = fleet;
+        return {
+          ...shared,
+          totalVehicles: counts.total,
+          moving: counts.moving,
+          idle: counts.idle,
+          stopped: counts.stopped,
+          offline: counts.offline,
+          activeVehicles: counts.moving + counts.idle + counts.stopped,
+          liveFromWialon: true,
+          wialonFetchedAt: fleet.fetchedAt,
+        };
+      } catch (err) {
+        logger.warn(`Live Wialon KPIs failed for tenant ${this.tenantId}`, err);
+      }
+    }
+
+    const assetOrch = new AssetOrchestrator(this.tenantId);
+    await assetOrch.initialize();
+    const assets = await assetOrch.getUnifiedAssets();
+    const { items: statusItems } = await assetOrch.getAllStatuses();
+
+    const moving = statusItems.filter((s) => (s.status as { status?: string } | null)?.status === 'moving').length;
+    const idle = statusItems.filter((s) => (s.status as { status?: string } | null)?.status === 'idle').length;
+    const stopped = statusItems.filter((s) => (s.status as { status?: string } | null)?.status === 'stopped').length;
+    const offline = statusItems.filter((s) => (s.status as { status?: string } | null)?.status === 'offline').length;
+
+    return {
+      ...shared,
+      totalVehicles: assets.length,
+      moving,
+      idle,
+      stopped,
+      offline,
+      activeVehicles: moving + idle + stopped,
+      liveFromWialon: false,
     };
   }
 }

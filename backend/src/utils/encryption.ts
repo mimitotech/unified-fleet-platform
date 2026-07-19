@@ -25,7 +25,13 @@ export function decryptCredentials(encrypted: string): Record<string, unknown> {
     decipher.setAuthTag(tag);
     const dec = Buffer.concat([decipher.update(data), decipher.final()]);
     return JSON.parse(dec.toString('utf8'));
-  } catch {
-    return {};
+  } catch (err) {
+    const msg = (err as Error).message || 'decrypt failed';
+    if (msg.includes('authenticate') || msg.includes('Unsupported state')) {
+      throw new Error(
+        'Stored credentials could not be decrypted — ENCRYPTION_KEY may have changed. Re-save integrations in Admin (Wialon Center / tenant Integrations).'
+      );
+    }
+    throw new Error(`Credential decrypt failed: ${msg}`);
   }
 }

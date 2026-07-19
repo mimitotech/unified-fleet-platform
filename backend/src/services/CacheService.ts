@@ -19,4 +19,20 @@ export class CacheService {
     if (!redis) return;
     await redis.del(key);
   }
+
+  /** Bust tenant fleet cache after sync, webhooks, or integration changes. */
+  async invalidateTenant(tenantId: string): Promise<void> {
+    const redis = getRedis();
+    if (!redis) return;
+    const patterns = [`assets:${tenantId}`, `statuses:all:${tenantId}`, `fleet:snapshot:${tenantId}`];
+    for (const key of patterns) {
+      await redis.del(key);
+    }
+    let cursor = '0';
+    do {
+      const reply = await redis.scan(cursor, { MATCH: `status:${tenantId}:*`, COUNT: 100 });
+      cursor = reply.cursor;
+      if (reply.keys.length) await redis.del(reply.keys);
+    } while (cursor !== '0');
+  }
 }

@@ -5,7 +5,7 @@ CREATE TABLE tenants (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name TEXT NOT NULL,
     slug TEXT NOT NULL UNIQUE,
-    primary_color TEXT NOT NULL DEFAULT '#006f45',
+    primary_color TEXT NOT NULL DEFAULT '#004225',
     secondary_color TEXT DEFAULT '#0f172a',
     logo_url TEXT,
     favicon_url TEXT,

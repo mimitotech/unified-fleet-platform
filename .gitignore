@@ -1,9 +1,24 @@
+# dependencies & builds
 node_modules/
 dist/
 build/
-.env
-.env.local
-*.log
-.DS_Store
 coverage/
 .turbo/
+
+# secrets & local env
+.env
+.env.local
+.env.*.local
+
+# logs & OS
+*.log
+.DS_Store
+Thumbs.db
+
+# runtime uploads (tenant logos, sheets) — keep folder placeholder only
+backend/uploads/**
+!backend/uploads/.gitkeep
+
+# local dumps / one-off scratch
+scripts/dump-*.mts
+*.sql.bak

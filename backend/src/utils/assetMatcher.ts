@@ -12,13 +12,14 @@ export function deduplicateAssets(
   const map = new Map<string, UnifiedAsset>();
 
   for (const asset of assets) {
-    const key =
-      normalizePlate(asset.registrationPlate) ||
-      (asset.vin || '').toUpperCase() ||
-      `${asset.name}-${asset.sources?.[0]?.id || asset.id}`;
-
     const src = asset.sources?.[0] || (asset.source ? { type: asset.source, id: asset.id } : null);
     if (!src) continue;
+
+    // Only merge across systems when VIN or plate match intentionally.
+    // Otherwise each external device stays a separate unified asset.
+    const plate = normalizePlate(asset.registrationPlate);
+    const vin = (asset.vin || '').toUpperCase();
+    const key = vin ? `vin:${vin}` : plate ? `plate:${plate}` : `${src.type}:${src.id}`;
 
     if (!map.has(key)) {
       map.set(key, {

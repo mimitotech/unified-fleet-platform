@@ -8,68 +8,70 @@ interface MetricCardProps {
   value: string | number;
   subtitle?: string;
   icon?: LucideIcon;
-  trend?: {
-    value: number;
-    isPositive: boolean;
-  };
+  trend?: { value: number; isPositive: boolean };
   variant?: MetricVariant;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'xxs' | 'xs' | 'sm' | 'md' | 'lg';
+  compact?: boolean;
+  active?: boolean;
   className?: string;
   onClick?: () => void;
 }
 
-const variantStyles: Record<MetricVariant, { icon: string; accent: string }> = {
+/** Brand green (#004225) via theme tokens — success/info use same Mimito green family */
+const variantStyles: Record<
+  MetricVariant,
+  { bg: string; border: string; iconFill: string; value: string; ring: string }
+> = {
   default: {
-    icon: 'bg-muted text-muted-foreground',
-    accent: 'group-hover:border-muted-foreground/50',
+    bg: 'bg-slate-50',
+    border: 'border-slate-200/80',
+    iconFill: 'bg-slate-500 text-white',
+    value: 'text-slate-800',
+    ring: 'ring-slate-400/40',
   },
   primary: {
-    icon: 'bg-primary/15 text-primary',
-    accent: 'group-hover:border-primary/50',
+    bg: 'bg-secondary',
+    border: 'border-primary/15',
+    iconFill: 'bg-primary text-primary-foreground',
+    value: 'text-primary',
+    ring: 'ring-primary/40',
   },
   success: {
-    icon: 'bg-success/15 text-success',
-    accent: 'group-hover:border-success/50',
+    bg: 'bg-secondary',
+    border: 'border-primary/15',
+    iconFill: 'bg-primary text-primary-foreground',
+    value: 'text-primary',
+    ring: 'ring-primary/40',
   },
   warning: {
-    icon: 'bg-warning/15 text-warning',
-    accent: 'group-hover:border-warning/50',
+    bg: 'bg-amber-50',
+    border: 'border-amber-200/80',
+    iconFill: 'bg-amber-500 text-white',
+    value: 'text-amber-700',
+    ring: 'ring-amber-500/40',
   },
   destructive: {
-    icon: 'bg-destructive/15 text-destructive',
-    accent: 'group-hover:border-destructive/50',
+    bg: 'bg-red-50',
+    border: 'border-red-200/80',
+    iconFill: 'bg-destructive text-destructive-foreground',
+    value: 'text-red-700',
+    ring: 'ring-red-500/40',
   },
   info: {
-    icon: 'bg-info/15 text-[hsl(var(--info))]',
-    accent: 'group-hover:border-info/50',
+    bg: 'bg-secondary',
+    border: 'border-accent/25',
+    iconFill: 'bg-accent text-accent-foreground',
+    value: 'text-accent',
+    ring: 'ring-accent/40',
   },
 };
 
 const sizeStyles = {
-  sm: {
-    card: 'p-3',
-    icon: 'p-1.5',
-    iconSize: 'w-4 h-4',
-    title: 'text-xs',
-    value: 'text-xl',
-    subtitle: 'text-xs',
-  },
-  md: {
-    card: 'p-4',
-    icon: 'p-2.5',
-    iconSize: 'w-5 h-5',
-    title: 'text-xs',
-    value: 'text-3xl',
-    subtitle: 'text-sm',
-  },
-  lg: {
-    card: 'p-5',
-    icon: 'p-3',
-    iconSize: 'w-6 h-6',
-    title: 'text-sm',
-    value: 'text-4xl',
-    subtitle: 'text-base',
-  },
+  xxs: { card: 'p-2 rounded-lg', icon: 'p-1.5', iconSize: 'w-3 h-3', title: 'text-[9px]', value: 'text-sm leading-none', subtitle: 'text-[9px]' },
+  xs: { card: 'p-2.5 rounded-lg', icon: 'p-1.5', iconSize: 'w-3.5 h-3.5', title: 'text-[10px]', value: 'text-base leading-tight', subtitle: 'text-[10px]' },
+  sm: { card: 'p-3 rounded-xl', icon: 'p-2', iconSize: 'w-4 h-4', title: 'text-[10px]', value: 'text-lg leading-tight', subtitle: 'text-[10px]' },
+  md: { card: 'p-4 rounded-xl', icon: 'p-2', iconSize: 'w-4 h-4', title: 'text-xs', value: 'text-2xl', subtitle: 'text-xs' },
+  lg: { card: 'p-5 rounded-xl', icon: 'p-2.5', iconSize: 'w-5 h-5', title: 'text-sm', value: 'text-3xl', subtitle: 'text-sm' },
 };
 
 export function MetricCard({
@@ -79,19 +81,25 @@ export function MetricCard({
   icon: Icon,
   trend,
   variant = 'default',
-  size = 'md',
+  size = 'xs',
+  compact,
+  active,
   className,
   onClick,
 }: MetricCardProps) {
   const styles = variantStyles[variant];
   const sizes = sizeStyles[size];
+  const isCompact = compact !== undefined ? compact : size === 'xxs' || size === 'xs';
 
   return (
     <div
       className={cn(
-        'fleet-card group transition-all duration-300',
-        styles.accent,
-        onClick && 'cursor-pointer hover:shadow-lg',
+        'group relative overflow-hidden border shadow-sm',
+        'transition-all duration-200 hover:shadow-md hover:-translate-y-px',
+        styles.bg,
+        styles.border,
+        active && cn('ring-2 shadow-md', styles.ring),
+        onClick && 'cursor-pointer active:scale-[0.98]',
         sizes.card,
         className
       )}
@@ -100,44 +108,49 @@ export function MetricCard({
       tabIndex={onClick ? 0 : undefined}
       onKeyDown={onClick ? (e) => e.key === 'Enter' && onClick() : undefined}
     >
-      <div className="flex items-start justify-between">
-        {Icon && (
-          <div
-            className={cn(
-              'rounded-lg transition-transform group-hover:scale-105',
-              styles.icon,
-              sizes.icon
-            )}
-          >
-            <Icon className={sizes.iconSize} />
+      {isCompact ? (
+        <div className="flex items-center gap-2 min-w-0">
+          {Icon && (
+            <div className={cn('rounded-md shrink-0 shadow-sm transition-transform group-hover:scale-105', styles.iconFill, sizes.icon)}>
+              <Icon className={sizes.iconSize} strokeWidth={2.25} />
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            <p className={cn('font-semibold uppercase tracking-wide text-muted-foreground truncate', sizes.title)}>{title}</p>
+            <div className="flex items-baseline gap-1.5">
+              <p className={cn('font-bold font-mono tracking-tight', sizes.value, styles.value)}>{value}</p>
+              {trend && (
+                <span className={cn('text-[9px] font-semibold px-1 rounded', trend.isPositive ? 'bg-primary/10 text-primary' : 'bg-red-100 text-red-700')}>
+                  {trend.isPositive ? '+' : ''}{trend.value}%
+                </span>
+              )}
+            </div>
+            {subtitle && <p className={cn('text-muted-foreground truncate', sizes.subtitle)}>{subtitle}</p>}
           </div>
-        )}
-        {trend && (
-          <span
-            className={cn(
-              'text-xs font-medium px-2 py-0.5 rounded-full',
-              trend.isPositive
-                ? 'bg-success/15 text-success'
-                : 'bg-destructive/15 text-destructive'
+        </div>
+      ) : (
+        <>
+          <div className="flex items-start justify-between">
+            {Icon && (
+              <div className={cn('rounded-lg shadow-sm transition-transform group-hover:scale-105', styles.iconFill, sizes.icon)}>
+                <Icon className={sizes.iconSize} strokeWidth={2.25} />
+              </div>
             )}
-          >
-            {trend.isPositive ? '+' : ''}
-            {trend.value}%
-          </span>
-        )}
-      </div>
-      <div className="mt-4">
-        <p className={cn('font-medium uppercase tracking-wider text-muted-foreground', sizes.title)}>
-          {title}
-        </p>
-        <p className={cn('font-semibold font-mono tracking-tight mt-1', sizes.value)}>{value}</p>
-        {subtitle && (
-          <p className={cn('text-muted-foreground mt-1', sizes.subtitle)}>{subtitle}</p>
-        )}
-      </div>
+            {trend && (
+              <span className={cn('text-[10px] font-semibold px-1.5 py-0.5 rounded-full', trend.isPositive ? 'bg-primary/10 text-primary' : 'bg-red-100 text-red-700')}>
+                {trend.isPositive ? '+' : ''}{trend.value}%
+              </span>
+            )}
+          </div>
+          <div className="mt-3">
+            <p className={cn('font-semibold uppercase tracking-wider text-muted-foreground', sizes.title)}>{title}</p>
+            <p className={cn('font-bold font-mono tracking-tight mt-0.5', sizes.value, styles.value)}>{value}</p>
+            {subtitle && <p className={cn('text-muted-foreground mt-1', sizes.subtitle)}>{subtitle}</p>}
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
 export default MetricCard;
-

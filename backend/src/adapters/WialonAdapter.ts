@@ -1,24 +1,24 @@
 import type { FleetAsset, AssetStatus, AssetLocation, FleetAlert } from '@ufp/shared';
 import { BaseAdapter, type AdapterCredentials } from './BaseAdapter.js';
-
-interface WialonSearchResult {
-  items: Array<{
-    id: number;
-    nm: string;
-    pos?: { x: number; y: number; s: number; z?: number; t: number; sc?: number };
-    prp?: Record<string, string>;
-  }>;
-}
+import { WialonClient } from './wialonClient.js';
+import {
+  WIALON_SEARCH_PAGE_SIZE,
+  WIALON_UNIT_FLAGS,
+  type WialonSearchItem,
+  type WialonSearchResult,
+} from './wialonUtils.js';
+import { filterActiveWialonUnits } from '../services/wialonLiveUtils.js';
 
 export class WialonAdapter extends BaseAdapter {
-  private sessionId: string | null = null;
-  private baseUrl: string;
-  private token: string;
+  private client: WialonClient;
 
   constructor(config: AdapterCredentials) {
     super(config);
-    this.baseUrl = config.baseUrl || process.env.WIALON_API_URL || 'https://hst-api.wialon.com/wialon/ajax.html';
-    this.token = config.token || '';
+    this.client = new WialonClient({
+      token: (config.token || '').trim(),
+      baseUrl: config.baseUrl,
+      operateAs: config.operateAs,
+    });
   }
 
   getSourceType() {
@@ -26,57 +26,63 @@ export class WialonAdapter extends BaseAdapter {
   }
 
   async connect(): Promise<void> {
-    if (!this.token) throw new Error('Wialon token not configured');
-    const params = new URLSearchParams({
-      svc: 'token/login',
-      params: JSON.stringify({ token: this.token }),
-    });
-    const res = await fetch(`${this.baseUrl}?${params}`);
-    const data = await res.json();
-    if (data.error) throw new Error(`Wialon login failed: ${data.error}`);
-    this.sessionId = data.eid;
+    await this.client.connect();
   }
 
   async testConnection(): Promise<boolean> {
-    try {
-      await this.connect();
-      return true;
-    } catch {
-      return false;
-    }
+    await this.connect();
+    await this.searchUnits(0, 10);
+    return true;
   }
 
-  private async request<T>(svc: string, params: Record<string, unknown>): Promise<T> {
-    if (!this.sessionId) await this.connect();
-    const urlParams = new URLSearchParams({
-      svc,
-      params: JSON.stringify(params),
-      sid: this.sessionId!,
-    });
-    const res = await fetch(`${this.baseUrl}?${urlParams}`);
-    const data = await res.json();
-    if (data.error === 1) {
-      this.sessionId = null;
-      await this.connect();
-      return this.request(svc, params);
+  private request<T>(svc: string, params: Record<string, unknown>): Promise<T> {
+    return this.client.request<T>(svc, params);
+  }
+
+  private unitSearchSpec(): Record<string, unknown> {
+    const accountId = this.config.accountId;
+    if (accountId !== undefined && accountId !== null && String(accountId).trim() !== '') {
+      return {
+        itemsType: 'avl_unit',
+        propName: 'sys_billing_account_guid',
+        propValueMask: String(accountId),
+        sortType: 'sys_name',
+        propType: 'property',
+      };
     }
-    if (data.error) throw new Error(`Wialon API error: ${data.error}`);
-    return data as T;
+    return {
+      itemsType: 'avl_unit',
+      propName: 'sys_name',
+      propValueMask: '*',
+      sortType: 'sys_name',
+    };
+  }
+
+  private async searchUnits(from: number, to: number, flags = WIALON_UNIT_FLAGS): Promise<WialonSearchResult> {
+    return this.request<WialonSearchResult>('core/search_items', {
+      spec: this.unitSearchSpec(),
+      force: 1,
+      flags,
+      from,
+      to,
+    });
   }
 
   async getAssets(): Promise<FleetAsset[]> {
-    const result = await this.request<WialonSearchResult>('core/search_items', {
-      spec: {
-        itemsType: 'avl_unit',
-        propName: 'sys_name',
-        propValueMask: '*',
-        sortType: 'sys_name',
-      },
-      flags: 1,
-      from: 0,
-      to: 0,
-    });
-    return (result.items || []).map((item) => ({
+    const items: WialonSearchItem[] = [];
+    let from = 0;
+
+    while (true) {
+      const to = from + WIALON_SEARCH_PAGE_SIZE - 1;
+      const result = await this.searchUnits(from, to);
+      const page = result.items || [];
+      items.push(...page);
+      const total = result.totalItemsCount ?? items.length;
+      if (page.length === 0 || items.length >= total) break;
+      from += WIALON_SEARCH_PAGE_SIZE;
+    }
+
+    return filterActiveWialonUnits(items).map((item) => ({
       id: String(item.id),
       name: item.nm,
       registrationPlate: item.prp?.registration_plate || item.prp?.plate || undefined,
@@ -85,6 +91,46 @@ export class WialonAdapter extends BaseAdapter {
       model: item.prp?.model,
       year: item.prp?.year ? parseInt(item.prp.year, 10) : undefined,
     }));
+  }
+
+  async getBulkAssetStatus(unitIds: string[]): Promise<Map<string, AssetStatus>> {
+    const map = new Map<string, AssetStatus>();
+    if (!unitIds.length) return map;
+
+    const ids = unitIds.map((id) => parseInt(id, 10)).filter((n) => !Number.isNaN(n));
+    if (!ids.length) return map;
+
+    try {
+      const rows = await this.request<Array<{
+        i: number;
+        pos?: { y: number; x: number; s: number; z?: number; t: number; sc?: number };
+      }>>('unit/calc_last', { itemIds: ids });
+
+      for (const row of rows || []) {
+        const pos = row.pos;
+        if (!pos) continue;
+        const status = pos.s > 0 ? 'moving' : (pos.sc ?? 0) > 0 ? 'idle' : 'stopped';
+        map.set(String(row.i), {
+          status,
+          location: {
+            latitude: pos.y,
+            longitude: pos.x,
+            speed: pos.s,
+            altitude: pos.z,
+            timestamp: new Date(pos.t * 1000),
+          },
+          engineState: pos.s > 0 || (pos.sc ?? 0) > 0,
+          source: 'wialon',
+        });
+      }
+    } catch {
+      for (const id of unitIds) {
+        try {
+          map.set(id, await this.getAssetStatus(id));
+        } catch { /* skip */ }
+      }
+    }
+    return map;
   }
 
   async getAssetStatus(assetId: string): Promise<AssetStatus> {
@@ -135,17 +181,226 @@ export class WialonAdapter extends BaseAdapter {
   }
 
   async getAlerts(from: Date, to: Date): Promise<FleetAlert[]> {
-    void from;
-    void to;
-    return [];
+    const {
+      harvestTaskMessageAlerts,
+      harvestUnitEventAndNotificationAlerts,
+      harvestEcoReportAlerts,
+    } = await import('../services/wialonAlertHarvest.js');
+
+    const assets = await this.getAssets();
+    const allUnitIds = assets
+      .map((a) => parseInt(a.id, 10))
+      .filter((id) => !Number.isNaN(id));
+    if (!allUnitIds.length) return [];
+
+    const timeFrom = Math.floor(from.getTime() / 1000);
+    const timeTo = Math.floor(to.getTime() / 1000);
+    const unitNameById = new Map(
+      assets
+        .map((a) => [parseInt(a.id, 10), a.name] as const)
+        .filter(([id]) => !Number.isNaN(id)),
+    );
+    const byExternal = new Map<string, FleetAlert>();
+
+    const addAll = (list: FleetAlert[]) => {
+      for (const a of list) byExternal.set(a.externalId || a.id, a);
+    };
+
+    const scopeKey = `${this.config.accountId || this.config.token?.slice(0, 12) || 'wialon'}`;
+
+    // 1) Task / registered notification messages for all units.
+    addAll(await harvestTaskMessageAlerts(this.client, allUnitIds, unitNameById, timeFrom, timeTo));
+
+    // 2) Triggered notifications + unit events (power, sensors, speed, etc.) — rotating deep scan.
+    addAll(
+      await harvestUnitEventAndNotificationAlerts(
+        this.client,
+        scopeKey,
+        allUnitIds,
+        unitNameById,
+        timeFrom,
+        timeTo,
+      ),
+    );
+
+    // 3) Eco/safety report enrichment — never a random group that can leak other fleets.
+    addAll(
+      await harvestEcoReportAlerts(
+        {
+          token: this.config.token || '',
+          baseUrl: this.config.baseUrl,
+          operateAs: this.config.operateAs,
+          accountId: this.config.accountId,
+        },
+        this.client,
+        scopeKey,
+        timeFrom,
+        timeTo,
+        allUnitIds,
+        unitNameById,
+      ),
+    );
+
+    const alerts = [...byExternal.values()];
+    alerts.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+    return alerts;
+  }
+
+  private resourceSearchSpec(): Record<string, unknown> {
+    const accountId = this.config.accountId;
+    if (accountId !== undefined && accountId !== null && String(accountId).trim() !== '') {
+      return {
+        itemsType: 'avl_resource',
+        propName: 'sys_billing_account_guid',
+        propValueMask: String(accountId),
+        sortType: 'sys_name',
+        propType: 'property',
+      };
+    }
+    return {
+      itemsType: 'avl_resource',
+      propName: 'sys_name',
+      propValueMask: '*',
+      sortType: 'sys_name',
+    };
+  }
+
+  private async searchResources(flags: number): Promise<WialonSearchResult['items']> {
+    const all: WialonSearchResult['items'] = [];
+    let from = 0;
+    while (true) {
+      const to = from + WIALON_SEARCH_PAGE_SIZE - 1;
+      const result = await this.request<WialonSearchResult>('core/search_items', {
+        spec: this.resourceSearchSpec(),
+        force: 1,
+        flags,
+        from,
+        to,
+      });
+      const items = result.items || [];
+      all.push(...items);
+      const total = result.totalItemsCount ?? all.length;
+      if (items.length === 0 || all.length >= total) break;
+      from += WIALON_SEARCH_PAGE_SIZE;
+    }
+    return all;
+  }
+
+  async getDrivers(): Promise<Array<{ id: string; name: string; licenseNumber?: string; phone?: string; email?: string }>> {
+    try {
+      const resources = await this.searchResources(257);
+      const drivers: Array<{ id: string; name: string; licenseNumber?: string; phone?: string; email?: string }> = [];
+      for (const resource of resources) {
+        const detail = await this.request<{
+          item?: { drvrs?: Record<string, { id: number; n: string; p?: string; c?: string }> };
+        }>('core/search_item', { id: resource.id, flags: 257 });
+        const drvrs = detail.item?.drvrs || {};
+        for (const d of Object.values(drvrs)) {
+          drivers.push({
+            id: String(d.id),
+            name: d.n,
+            phone: d.p,
+            licenseNumber: d.c || String(d.id),
+          });
+        }
+      }
+      if (drivers.length) return drivers;
+    } catch { /* fallback */ }
+
+    const result = await this.request<WialonSearchResult>('core/search_items', {
+      spec: { itemsType: 'driver', propName: 'sys_name', propValueMask: '*', sortType: 'sys_name' },
+      force: 1,
+      flags: 1,
+      from: 0,
+      to: WIALON_SEARCH_PAGE_SIZE - 1,
+    });
+    return (result.items || []).map((d) => ({
+      id: String(d.id),
+      name: d.nm,
+      licenseNumber: d.prp?.license || String(d.id),
+      phone: d.prp?.phone,
+      email: d.prp?.email,
+    }));
+  }
+
+  async getGeofences(): Promise<Array<{ name: string; type: 'circle' | 'polygon'; center?: { lat: number; lng: number }; radius?: number; points?: unknown[]; color?: string }>> {
+    const resources = await this.searchResources(4097);
+    const zones: Array<{ name: string; type: 'circle' | 'polygon'; center?: { lat: number; lng: number }; radius?: number; points?: unknown[]; color?: string }> = [];
+    for (const resource of resources) {
+      const detail = await this.request<{
+        item?: {
+          zl?: Record<string, { id: number; n: string; t: number; w?: number; c?: number; b?: { cen_x: number; cen_y: number } }>;
+        };
+      }>('core/search_item', { id: resource.id, flags: 4097 });
+      const zl = detail.item?.zl || {};
+      for (const z of Object.values(zl)) {
+        const color = z.c ? `#${(z.c & 0xffffff).toString(16).padStart(6, '0')}` : '#3B82F6';
+        if (z.t === 3 && z.b) {
+          zones.push({
+            name: z.n,
+            type: 'circle',
+            center: { lat: z.b.cen_y, lng: z.b.cen_x },
+            radius: z.w,
+            color,
+          });
+          continue;
+        }
+        if (z.t === 2) {
+          try {
+            const zoneData = await this.request<Array<{ p?: Array<{ x: number; y: number }> }>>(
+              'resource/get_zone_data',
+              { itemId: resource.id, col: [z.id], flags: 1 }
+            );
+            const pts = zoneData[0]?.p;
+            if (pts?.length) {
+              zones.push({
+                name: z.n,
+                type: 'polygon',
+                points: pts.map((pt) => ({ lat: pt.y, lng: pt.x })),
+                color,
+              });
+            }
+          } catch { /* skip zone without detail */ }
+        }
+      }
+    }
+    return zones;
+  }
+
+  async getSensorValues(unitId: string): Promise<Array<{ name: string; value: string; unit?: string }>> {
+    try {
+      const result = await this.request<{ sensors?: Array<{ n: string; v: string; u?: string }> }>(
+        'unit/calc_last_message',
+        { unitId: parseInt(unitId, 10), sensors: [], flags: 1 }
+      );
+      return (result.sensors || []).map((s) => ({ name: s.n, value: s.v, unit: s.u }));
+    } catch {
+      return [];
+    }
+  }
+
+  async getTrips(unitId: string, from: Date, to: Date) {
+    return this.request<{ trips?: unknown[] }>('unit/get_trips', {
+      itemId: parseInt(unitId, 10),
+      timeFrom: Math.floor(from.getTime() / 1000),
+      timeTo: Math.floor(to.getTime() / 1000),
+      msgsSource: 0,
+    });
   }
 
   async sendCommand(assetId: string, command: string, params: Record<string, unknown>) {
+    const paramStr = params && Object.keys(params).length ? JSON.stringify(params) : '';
     return this.request('unit/exec_cmd', {
       itemId: parseInt(assetId, 10),
       commandName: command,
-      param: params,
+      linkType: '',
+      param: paramStr,
       timeout: 60,
+      flags: 0,
     });
+  }
+
+  async disconnect(): Promise<void> {
+    await this.client.disconnect();
   }
 }

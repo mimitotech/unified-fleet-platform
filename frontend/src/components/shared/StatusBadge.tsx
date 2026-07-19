@@ -13,6 +13,10 @@ type StatusType = VehicleStatus | DriverStatus | RouteStatus | AlertSeverity;
 
 interface StatusBadgeProps {
   status: StatusType;
+  label?: string;
+  /** When generator/machinery, idle/moving display as Running */
+  assetCategory?: 'vehicle' | 'generator' | 'machinery';
+  stationary?: boolean;
   showDot?: boolean;
   size?: 'sm' | 'md' | 'lg';
   className?: string;
@@ -107,24 +111,45 @@ const dotSizes = {
   lg: 'w-2 h-2',
 };
 
-export function StatusBadge({ status, showDot = true, size = 'md', className }: StatusBadgeProps) {
+export function StatusBadge({
+  status,
+  label,
+  assetCategory,
+  stationary,
+  showDot = true,
+  size = 'md',
+  className,
+}: StatusBadgeProps) {
   const config = statusConfig[status];
 
   if (!config) {
     return null;
   }
 
+  const isStationary =
+    stationary === true || assetCategory === 'generator' || assetCategory === 'machinery';
+  const engineOn = status === 'idle' || status === 'moving';
+  const displayLabel =
+    label?.trim() ||
+    (isStationary && engineOn ? 'Running' : config.label);
+  const classes =
+    isStationary && engineOn
+      ? statusConfig.moving.classes
+      : config.classes;
+  const dotColor =
+    isStationary && engineOn ? statusConfig.moving.dotColor : config.dotColor;
+
   return (
     <span
       className={cn(
         'inline-flex items-center gap-1.5 rounded-full font-medium',
-        config.classes,
+        classes,
         sizeClasses[size],
         className
       )}
     >
-      {showDot && <span className={cn('rounded-full', config.dotColor, dotSizes[size])} />}
-      {config.label}
+      {showDot && <span className={cn('rounded-full', dotColor, dotSizes[size])} />}
+      {displayLabel}
     </span>
   );
 }
