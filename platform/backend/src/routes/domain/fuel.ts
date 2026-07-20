@@ -46,7 +46,11 @@ router.get('/kpis', requireTenant, async (req: TenantRequest, res) => {
   const from = req.query.from ? String(req.query.from) : monthStartIso();
   const to = req.query.to ? String(req.query.to) : todayIso();
 
-  const report = await FuelDbReadService.getTransactions(req.tenantId!, { from, to });
+  const report = await FuelDbReadService.getTransactions(req.tenantId!, {
+    from,
+    to,
+    queueSync: false,
+  });
   return success(res, report.kpis);
 });
 

@@ -1,6 +1,5 @@
 import { query } from '../config/database.js';
 import { WialonFuelReportService } from './WialonFuelReportService.js';
-import { WialonFuelFleetService } from './WialonFuelFleetService.js';
 import { filterPlausibleFuelEvents } from './fuelEventPlausibility.js';
 import { encodePeriodLocation } from './wialonFuelReport/periodMeta.js';
 import type { FuelAssetCategory } from './wialonAssetCategory.js';
@@ -66,19 +65,27 @@ export class WialonFuelDbSyncService {
     // Never persist invented balance rows — recompute at read time with live guards.
     let toStore = txs.filter((tx) => tx.sensor !== 'balance');
 
-    // Drop impossible FLS noise before it lands in Postgres (e.g. BOWSER ±34k L swings).
+    // Drop impossible FLS noise before it lands in DB (e.g. BOWSER ±34k L swings).
+    // Use stored live snapshots — never call listAssets on the write path (slow Wialon fan-out).
     let liveFuelByUnit: Map<number, number> | undefined;
     try {
-      const { assets } = await WialonFuelFleetService.listAssets(tenantId);
-      liveFuelByUnit = new Map(
-        assets
-          .filter((a) => a.fuelLiters != null && a.fuelLiters >= 0)
-          .map((a) => [a.unitId, a.fuelLiters as number]),
-      );
+      const { WialonFuelLiveSnapshotService } = await import('./WialonFuelLiveSnapshotService.js');
+      const snaps = await WialonFuelLiveSnapshotService.getLatestByTenant(tenantId);
+      liveFuelByUnit = new Map();
+      for (const s of snaps as Array<Record<string, unknown>>) {
+        const id = Number(s.unit_id ?? s.unitId);
+        const liters = Number(s.fuel_liters ?? s.fuelLiters);
+        if (Number.isFinite(id) && Number.isFinite(liters) && liters >= 0) {
+          liveFuelByUnit.set(id, liters);
+        }
+      }
+      if (!liveFuelByUnit.size) liveFuelByUnit = undefined;
     } catch {
       liveFuelByUnit = undefined;
     }
-    toStore = filterPlausibleFuelEvents(toStore, liveFuelByUnit);
+    const filtered = filterPlausibleFuelEvents(toStore, liveFuelByUnit);
+    // If every row was rejected, still persist summaries / originals so the Fuel table is not empty.
+    toStore = filtered.length > 0 ? filtered : toStore;
     if (!toStore.length) return;
 
     const BATCH_SIZE = 250;

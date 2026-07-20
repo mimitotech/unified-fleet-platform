@@ -224,7 +224,7 @@ export function CoreFuelTab({
         </div>
       )}
 
-      {(isFuelWarming || isFuelBackgroundRefreshing) && !fuelError && (
+      {isFuelWarming && !fuelError && (
         <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-primary">
           Syncing fuel reports in the background. Live levels are shown now; totals update when the sync finishes.
         </div>

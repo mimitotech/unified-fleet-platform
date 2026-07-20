@@ -1,20 +1,20 @@
 /** Client live polling intervals (ms) — tuned for near-real-time Wialon fleet data. */
 export const LIVE_POLL = {
   /** Single fleet snapshot — powers map, list, sidebar, KPI counts */
-  fleet: 8_000,
-  statuses: 8_000,
-  assets: 10_000,
-  kpis: 10_000,
-  alerts: 15_000,
+  fleet: 12_000,
+  statuses: 12_000,
+  assets: 15_000,
+  kpis: 20_000,
+  alerts: 20_000,
   video: 30_000,
   integrations: 30_000,
-  fuel: 15_000,
+  fuel: 30_000,
   workshop: 20_000,
-  drivers: 15_000,
-  routes: 15_000,
+  drivers: 20_000,
+  routes: 20_000,
   geofences: 30_000,
-  unitDetail: 10_000,
-  unitTrack: 10_000,
+  unitDetail: 12_000,
+  unitTrack: 12_000,
   reports: 60_000,
 } as const;
 

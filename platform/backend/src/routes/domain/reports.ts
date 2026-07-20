@@ -24,7 +24,11 @@ router.get('/data/:type', requireTenant, async (req: TenantRequest, res) => {
       const fromDate = new Date();
       fromDate.setUTCDate(fromDate.getUTCDate() - 30);
       const from = fromDate.toISOString().slice(0, 10);
-      const report = await FuelDbReadService.getTransactions(tenantId, { from, to });
+      const report = await FuelDbReadService.getTransactions(tenantId, {
+        from,
+        to,
+        queueSync: false,
+      });
       return success(res, report.transactions);
     }
     case 'violations': {
@@ -57,7 +61,11 @@ router.get('/data/:type', requireTenant, async (req: TenantRequest, res) => {
       const from = new Date();
       const fromStr = `${from.getUTCFullYear()}-${String(from.getUTCMonth() + 1).padStart(2, '0')}-01`;
       const toStr = new Date().toISOString().slice(0, 10);
-      const report = await FuelDbReadService.getTransactions(tenantId, { from: fromStr, to: toStr });
+      const report = await FuelDbReadService.getTransactions(tenantId, {
+        from: fromStr,
+        to: toStr,
+        queueSync: false,
+      });
       return success(res, {
         kpis,
         totalFuel: report.kpis.totalConsumed,

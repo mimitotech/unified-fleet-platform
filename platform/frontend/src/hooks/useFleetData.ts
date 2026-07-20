@@ -96,7 +96,9 @@ export function useFleetData(options?: FleetDataOptions): FleetDataResult {
   const vehicles = vehiclesQuery.data ?? [];
   const fuelTransactions = fuelTransactionsQuery.data?.transactions ?? [];
   const isFuelWarming = fuelTransactionsQuery.data?.warming ?? false;
-  const isFuelBackgroundRefreshing = false;
+  const isFuelBackgroundRefreshing =
+    Boolean(fuelTransactionsQuery.data?.warming) ||
+    (Boolean(fuelTransactionsQuery.data?.needsRefresh) && fuelTransactionsQuery.isFetching);
   
   // -------------------------------------------------------------------------
   // Computed: Vehicle fuel level map (by ID)
@@ -198,8 +200,8 @@ export function useFleetData(options?: FleetDataOptions): FleetDataResult {
   // Loading and ready states
   // -------------------------------------------------------------------------
   const isVehiclesLoading = vehiclesQuery.isLoading;
-  const isFuelLoading = fuelTransactionsQuery.isFetching || fuelTransactionsQuery.isLoading;
-  const isLoading = isVehiclesLoading || isFuelLoading;
+  const isFuelLoading = fuelTransactionsQuery.isLoading && !fuelTransactionsQuery.data;
+  const isLoading = isVehiclesLoading || (fuelTransactionsQuery.isLoading && !fuelTransactionsQuery.data);
 
   // Ready when both queries have completed (even with empty data for 1 vehicle)
   const isReady = !isLoading && vehiclesQuery.isFetched && fuelTransactionsQuery.isFetched;

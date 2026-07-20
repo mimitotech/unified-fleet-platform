@@ -336,9 +336,10 @@ export class UfpFleetService implements IFleetService {
 
     const needsRefresh = Boolean(data.needsRefresh);
     const warming = Boolean(
-      data.warming ?? (data.source === 'warming' || (needsRefresh && transactions.length === 0)),
+      data.warming ?? (data.source === 'warming' && transactions.length === 0),
     );
-    return { transactions, warming: warming || needsRefresh, needsRefresh };
+    // Keep warming and needsRefresh separate — soft refresh must not look like "still syncing"
+    return { transactions, warming, needsRefresh };
   }
 
   async getFuelTransactions(filters?: FuelTransactionFilters): Promise<FuelTransaction[]> {

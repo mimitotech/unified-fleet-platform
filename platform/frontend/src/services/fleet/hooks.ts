@@ -653,7 +653,10 @@ function fuelTransactionsQueryOptions(
     refetchInterval: (query: { state: { data?: FuelTransactionsQueryData; status: string } }) => {
       const d = query.state.data;
       if (query.state.status === 'error') return false;
-      if (d?.warming || d?.needsRefresh || !d?.transactions?.length) return 8_000;
+      // Only poll fast while a first-time background sync is in progress
+      if (d?.warming) return 8_000;
+      // Soft stale refresh: slower poll until needsRefresh clears
+      if (d?.needsRefresh) return 30_000;
       return 60_000;
     },
     ...extra,

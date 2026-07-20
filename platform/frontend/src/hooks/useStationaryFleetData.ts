@@ -57,7 +57,9 @@ export function useStationaryFleetData(options?: StationaryFleetDataOptions): St
   const units = unitsQuery.data ?? [];
   const fuelTransactions = fuelQuery.data?.transactions ?? [];
   const isFuelWarming = fuelQuery.data?.warming ?? false;
-  const isFuelBackgroundRefreshing = Boolean(fuelQuery.data?.needsRefresh) || fuelQuery.isFetching;
+  const isFuelBackgroundRefreshing =
+    Boolean(fuelQuery.data?.warming) ||
+    (Boolean(fuelQuery.data?.needsRefresh) && fuelQuery.isFetching);
 
   const unitFuelMapByName = useMemo(() => buildFuelLevelByName(units), [units]);
 
@@ -76,9 +78,9 @@ export function useStationaryFleetData(options?: StationaryFleetDataOptions): St
     tableUnits,
     fuelTransactions,
     unitFuelMapByName,
-    isLoading: unitsQuery.isLoading || fuelQuery.isLoading || fuelQuery.isFetching,
+    isLoading: unitsQuery.isLoading || fuelQuery.isLoading,
     isUnitsLoading: unitsQuery.isLoading,
-    isFuelLoading: fuelQuery.isFetching || fuelQuery.isLoading,
+    isFuelLoading: fuelQuery.isLoading && !fuelQuery.data,
     isFuelWarming,
     isFuelBackgroundRefreshing,
     fuelError: fuelQuery.error ?? null,
