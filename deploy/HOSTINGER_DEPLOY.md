@@ -27,7 +27,7 @@ FROM tenants t WHERE t.slug = 'mimito' LIMIT 1;
 | Branch | `master` |
 | Node | `22.x` |
 | Root directory | `./` |
-| **Build command** | `npm install && npm run build -w @ufp/shared && npm run build -w frontend && npm run build -w backend` |
+| **Build command** | `npm install --legacy-peer-deps --ignore-scripts && node scripts/hostinger-build.mjs` |
 | **Output / entry** | Entry file: `backend/dist/index.js` (Node app — not static-only) |
 | Start command (if asked) | `node backend/dist/index.js` |
 
