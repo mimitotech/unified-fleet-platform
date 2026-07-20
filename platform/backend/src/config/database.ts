@@ -12,39 +12,48 @@ export interface QueryResult<T extends QueryResultRow = QueryResultRow> {
 let pool: Pool | null = null;
 
 function buildPoolConfig(): mysql.PoolOptions {
+  const user = process.env.DB_USER || process.env.MYSQL_USER || process.env.DB_USERNAME || '';
+  const password = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || '';
+  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || process.env.DB_DATABASE || '';
+  let host = process.env.DB_HOST || process.env.MYSQL_HOST || 'localhost';
+  if (host === '127.0.0.1' || host === '::1') host = 'localhost';
+  const port = parseInt(process.env.DB_PORT || process.env.MYSQL_PORT || '3306', 10);
+
+  // Prefer discrete DB_* on Hostinger — more reliable than DATABASE_URL parsing with special chars
+  if (user && database) {
+    console.log('[mams-db] connecting', { host, port, user, database, via: 'DB_*' });
+    return {
+      host,
+      port,
+      user,
+      password,
+      database,
+      waitForConnections: true,
+      connectionLimit: 10,
+      timezone: 'Z',
+      supportBigNumbers: true,
+      // localhost → Unix socket on Linux (Hostinger); required for user@localhost grants
+      ...(host === 'localhost' ? { socketPath: process.env.DB_SOCKET || undefined } : {}),
+    };
+  }
+
   const url = process.env.DATABASE_URL?.trim();
   if (url && (url.startsWith('mysql://') || url.startsWith('mysql2://'))) {
+    const normalized = url
+      .replace(/^mysql2:\/\//, 'mysql://')
+      .replace(/@(127\.0\.0\.1|\[::1\])(:\d+)?\//, '@localhost$2/');
+    console.log('[mams-db] connecting via DATABASE_URL');
     return {
-      uri: url.replace(/^mysql2:\/\//, 'mysql://'),
+      uri: normalized,
       waitForConnections: true,
-      connectionLimit: 20,
+      connectionLimit: 10,
       timezone: 'Z',
     };
   }
 
-  const host = process.env.DB_HOST || process.env.MYSQL_HOST || 'localhost';
-  const port = parseInt(process.env.DB_PORT || process.env.MYSQL_PORT || '3306', 10);
-  const user = process.env.DB_USER || process.env.MYSQL_USER || process.env.DB_USERNAME || '';
-  const password = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || '';
-  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || process.env.DB_DATABASE || '';
-
-  if (!user || !database) {
-    throw new Error(
-      'MySQL is not configured. Set DATABASE_URL or DB_HOST/DB_USER/DB_PASSWORD/DB_NAME.'
-    );
-  }
-
-  return {
-    host,
-    port,
-    user,
-    password,
-    database,
-    waitForConnections: true,
-    connectionLimit: 20,
-    timezone: 'Z',
-    supportBigNumbers: true,
-  };
+  throw new Error(
+    'MySQL is not configured. Set DB_HOST/DB_USER/DB_PASSWORD/DB_NAME (or DATABASE_URL).'
+  );
 }
 
 export function getPool(): Pool {

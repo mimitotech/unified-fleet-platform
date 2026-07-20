@@ -27,11 +27,17 @@ function resolveFrontendDist(): string | null {
     path.resolve(process.cwd(), 'frontend/dist'),
     path.resolve(process.cwd(), '../frontend/dist'),
     path.resolve(__dirname, '../../frontend/dist'),
-  ].filter(Boolean) as string[];
+  ]
+    .filter(Boolean)
+    .map((dir) => path.resolve(dir as string));
 
   for (const dir of candidates) {
-    if (fs.existsSync(path.join(dir, 'index.html'))) return dir;
+    if (fs.existsSync(path.join(dir, 'index.html'))) {
+      console.log('[mams] serving frontend from', dir);
+      return dir;
+    }
   }
+  console.warn('[mams] frontend dist not found — UI will not load');
   return null;
 }
 
@@ -97,7 +103,12 @@ export function createApp() {
       })
     );
     app.get(/^(?!\/api(?:\/|$)|\/uploads(?:\/|$)|\/health(?:\/|$)).*/, (_req, res) => {
-      res.sendFile(path.join(frontendDist, 'index.html'));
+      res.sendFile(path.join(frontendDist, 'index.html'), (err) => {
+        if (err && !res.headersSent) {
+          console.error('[mams] sendFile failed', err.message);
+          res.status(500).json({ success: false, error: 'UI bundle missing' });
+        }
+      });
     });
   } else {
     app.use((_req, res) => {
