@@ -9,6 +9,15 @@ import type { FuelAssetCategory } from '../../services/wialonAssetCategory.js';
 
 const router = Router();
 
+function monthStartIso(): string {
+  const d = new Date();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
+}
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 router.get('/transactions', requireTenant, async (req: TenantRequest, res) => {
   const refresh = req.query.refresh === 'true';
   const assetCategory = req.query.assetCategory
@@ -34,41 +43,28 @@ router.get('/transactions', requireTenant, async (req: TenantRequest, res) => {
 });
 
 router.get('/kpis', requireTenant, async (req: TenantRequest, res) => {
-  const from = req.query.from ? String(req.query.from) : undefined;
-  const to = req.query.to ? String(req.query.to) : undefined;
+  const from = req.query.from ? String(req.query.from) : monthStartIso();
+  const to = req.query.to ? String(req.query.to) : todayIso();
 
-  if (from && to) {
-    const report = await FuelDbReadService.getTransactions(req.tenantId!, { from, to });
-    return success(res, report.kpis);
-  }
-
-  const { rows } = await query(
-    `SELECT
-       COALESCE(SUM(filled), 0)::float as total_filled,
-       COALESCE(SUM(fuel_used), 0)::float as total_consumed,
-       COALESCE(SUM(mileage), 0)::float as total_mileage,
-       COUNT(*) FILTER (WHERE section = 'theft')::int as theft_events,
-       COUNT(DISTINCT unit_id)::int as vehicles_tracked
-     FROM fuel_transactions WHERE tenant_id = $1`,
-    [req.tenantId],
-  );
-  const r = toCamelRows(rows)[0] as Record<string, number>;
-  const avgConsumption = r.totalMileage > 0 ? (r.totalConsumed / r.totalMileage) * 100 : 0;
-  return success(res, { ...r, avgConsumption: Math.round(avgConsumption * 10) / 10 });
+  const report = await FuelDbReadService.getTransactions(req.tenantId!, { from, to });
+  return success(res, report.kpis);
 });
 
 router.get('/monthly-trend', requireTenant, async (req: TenantRequest, res) => {
   const { rows } = await query(
     `SELECT
-       to_char(to_timestamp(timestamp), 'YYYY-MM') as month,
-       COALESCE(SUM(filled), 0)::float as filled,
-       COALESCE(SUM(fuel_used), 0)::float as consumed
+       DATE_FORMAT(FROM_UNIXTIME(timestamp), '%Y-%m') as month,
+       COALESCE(SUM(CASE WHEN section = 'filling' THEN filled ELSE 0 END), 0) as filled,
+       COALESCE(SUM(CASE WHEN section = 'consumption' THEN fuel_used ELSE 0 END), 0) as consumed
      FROM fuel_transactions
      WHERE tenant_id = $1
-     GROUP BY 1 ORDER BY 1 DESC LIMIT 12`,
+       AND timestamp >= UNIX_TIMESTAMP(DATE_SUB(CURRENT_DATE, INTERVAL 12 MONTH))
+     GROUP BY 1
+     ORDER BY 1 ASC
+     LIMIT 12`,
     [req.tenantId],
   );
-  return success(res, toCamelRows(rows).reverse());
+  return success(res, toCamelRows(rows));
 });
 
 /** Latest stored sensor snapshots (historical). Live tank levels still come from Wialon. */

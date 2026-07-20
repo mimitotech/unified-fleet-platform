@@ -1,7 +1,7 @@
 import { query } from '../config/database.js';
 import { toCamelRows } from '../utils/mapper.js';
 import { WialonFuelDbSyncService } from './WialonFuelDbSyncService.js';
-import { WialonFuelFleetService } from './WialonFuelFleetService.js';
+import { WialonFuelLiveSnapshotService } from './WialonFuelLiveSnapshotService.js';
 import {
   computeFuelKpis,
   enrichTankLevels,
@@ -71,22 +71,6 @@ function dbRowToFuelTransaction(r: Record<string, unknown>): FuelTransaction {
   };
 }
 
-async function resolveUnitIdsForCategory(tenantId: string, assetCategory?: FuelAssetCategory) {
-  try {
-    const { assets } = await WialonFuelFleetService.listAssets(tenantId);
-    const scoped = assetCategory
-      ? assets.filter((a) => a.assetType === assetCategory)
-      : assets;
-    // listAssets already excludes Wialon-deactivated units — use as the only allow-list.
-    const unitIds = scoped.map((a) => String(a.unitId));
-    return unitIds.length ? unitIds : undefined;
-  } catch (err) {
-    logger.debug(`[FuelDbRead] active unit list skipped tenant=${tenantId} category=${assetCategory}`, err);
-    return undefined;
-  }
-}
-
-/** Derive period consumption when Wialon only synced fillings (Fillings Report tenants). */
 async function enrichWithBalanceConsumption(
   tenantId: string,
   rows: FuelTransaction[],
@@ -95,18 +79,22 @@ async function enrichWithBalanceConsumption(
   const withoutBalance = rows.filter((r) => r.sensor !== 'balance');
   let liveFuelByUnit: Map<number, number> | undefined;
   try {
-    const { assets } = await WialonFuelFleetService.listAssets(tenantId);
-    liveFuelByUnit = new Map(
-      assets
-        .filter((a) => a.fuelLiters != null && a.fuelLiters >= 0)
-        .map((a) => [a.unitId, a.fuelLiters as number]),
-    );
+    // Prefer stored live snapshots (fast) over listAssets (slow Wialon fan-out)
+    const snaps = await WialonFuelLiveSnapshotService.getLatestByTenant(tenantId);
+    liveFuelByUnit = new Map();
+    for (const s of snaps as Array<Record<string, unknown>>) {
+      const id = Number(s.unitId ?? s.unit_id);
+      const liters = Number(s.fuelLiters ?? s.fuel_liters);
+      if (Number.isFinite(id) && Number.isFinite(liters) && liters >= 0) {
+        liveFuelByUnit.set(id, liters);
+      }
+    }
+    if (!liveFuelByUnit.size) liveFuelByUnit = undefined;
   } catch {
     liveFuelByUnit = undefined;
   }
 
   const plausible = filterPlausibleFuelEvents(withoutBalance, liveFuelByUnit);
-  // applyBalanceConsumption decides per-unit (skips units that already have report consumption).
   return applyBalanceConsumption(plausible, liveFuelByUnit);
 }
 
@@ -126,12 +114,8 @@ async function readTransactionsFromDb(opts: {
     WHERE tenant_id = $1 AND timestamp >= $2 AND timestamp <= $3`;
   const params: unknown[] = [opts.tenantId, opts.fromTs, opts.toTs];
 
-  const unitIds = await resolveUnitIdsForCategory(opts.tenantId, opts.assetCategory);
-  if (unitIds && unitIds.length) {
-    // Strict allow-list: only currently active Wialon units (disabled/removed excluded).
-    sql += ` AND unit_id = ANY($${params.length + 1})`;
-    params.push(unitIds);
-  } else if (opts.assetCategory) {
+  // Filter by DB column only — never call live Wialon on the hot path
+  if (opts.assetCategory) {
     sql += ` AND asset_category = $${params.length + 1}`;
     params.push(opts.assetCategory);
   }

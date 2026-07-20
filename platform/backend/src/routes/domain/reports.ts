@@ -3,6 +3,7 @@ import { query } from '../../config/database.js';
 import { requireTenant, type TenantRequest } from '../../middleware/tenant.js';
 import { success } from '../../utils/response.js';
 import { DashboardOrchestrator } from '../../orchestrators/DashboardOrchestrator.js';
+import { FuelDbReadService } from '../../services/FuelDbReadService.js';
 
 const router = Router();
 
@@ -19,11 +20,12 @@ router.get('/data/:type', requireTenant, async (req: TenantRequest, res) => {
       return success(res, rows);
     }
     case 'fuel': {
-      const { rows } = await query(
-        `SELECT * FROM fuel_transactions WHERE tenant_id = $1 ORDER BY timestamp DESC LIMIT 500`,
-        [tenantId]
-      );
-      return success(res, rows);
+      const to = new Date().toISOString().slice(0, 10);
+      const fromDate = new Date();
+      fromDate.setUTCDate(fromDate.getUTCDate() - 30);
+      const from = fromDate.toISOString().slice(0, 10);
+      const report = await FuelDbReadService.getTransactions(tenantId, { from, to });
+      return success(res, report.transactions);
     }
     case 'violations': {
       const { rows } = await query(
@@ -52,11 +54,16 @@ router.get('/data/:type', requireTenant, async (req: TenantRequest, res) => {
     case 'executive': {
       const dash = new DashboardOrchestrator(tenantId);
       const kpis = await dash.getKpis();
-      const { rows: fuel } = await query(
-        `SELECT COALESCE(SUM(fuel_used), 0)::float as total FROM fuel_transactions WHERE tenant_id = $1`,
-        [tenantId]
-      );
-      return success(res, { kpis, totalFuel: fuel[0]?.total || 0 });
+      const from = new Date();
+      const fromStr = `${from.getUTCFullYear()}-${String(from.getUTCMonth() + 1).padStart(2, '0')}-01`;
+      const toStr = new Date().toISOString().slice(0, 10);
+      const report = await FuelDbReadService.getTransactions(tenantId, { from: fromStr, to: toStr });
+      return success(res, {
+        kpis,
+        totalFuel: report.kpis.totalConsumed,
+        fuel: report.kpis,
+        period: { from: fromStr, to: toStr },
+      });
     }
     default:
       return success(res, { error: 'Unknown report type' });

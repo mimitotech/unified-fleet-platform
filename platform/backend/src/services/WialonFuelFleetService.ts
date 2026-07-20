@@ -24,7 +24,6 @@ import {
 } from './wialonFuelSensorSlots.js';
 import { unitSliceToSearchItem, sliceHasFuelSensorData } from './wialonFuelUnitItem.js';
 import { WialonUnitItemsCache } from './wialonUnitItemsCache.js';
-import { WialonFuelAnalyticsService } from './WialonFuelAnalyticsService.js';
 import { withWialonClient } from './WialonSessionService.js';
 import { searchUnitsForAccount, accountIdFrom } from './wialonLiveUtils.js';
 import type { WialonSearchItem } from '../adapters/wialonUtils.js';
@@ -136,7 +135,6 @@ export class WialonFuelFleetService {
     }
 
     const data = await pending;
-    void WialonFuelAnalyticsService.warmStandardMonths(tenantId);
     memoryCache.set(tenantId, { data, expires: Date.now() + MEMORY_TTL_MS });
     void cache.set(redisKey, data, REDIS_TTL_SEC);
     return { ...data, fromCache: false };

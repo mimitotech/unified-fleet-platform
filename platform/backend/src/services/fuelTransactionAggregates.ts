@@ -76,11 +76,13 @@ export function computeFuelKpis(rows: FuelTransaction[], fromDate?: string, toDa
 
   const totalFilled = [...filledByUnit.values()].reduce((a, b) => a + b, 0);
   const totalConsumed = [...usedByUnit.values()].reduce((a, b) => a + b, 0);
+  const totalTheftLiters = [...dropByUnit.values()].reduce((a, b) => a + b, 0);
   const avgConsumption = totalMileage > 0 ? Math.round((totalConsumed / totalMileage) * 1000) / 10 : 0;
 
   return {
     totalFilled: Math.round(totalFilled * 10) / 10,
     totalConsumed: Math.round(totalConsumed * 10) / 10,
+    totalTheftLiters: Math.round(totalTheftLiters * 10) / 10,
     totalMileage: Math.round(totalMileage * 10) / 10,
     avgConsumption,
     theftEvents,

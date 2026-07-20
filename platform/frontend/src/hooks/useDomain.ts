@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { clientApi } from '@/lib/api';
 import { LIVE_POLL, pollWhenVisible } from '@/lib/liveRefresh';
@@ -51,11 +52,18 @@ export function useFuelTransactions(enabled = true) {
 }
 
 export function useFuelKpis(enabled = true) {
+  const from = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+  }, []);
+  const to = useMemo(() => new Date().toISOString().slice(0, 10), []);
+
   return useQuery({
-    queryKey: ['fuelKpis'],
-    queryFn: () => clientApi.getFuelKpis(),
+    queryKey: ['fuelKpis', from, to],
+    queryFn: () => clientApi.getFuelKpis(from, to),
     enabled,
     refetchInterval: enabled ? pollWhenVisible(LIVE_POLL.fuel) : false,
+    staleTime: 60_000,
   });
 }
 

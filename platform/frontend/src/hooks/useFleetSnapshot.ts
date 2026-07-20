@@ -57,7 +57,8 @@ export function useFleetSnapshot() {
     gcTime: 10 * 60_000,
   });
 
-  const { data: liveFuel } = useWialonFleetFuelLive(connected);
+  // Live fleet snapshot already includes fuel — skip extra Wialon fuel poll unless DB fallback
+  const { data: liveFuel } = useWialonFleetFuelLive(connected && Boolean(query.data) && !query.data?.live);
 
   const snapshot = query.data;
   const units = useMemo(() => {

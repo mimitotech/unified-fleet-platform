@@ -37,7 +37,6 @@ import {
   DashboardQuickAccess,
   moduleEnabledSet,
 } from '@/components/dashboard/DashboardQuickAccess';
-import { useDashboardKpis } from '@/hooks/useAssets';
 import { useFleetUnits } from '@/hooks/useFleetUnits';
 import { useAlerts } from '@/hooks/useAlerts';
 import { useModules } from '@/hooks/useModules';
@@ -100,10 +99,17 @@ export default function Dashboard() {
   const hasCommands = enabled.has('commands');
   const hasSurveillance = enabled.has('surveillance');
 
-  const { data: kpis, isLoading: kpisLoading, isError, refetch } = useDashboardKpis();
   const { units, counts, statuses, live, isLoading: fleetLoading } = useFleetUnits();
   const { connected, configured, ctx } = useWialonContext();
-  const { data: alerts } = useAlerts(80, hasAlerts);
+  const alertFrom = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 6);
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }, []);
+  const { data: alerts, isError: alertsError, refetch: refetchAlerts } = useAlerts(200, hasAlerts, {
+    from: alertFrom,
+  });
   const alertList = safeArray<{
     id?: string;
     title?: string;
@@ -113,7 +119,7 @@ export default function Dashboard() {
     acknowledged?: boolean;
   }>(alerts);
 
-  const { data: fuelKpis } = useFuelKpis(hasFuel);
+  const { data: fuelKpis, isError: fuelKpisError, refetch: refetchFuelKpis } = useFuelKpis(hasFuel);
   const { data: fuelTrend } = useFuelTrend(hasFuel);
   const { data: workshopKpis } = useWorkshopKpis(hasWorkshop);
   const { data: driverStats } = useDriverStats(hasDrivers);
@@ -334,9 +340,9 @@ export default function Dashboard() {
 
   const fuelFilled = num((fuelKpis as Record<string, number> | undefined)?.totalFilled);
   const fuelUsed = num((fuelKpis as Record<string, number> | undefined)?.totalConsumed);
-  const fuelTheft = num(
-    (fuelKpis as Record<string, number> | undefined)?.theftEvents
-      ?? (fuelKpis as Record<string, number> | undefined)?.theftCount,
+  const fuelTheftLiters = num(
+    (fuelKpis as Record<string, number> | undefined)?.totalTheftLiters
+      ?? (fuelKpis as Record<string, number> | undefined)?.theftLiters,
   );
   const fuelTracked = num((fuelKpis as Record<string, number> | undefined)?.vehiclesTracked);
   const avgConsumption = num((fuelKpis as Record<string, number> | undefined)?.avgConsumption);
@@ -345,9 +351,9 @@ export default function Dashboard() {
     () => [
       { name: 'Filled', value: Math.round(fuelFilled), fill: brand },
       { name: 'Consumed', value: Math.round(fuelUsed), fill: accent },
-      { name: 'Theft', value: Math.round(fuelTheft), fill: ALERT_SEVERITY.critical },
+      { name: 'Theft (L)', value: Math.round(fuelTheftLiters), fill: ALERT_SEVERITY.critical },
     ],
-    [fuelFilled, fuelUsed, fuelTheft, brand, accent],
+    [fuelFilled, fuelUsed, fuelTheftLiters, brand, accent],
   );
 
   const fuelTrendRows = useMemo(() => {
@@ -484,7 +490,7 @@ export default function Dashboard() {
   const freshNow = freshnessBars[0]?.value ?? 0;
 
   const moduleCount = enabled.size;
-  const showLoader = fleetLoading && !(units?.length) && kpisLoading && !kpis;
+  const showLoader = fleetLoading && !(units?.length);
 
   if (showLoader) {
     return (
@@ -496,8 +502,15 @@ export default function Dashboard() {
 
   return (
     <AppLayout title="Dashboard" subtitle="Live operational picture across your enabled modules">
-      {isError && (
-        <QueryErrorBanner message="Could not load dashboard KPIs." onRetry={() => refetch()} className="mb-4" />
+      {(fuelKpisError || alertsError) && (
+        <QueryErrorBanner
+          message="Some dashboard widgets could not load."
+          onRetry={() => {
+            void refetchFuelKpis();
+            void refetchAlerts();
+          }}
+          className="mb-4"
+        />
       )}
 
       <AnimatedPage className="space-y-6">

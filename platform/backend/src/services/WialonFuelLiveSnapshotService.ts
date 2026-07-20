@@ -108,10 +108,11 @@ export class WialonFuelLiveSnapshotService {
 
   static async pruneOldSnapshots(tenantId: string, keepDays = 90): Promise<void> {
     try {
+      const days = Math.max(1, Math.min(3650, Math.floor(Number(keepDays) || 90)));
       await query(
         `DELETE FROM fuel_live_snapshots
-         WHERE tenant_id = $1 AND recorded_at < DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL $2 DAY)`,
-        [tenantId, keepDays],
+         WHERE tenant_id = $1 AND recorded_at < DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL ${days} DAY)`,
+        [tenantId],
       );
     } catch (err) {
       logger.debug(`[FuelLiveSnapshot] prune skipped for tenant ${tenantId}`, err);

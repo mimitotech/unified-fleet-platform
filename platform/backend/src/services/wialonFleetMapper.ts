@@ -77,6 +77,8 @@ export function fleetToSnapshotResponse(fleet: WialonFleetSnapshot, live = true)
       netconn: u.netconn,
       motionState: u.motionState,
       status: u.status,
+      assetCategory: u.assetCategory,
+      stationary: u.stationary === true || u.assetCategory === 'generator' || u.assetCategory === 'machinery',
       fuelLevel: u.fuelLevel,
       fuel: u.fuel,
       trip: u.trip,

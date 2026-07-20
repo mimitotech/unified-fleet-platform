@@ -335,25 +335,40 @@ router.get('/fleet/snapshot', requireTenant, async (req: TenantRequest, res) => 
 
   const byStatus = { moving: 0, idle: 0, stopped: 0, offline: 0 };
   const byKind: Record<string, number> = {};
+  const byHwName: Record<string, number> = {};
   let withPosition = 0;
 
   const units = items.map((row) => {
     const st = (row.status as { status?: string; location?: { latitude?: number; longitude?: number; speed?: number; timestamp?: Date }; fuelLevel?: number } | null);
     const status = (st?.status || 'offline') as 'moving' | 'idle' | 'stopped' | 'offline';
     if (status in byStatus) byStatus[status as keyof typeof byStatus]++;
-    const asset = row.asset as { name?: string; registrationPlate?: string; wialonKind?: string; modules?: string[]; hardware?: string } | undefined;
+    const asset = row.asset as {
+      name?: string;
+      registrationPlate?: string;
+      wialonKind?: string;
+      modules?: string[];
+      hardware?: string;
+      hwName?: string;
+      sources?: Array<{ type?: string; id?: string }>;
+    } | undefined;
     const kind = asset?.wialonKind || 'tracker';
     byKind[kind] = (byKind[kind] || 0) + 1;
+    const hwLabel = asset?.hwName || asset?.hardware || 'Unknown';
+    byHwName[hwLabel] = (byHwName[hwLabel] || 0) + 1;
     const loc = st?.location;
     const hasPos = loc?.latitude != null && loc?.longitude != null;
     if (hasPos) withPosition++;
 
+    const wialonSrc = asset?.sources?.find((s) => s.type === 'wialon');
+    const wialonId = wialonSrc?.id && Number.isFinite(Number(wialonSrc.id)) ? Number(wialonSrc.id) : undefined;
+
     return {
-      id: row.assetId,
-      wialonId: Number.isFinite(Number(row.assetId)) ? Number(row.assetId) : undefined,
+      id: wialonId != null ? String(wialonId) : row.assetId,
+      wialonId,
       name: asset?.name || `Unit ${row.assetId}`,
       plate: asset?.registrationPlate,
       kind,
+      hwName: hwLabel,
       modules: asset?.modules || [],
       hardware: asset?.hardware,
       status,
@@ -382,6 +397,7 @@ router.get('/fleet/snapshot', requireTenant, async (req: TenantRequest, res) => 
       offline: byStatus.offline,
       withPosition,
       byKind,
+      byHwName,
     },
     assetCount: assets.length,
   });
