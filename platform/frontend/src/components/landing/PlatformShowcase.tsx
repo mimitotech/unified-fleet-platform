@@ -128,7 +128,7 @@ export function PlatformShowcase() {
               >
                 <Video className="w-8 h-8 text-white/30" />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
-                  <span className="text-[10px] text-white font-medium">Channel {n} · LocoNav / TrackSolid</span>
+                  <span className="text-[10px] text-white font-medium">Camera {n}</span>
                 </div>
                 <span className="absolute top-2 right-2 flex items-center gap-1 text-[9px] text-red-400 font-medium">
                   <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
@@ -142,10 +142,10 @@ export function PlatformShowcase() {
         {tab === 'alerts' && (
           <div className="p-4 space-y-2 h-[320px] overflow-hidden">
             {[
-              { title: 'Speed violation — UG 1234A', sev: 'critical', src: 'Wialon', time: '2m ago' },
-              { title: 'Geofence exit — Warehouse A', sev: 'warning', src: 'TrackSolid', time: '8m ago' },
-              { title: 'Idling detected — Gen-07', sev: 'warning', src: 'LocoNav', time: '15m ago' },
-              { title: 'Fuel drop anomaly', sev: 'info', src: 'Wialon', time: '1h ago' },
+              { title: 'Speed violation — UG 1234A', sev: 'critical', time: '2m ago' },
+              { title: 'Geofence exit — Warehouse A', sev: 'warning', time: '8m ago' },
+              { title: 'Idling detected — Gen-07', sev: 'warning', time: '15m ago' },
+              { title: 'Fuel drop anomaly', sev: 'info', time: '1h ago' },
             ].map((alert, i) => (
               <div
                 key={alert.title}
@@ -154,7 +154,7 @@ export function PlatformShowcase() {
               >
                 <div>
                   <p className="text-sm font-medium">{alert.title}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">{alert.src} · {alert.time}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{alert.time}</p>
                 </div>
                 <span
                   className={cn(
@@ -174,20 +174,22 @@ export function PlatformShowcase() {
         {tab === 'admin' && (
           <div className="p-5 h-[320px] flex flex-col justify-center">
             <div className="grid grid-cols-3 gap-3 mb-4">
-              {['Wialon', 'LocoNav', 'TrackSolid'].map((name, i) => (
+              {[
+                { label: 'Vehicles', value: 42 },
+                { label: 'Active users', value: 12 },
+                { label: 'Open alerts', value: 5 },
+              ].map((item) => (
                 <div
-                  key={name}
+                  key={item.label}
                   className="rounded-xl border border-primary/15 p-3 text-center bg-white shadow-sm"
                 >
-                  <p className="text-xs font-semibold text-primary">{name}</p>
-                  <p className="text-[10px] text-primary mt-1 font-medium">✓ Verified</p>
-                  <p className="text-lg font-bold mt-1">{[24, 18, 31][i]}</p>
-                  <p className="text-[10px] text-muted-foreground">assets synced</p>
+                  <p className="text-xs font-semibold text-primary">{item.label}</p>
+                  <p className="text-lg font-bold mt-2">{item.value}</p>
                 </div>
               ))}
             </div>
             <p className="text-sm text-center text-muted-foreground">
-              Configure credentials once — clients never see telematics logins.
+              Manage access, assets, and alerts from one place.
             </p>
           </div>
         )}

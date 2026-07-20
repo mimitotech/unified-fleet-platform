@@ -4,7 +4,7 @@ import { useAuth } from '@/providers/AuthProvider';
 import { MamsLogo } from '@/components/shared/MamsLogo';
 import { MamsBrandName } from '@/components/shared/MamsBrandName';
 import { LoadingButton } from '@/components/shared/LoadingButton';
-import { TERMS_OF_USE, TERMS_VERSION } from '@/lib/termsOfUse';
+import { LEGAL_DOCUMENTS, TERMS_VERSION } from '@/lib/termsOfUse';
 import { dashboardPathForRole } from '@/lib/authRedirect';
 import { notify } from '@/lib/notify';
 import { BRAND } from '@/lib/branding';
@@ -38,7 +38,7 @@ export default function TermsOfUse() {
     setSubmitting(true);
     try {
       await acceptTerms();
-      notify.success('Terms accepted', 'Welcome to MAMS');
+      notify.success('Terms accepted', `Welcome to ${BRAND.name}`);
       navigate(nextPath, { replace: true });
     } catch (err) {
       notify.error('Could not save acceptance', (err as Error).message);
@@ -61,30 +61,61 @@ export default function TermsOfUse() {
       <main className="flex-1 max-w-3xl mx-auto w-full px-6 py-8 flex flex-col">
         <div className="mb-6">
           <MamsBrandName size="lg" as="h1" className="mb-2" />
-          <h2 className="text-xl font-semibold text-foreground">Terms of Use</h2>
+          <h2 className="text-xl font-semibold text-foreground">Privacy Policy &amp; Terms of Use</h2>
           <p className="text-sm text-muted-foreground mt-2">
-            Please read the following terms before accessing {BRAND.fullName}. You must accept to continue.
+            Please read the following before accessing {BRAND.fullName}. You must accept to continue.
           </p>
         </div>
 
-        <div className="flex-1 rounded-2xl border border-primary/15 bg-white shadow-sm overflow-hidden flex flex-col min-h-[420px]">
-          <div className="flex-1 overflow-y-auto p-6 space-y-5 text-sm leading-relaxed">
-            {TERMS_OF_USE.map((term, index) => (
-              <section key={term.title}>
-                <h3 className="font-semibold text-primary flex items-start gap-2">
-                  <span className="text-xs font-bold bg-primary/10 text-primary rounded-full w-6 h-6 flex items-center justify-center shrink-0 mt-0.5">
-                    {index + 1}
-                  </span>
-                  {term.title}
-                </h3>
-                <p className="text-muted-foreground mt-2 pl-8">{term.body}</p>
-              </section>
+        <div className="flex-1 rounded-2xl border border-primary/15 bg-white shadow-sm overflow-hidden flex flex-col min-h-[420px] max-h-[70vh]">
+          <div className="flex-1 overflow-y-auto p-6 space-y-10 text-sm leading-relaxed">
+            {LEGAL_DOCUMENTS.map((doc) => (
+              <article key={doc.id} className="space-y-5">
+                <header className="border-b border-primary/10 pb-3">
+                  <h3 className="text-lg font-semibold text-primary">{doc.title}</h3>
+                  <p className="text-xs text-muted-foreground mt-1">Last updated: {doc.lastUpdated}</p>
+                </header>
+
+                {doc.intro.map((para) => (
+                  <p key={para.slice(0, 48)} className="text-muted-foreground">
+                    {para}
+                  </p>
+                ))}
+
+                {doc.sections.map((section) => (
+                  <section key={`${doc.id}-${section.number}-${section.title}`} className="space-y-2">
+                    <h4 className="font-semibold text-foreground flex items-start gap-2">
+                      {section.number ? (
+                        <span className="text-xs font-bold bg-primary/10 text-primary rounded-full w-6 h-6 flex items-center justify-center shrink-0 mt-0.5">
+                          {section.number}
+                        </span>
+                      ) : null}
+                      <span>{section.title}</span>
+                    </h4>
+                    {section.paragraphs?.map((para) => (
+                      <p key={para.slice(0, 40)} className="text-muted-foreground pl-8">
+                        {para}
+                      </p>
+                    ))}
+                    {section.bullets?.length ? (
+                      <ul className="list-disc pl-14 space-y-1 text-muted-foreground">
+                        {section.bullets.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {section.note ? (
+                      <p className="text-muted-foreground pl-8 italic">{section.note}</p>
+                    ) : null}
+                  </section>
+                ))}
+              </article>
             ))}
           </div>
 
           <div className="border-t border-primary/10 bg-primary/[0.03] px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-4">
             <p className="text-xs text-muted-foreground text-center sm:text-left">
-              Version {TERMS_VERSION} · {BRAND.name} · Mimito
+              Version {TERMS_VERSION} · Mimito Technologies Limited
             </p>
             <LoadingButton
               type="button"

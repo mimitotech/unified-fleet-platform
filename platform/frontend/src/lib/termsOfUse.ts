@@ -1,46 +1,340 @@
-import { BRAND } from '@/lib/branding';
+/**
+ * Mimito Privacy Policy and Terms of Use
+ * Source: MIMITO PRIVACY POLICY AND TERMS OF USE — 24th February 2026
+ */
 
-export const TERMS_VERSION = '2026-06-30';
+export const TERMS_VERSION = '2026-02-24';
 
-export const TERMS_OF_USE = [
+export type LegalSection = {
+  number?: string;
+  title: string;
+  paragraphs?: string[];
+  bullets?: string[];
+  note?: string;
+};
+
+export type LegalDocument = {
+  id: 'privacy' | 'terms';
+  title: string;
+  lastUpdated: string;
+  intro: string[];
+  sections: LegalSection[];
+};
+
+export const LEGAL_DOCUMENTS: LegalDocument[] = [
   {
-    title: 'Authorized platform use',
-    body: `${BRAND.fullName} (${BRAND.name}) is provided by Mimito for legitimate fleet and asset management. You may use the system only for business purposes authorized by your organization and in compliance with applicable laws.`,
+    id: 'privacy',
+    title: 'Privacy Policy',
+    lastUpdated: 'February 24, 2026',
+    intro: [
+      'This Privacy Policy explains how Mimito ("Company", "we", "us", or "our") collects, uses, discloses, and protects personal data in connection with the Mimito Technologies Limited Tracking platforms and related services (the "Services").',
+      'We are committed to complying with the Data Protection and Privacy Act, 2019 of Uganda and other applicable data protection and electronic communications laws.',
+      'By accessing or using the Services, you acknowledge that you have read and understood this Privacy Policy.',
+    ],
+    sections: [
+      {
+        number: '1',
+        title: 'Scope of This Policy',
+        paragraphs: [
+          'This Privacy Policy applies to personal data processed in connection with:',
+        ],
+        bullets: [
+          'Organisations that subscribe to the Services ("Clients");',
+          'Individuals authorised to use the Services on behalf of Clients;',
+          'Drivers or other individuals whose data is processed through the Services; and',
+          'Visitors to related websites or portals operated by us.',
+        ],
+        note:
+          'Depending on the circumstances: we act as a data controller for account, administrative, and billing data relating to our Clients; and we act as a data processor when processing operational data (such as driver, telematics, or vehicle data) on behalf of Clients. Where we act as a data processor, the relevant Client remains responsible for ensuring that personal data is collected and processed lawfully.',
+      },
+      {
+        number: '2',
+        title: 'Legal Basis for Processing',
+        paragraphs: [
+          'We process personal data based on one or more of the following grounds:',
+        ],
+        bullets: [
+          'Performance of a contract with you or your organisation;',
+          'Compliance with legal obligations;',
+          'Legitimate interests in operating, securing, and improving the Services, provided those interests are not overridden by individual rights; and',
+          'Consent, where required by law (for example, certain marketing communications).',
+        ],
+        note:
+          'Where processing is based on consent, consent may be withdrawn at any time without affecting prior lawful processing.',
+      },
+      {
+        number: '3',
+        title: 'Categories of Personal Data Collected',
+        paragraphs: [
+          'Depending on configuration and integrations, we may process:',
+          '(a) Account and Contact Information — Names, organisation details, job title, business email address, phone number, login credentials, and user preferences.',
+          '(b) Driver and Operational Data — Driver identifiers, contact information where provided, vehicle assignments, licence or identification details where supplied by Clients.',
+          '(c) Telematics and Location Data — Vehicle identifiers, GPS location data, route history, speed, braking events, idling, engine status, alerts, and related metadata.',
+          '(d) Video and Safety Data (where enabled) — Video recordings, images, event-triggered clips (e.g., collision events), timestamps, location metadata, and safety analytics outputs.',
+          '(e) Technical and Usage Data — IP address, browser type, device information, operating system, timestamps, access logs, and diagnostic data.',
+          '(f) Support Communications — Information provided when contacting support, submitting feedback, or responding to surveys.',
+        ],
+        note:
+          'Clients are responsible for notifying drivers and other affected individuals that their data — including location, telematics, and where enabled, video data — may be collected and processed through the Services.',
+      },
+      {
+        number: '4',
+        title: 'How We Use Personal Data',
+        paragraphs: ['We use personal data to:'],
+        bullets: [
+          'Provide, configure, and operate the Services for Clients and their users;',
+          'Display real-time and historical fleet, driver, and vehicle information;',
+          'Generate alerts, notifications, reports, and analytics based on Client configurations and subscription tiers;',
+          'Authenticate users and secure Accounts;',
+          'Provide support, respond to enquiries, and resolve technical issues;',
+          'Monitor performance, detect, prevent, and investigate fraud, abuse, or security incidents;',
+          'Improve and develop the Platform, including through aggregated and anonymised analytics; and',
+          'Comply with legal, regulatory, and contractual obligations.',
+        ],
+        note:
+          'Subject to your consent where required, we may also use contact information to send you information about updates, new features, or services that may be relevant to your organisation. You can opt out of marketing communications at any time.',
+      },
+      {
+        number: '5',
+        title: 'Sharing and Disclosure',
+        paragraphs: ['We may share personal data with:'],
+        bullets: [
+          'Our staff and authorised contractors who need access to perform their duties, subject to confidentiality obligations;',
+          'Service providers and sub-processors that provide hosting, storage, communications, analytics, security, and other operational services for the Platform;',
+          'Third-party integrations, such as telematics, GPS, and video services, where these integrations are enabled by the Client and sharing is necessary to operate them;',
+          'Professional advisers, such as lawyers, auditors, and insurers, under confidentiality obligations; and',
+          'Public authorities or courts, where required to comply with applicable laws, enforce our rights, or respond to lawful requests.',
+        ],
+        note:
+          'We do not sell personal data for marketing purposes. If we are involved in a merger, acquisition, or sale of assets, personal data may be transferred as part of that transaction, subject to continued protection consistent with this Privacy Policy and applicable law.',
+      },
+      {
+        number: '6',
+        title: 'International Data Transfers',
+        paragraphs: [
+          'Personal data processed through the Platform may be stored or processed on servers located inside or outside Uganda. Where we transfer personal data outside Uganda, we take steps required by applicable law to ensure that an adequate level of protection is in place, for example through contractual safeguards.',
+        ],
+      },
+      {
+        number: '7',
+        title: 'Data Retention',
+        paragraphs: [
+          'We retain personal data only for as long as necessary to provide the Services, fulfil the purposes described in this Privacy Policy, comply with legal and regulatory requirements, resolve disputes, and enforce our agreements.',
+          "Retention periods may vary depending on the type of data, the Client's configuration, and contractual obligations. When personal data is no longer needed, we will delete it or anonymise it so that it can no longer be linked to an identifiable individual, unless we are required by law to retain it longer.",
+        ],
+      },
+      {
+        number: '8',
+        title: 'Security',
+        paragraphs: [
+          'We implement reasonable technical and organisational measures to protect personal data against accidental or unlawful destruction, loss, alteration, unauthorised disclosure, or access. These measures include:',
+        ],
+        bullets: [
+          'Role-based access controls;',
+          'Encryption in transit;',
+          'System logging and monitoring;',
+          'Secure hosting infrastructure;',
+          'Regular security updates.',
+        ],
+        note:
+          'However, no system is completely secure, and we cannot guarantee absolute security. Users are responsible for keeping their login credentials confidential and for promptly notifying us of any suspected unauthorised access to their Account.',
+      },
+      {
+        number: '9',
+        title: 'Your Rights',
+        paragraphs: [
+          'Subject to the Data Protection and Privacy Act, 2019 of Uganda and other applicable laws, you may have the right to:',
+        ],
+        bullets: [
+          'Request access to personal data we hold about you;',
+          'Request correction of inaccurate or incomplete data;',
+          'Request deletion of personal data in certain circumstances;',
+          'Object to or request restriction of processing in certain circumstances;',
+          'Object at any time to the use of your personal data for direct marketing; and',
+          'Where technically feasible and where required by law, request data portability.',
+        ],
+        note:
+          'If your data is processed through a Client Account (for example, as a driver or employee of a Client), we may first direct you to contact that Client, as they may be the data controller responsible for your data. To exercise your rights, please contact us using the details in Section 11. We may need to verify your identity before responding and may not be able to fully comply with a request where this would conflict with legal or contractual obligations.',
+      },
+      {
+        number: '10',
+        title: 'Complaints',
+        paragraphs: [
+          'If you believe that we have not complied with applicable data protection laws, you may contact us using the details below so that we can address your concerns. You also have the right to lodge a complaint with the Personal Data Protection Office or other competent authority in Uganda in accordance with the Data Protection and Privacy Act, 2019.',
+        ],
+      },
+      {
+        number: '11',
+        title: 'Contact Us',
+        paragraphs: [
+          'If you have questions about this Privacy Policy or our data practices, or if you wish to exercise your data protection rights, please contact us at:',
+          'Email: sales@mimitotracking.co.ug',
+          'Telephone: +256 200 906 950',
+          'Address: Kisaasi-Kyanja Road, Arches Building, Level 3, Office 3A, P.O. Box 125988',
+        ],
+      },
+      {
+        number: '12',
+        title: 'Changes to This Policy',
+        paragraphs: [
+          'We may update this Privacy Policy from time to time to reflect changes in our Services or legal requirements. Where changes are material, we will provide reasonable notice. Continued use of the Services after the effective date of changes constitutes acknowledgement of the updated Policy.',
+        ],
+      },
+    ],
   },
   {
-    title: 'Account security',
-    body: 'You are responsible for safeguarding your login credentials. Do not share passwords, reuse credentials across systems, or allow unauthorized persons to access your account. Report suspected compromise to your administrator immediately.',
+    id: 'terms',
+    title: 'Terms of Use',
+    lastUpdated: 'February 24, 2026',
+    intro: [
+      'These Terms of Use ("Terms") govern your access to and use of the Mimito Technologies Limited platforms including any Tracking platforms, associated websites, dashboards, mobile applications, APIs, and related services (collectively, the "Services") provided by Mimito Technologies Limited ("Company", "we", "us", or "our").',
+      'By accessing or using the Services, you agree to be bound by these Terms and any policies referenced in them, including our Privacy Policy. If you are using the Services on behalf of a company or other legal entity, you represent that you have authority to bind that entity, and that entity accepts these Terms. If you do not agree to these Terms, you must not use the Services.',
+      'These Terms are governed by the laws of the Republic of Uganda.',
+    ],
+    sections: [
+      {
+        number: '1',
+        title: 'Eligibility and Registration',
+        paragraphs: [
+          'You may use the Services only if you are at least 18 years old, have legal capacity to contract under the laws of Uganda, and are authorised to act on behalf of your organisation where applicable.',
+          'You must provide accurate, complete, and current information when registering and must keep such information updated. You are responsible for maintaining the confidentiality of your login credentials and for all activities conducted through your account. You must promptly notify us of any suspected unauthorised access or security breach.',
+          'If you provide access to the Services to your employees, drivers, contractors, or other authorised users, you are responsible for ensuring their compliance with these Terms and all applicable laws.',
+        ],
+      },
+      {
+        number: '2',
+        title: 'Subscriptions and Service Scope',
+        paragraphs: [
+          'The Services are provided on a subscription basis. The scope of features, modules, and usage limits available to you will be determined by your subscription plan or commercial agreement with us.',
+          'Subscription details, including fees, billing cycle, duration, and included features, may be set out in an order form, invoice, or separate commercial agreement. You may not exceed agreed usage limits (including limits on users, vehicles, or data volumes) without our prior written approval.',
+          'We may enhance, modify, or discontinue certain features from time to time. Where changes materially reduce core functionality for existing subscribers, we will provide reasonable notice.',
+        ],
+      },
+      {
+        number: '3',
+        title: 'Permitted Use',
+        paragraphs: [
+          'You may use the Services solely for legitimate business purposes related to the monitoring and management of assets, vehicles, drivers, and related operational activities.',
+          'You must not:',
+        ],
+        bullets: [
+          'Use the Services for unlawful, fraudulent, or harmful activities;',
+          'Violate traffic, safety, employment, or data protection laws when using data obtained through the Services;',
+          'Attempt to gain unauthorised access to the Services, systems, or data;',
+          'Interfere with the integrity, availability, or security of the Services;',
+          'Reverse engineer, decompile, or attempt to derive source code except where expressly permitted by non-excludable law;',
+          'Upload or transmit content that is unlawful, defamatory, discriminatory, obscene, or infringing.',
+        ],
+        note:
+          'We may suspend or restrict access where we reasonably believe the Services are being misused or used unlawfully.',
+      },
+      {
+        number: '4',
+        title: 'Client Data and Data Protection',
+        paragraphs: [
+          'You retain ownership of all data that you submit to or generate through the Services ("Client Data"), including personal data, telematics data, location information, video footage, and documents.',
+          'You grant us a non-exclusive, worldwide, royalty-free licence to host, store, process, and use Client Data as necessary to:',
+        ],
+        bullets: [
+          'Provide and maintain the Services;',
+          'Ensure system security and integrity;',
+          'Provide support and troubleshooting;',
+          'Comply with legal obligations; and',
+          'Improve and develop the Services in aggregated or anonymised form.',
+        ],
+        note:
+          'You are responsible for ensuring that your collection and processing of personal data through the Services complies with the Data Protection and Privacy Act, 2019 of Uganda and any other applicable laws, including providing appropriate notices to affected individuals.',
+      },
+      {
+        number: '5',
+        title: 'Third-Party Services',
+        paragraphs: [
+          'The Services may integrate with or rely upon independent third-party providers, including telematics, GPS, or video systems. Such third parties operate under their own terms and privacy policies.',
+          'We do not control and are not responsible for the availability, performance, or practices of third-party services. Certain features may depend on the continued availability of those services.',
+        ],
+      },
+      {
+        number: '6',
+        title: 'Intellectual Property',
+        paragraphs: [
+          'All intellectual property rights in the Services, including software, interfaces, designs, trademarks, and underlying technology, are owned by the Company or its licensors.',
+          'Subject to your compliance with these Terms and payment of applicable fees, we grant you a limited, non-exclusive, non-transferable, revocable licence to access and use the Services for your internal business purposes.',
+          'Nothing in these Terms transfers ownership of any intellectual property rights to you.',
+        ],
+      },
+      {
+        number: '7',
+        title: 'Confidentiality',
+        paragraphs: [
+          'Each party may receive confidential information from the other in connection with the Services. Each party agrees to use such information solely for purposes related to the Services, to protect it using reasonable safeguards, and not to disclose it except to authorised personnel or where required by law.',
+        ],
+      },
+      {
+        number: '8',
+        title: 'Warranties and Disclaimers',
+        paragraphs: [
+          'The Services are provided on an "as is" and "as available" basis. To the fullest extent permitted by the laws of Uganda, we disclaim all warranties, whether express, implied, statutory, or otherwise, including warranties of merchantability, fitness for a particular purpose, and non-infringement.',
+          'We do not guarantee uninterrupted, error-free, or completely secure operation of the Services, nor do we guarantee the accuracy or continuous availability of telematics or video data. You remain responsible for verifying information before relying on it for operational, safety, or legal decisions.',
+        ],
+      },
+      {
+        number: '9',
+        title: 'Limitation of Liability',
+        paragraphs: [
+          'To the maximum extent permitted under Ugandan law, we shall not be liable for indirect, incidental, special, consequential, or punitive damages, or for loss of profits, revenue, data, or business opportunities arising from your use of the Services.',
+          'Our total aggregate liability arising out of or relating to the Services shall not exceed the total fees paid by you during the six (6) months immediately preceding the event giving rise to the claim.',
+          'Nothing in these Terms limits liability that cannot lawfully be excluded or limited under applicable law.',
+        ],
+      },
+      {
+        number: '10',
+        title: 'Indemnity',
+        paragraphs: [
+          'You agree to indemnify and hold harmless the Company, its affiliates, directors, employees, and agents from and against claims, damages, losses, liabilities, and expenses (including reasonable legal fees) arising out of:',
+        ],
+        bullets: [
+          'Your breach of these Terms;',
+          'Your misuse of the Services; or',
+          'Claims by third parties (including employees or drivers) relating to your use of the Services or your processing of their data.',
+        ],
+      },
+      {
+        number: '11',
+        title: 'Suspension and Termination',
+        paragraphs: [
+          'We may suspend or terminate your access to the Services if:',
+        ],
+        bullets: [
+          'You materially breach these Terms and fail to remedy the breach within a reasonable period after notice;',
+          'The Services are used for unlawful or fraudulent purposes; or',
+          'We are required to do so by law or regulatory authority.',
+        ],
+        note:
+          'Upon termination, your right to access the Services ceases. We may retain or delete Client Data in accordance with our Privacy Policy and applicable law.',
+      },
+      {
+        number: '12',
+        title: 'Changes to These Terms',
+        paragraphs: [
+          'We may update these Terms from time to time. Where changes are material, we will provide reasonable notice. Continued use of the Services after the effective date of revised Terms constitutes acceptance of the updated Terms.',
+        ],
+      },
+      {
+        number: '13',
+        title: 'Governing Law and Dispute Resolution',
+        paragraphs: [
+          'These Terms are governed by the laws of the Republic of Uganda. Any dispute arising out of or relating to these Terms shall be subject to the exclusive jurisdiction of the competent courts of Uganda, unless the parties agree in writing to an alternative dispute resolution mechanism.',
+        ],
+      },
+      {
+        number: '14',
+        title: 'Contact Information',
+        paragraphs: [
+          'If you have questions regarding these Terms, please contact us at:',
+          'Email: sales@mimitotracking.co.ug',
+          'Address: Kisaasi-Kyanja Road, Arches Building, Level 3, Office 3A, P.O. Box 125988',
+        ],
+      },
+    ],
   },
-  {
-    title: 'Telematics & third-party data',
-    body: 'Vehicle location, sensor, video, and alert data may originate from integrated providers (e.g. Wialon, LocoNav, TrackSolid Pro). Your organization is responsible for lawful collection and use of telematics data from drivers, employees, and assets.',
-  },
-  {
-    title: 'Location & GPS privacy',
-    body: 'Live and historical GPS data displayed in MAMS may identify individuals or assets. Access location data only when your role requires it and only for legitimate operational, safety, or compliance purposes.',
-  },
-  {
-    title: 'Video surveillance',
-    body: 'Where surveillance modules are enabled, video streams and recordings must be handled according to your organization\'s privacy policies and local regulations. Unauthorized copying, distribution, or misuse of footage is prohibited.',
-  },
-  {
-    title: 'Role-based access & confidentiality',
-    body: 'Your permissions are limited to modules and data assigned to your role and tenant. You must not attempt to access other tenants, bypass controls, export data without authorization, or disclose confidential fleet information.',
-  },
-  {
-    title: 'Acceptable use',
-    body: 'You must not interfere with platform operation, probe security controls, introduce malware, scrape data at scale, or use MAMS for unlawful surveillance, harassment, or any purpose outside your organization\'s approved use.',
-  },
-  {
-    title: 'Audit & monitoring',
-    body: 'MAMS may log sign-ins, configuration changes, and administrative actions for security and compliance. By using the platform you acknowledge that such activity may be reviewed by authorized Mimito or tenant administrators.',
-  },
-  {
-    title: 'Service availability',
-    body: 'Map, tracking, and integration features depend on network connectivity and third-party telematics services. Mimito does not guarantee uninterrupted availability and is not liable for delays caused by external providers or connectivity issues.',
-  },
-  {
-    title: 'Acceptance & updates',
-    body: 'By selecting Accept, you confirm that you have read these terms and agree to comply with them. Mimito may update these terms; continued use after notice may require renewed acceptance.',
-  },
-] as const;
+];
