@@ -27,7 +27,7 @@ Import from `deploy/hostinger.env.example` (inside the `platform` folder on disk
 Critical:
 
 ```
-DB_HOST=127.0.0.1
+DB_HOST=localhost
 DB_USER=u454222977_mams
 DB_PASSWORD=…
 DB_NAME=u454222977_mams
@@ -37,7 +37,8 @@ VITE_API_URL=
 REDIS_DISABLED=1
 ```
 
-Use **`127.0.0.1`**, not `localhost` (HomeBridge+ lesson — avoids IPv6 MySQL failures).
+Use **`localhost`**, not `127.0.0.1` — Hostinger MySQL grants are usually `user@localhost` (socket).  
+`127.0.0.1` causes: `Access denied for user '…'@'127.0.0.1'`.
 
 ## After deploy
 

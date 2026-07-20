@@ -22,7 +22,7 @@ function buildPoolConfig(): mysql.PoolOptions {
     };
   }
 
-  const host = process.env.DB_HOST || process.env.MYSQL_HOST || '127.0.0.1';
+  const host = process.env.DB_HOST || process.env.MYSQL_HOST || 'localhost';
   const port = parseInt(process.env.DB_PORT || process.env.MYSQL_PORT || '3306', 10);
   const user = process.env.DB_USER || process.env.MYSQL_USER || process.env.DB_USERNAME || '';
   const password = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || '';

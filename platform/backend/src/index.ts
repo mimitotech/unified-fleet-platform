@@ -15,44 +15,52 @@ import { validateEnv } from './config/env.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
-async function waitForDatabase(maxAttempts = 20, delayMs = 2000): Promise<void> {
+function isAuthError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /access denied|er_access_denied|er_dbaccess_denied/i.test(msg);
+}
+
+async function waitForDatabase(maxAttempts = 8, delayMs = 1500): Promise<boolean> {
   for (let i = 1; i <= maxAttempts; i++) {
     try {
       await connectDatabase();
-      return;
+      return true;
     } catch (err) {
-      if (i === maxAttempts) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`Waiting for MySQL (${i}/${maxAttempts}): ${msg.slice(0, 160)}`);
+
+      // Wrong password / host grant — do not burn 40s retrying the same failure
+      if (isAuthError(err)) {
         logger.error(`
-MySQL connection failed after ${maxAttempts} attempts.
+MySQL Access denied for this user/host.
 
-Check Hostinger environment variables:
-  DB_HOST / DB_USER / DB_PASSWORD / DB_NAME
-  (or DATABASE_URL=mysql://user:pass@host:3306/dbname)
+On Hostinger, set:
+  DB_HOST=localhost
+  DB_USER=u454222977_mams
+  DB_PASSWORD=<exact password from hPanel → Databases>
+  DB_NAME=u454222977_mams
 
-Import schema first:
-  database/mysql/ufp_complete_schema.sql via phpMyAdmin
+Remove DATABASE_URL or make its host localhost (not 127.0.0.1).
+Confirm the user can open the DB in phpMyAdmin with the same password.
 `);
-        throw err;
+        return false;
       }
-      logger.warn(`Waiting for MySQL (${i}/${maxAttempts})...`);
+
+      if (i === maxAttempts) {
+        logger.error(`MySQL connection failed after ${maxAttempts} attempts.`);
+        return false;
+      }
       await new Promise((r) => setTimeout(r, delayMs));
     }
   }
+  return false;
 }
 
 async function main() {
   try {
     validateEnv();
-    await waitForDatabase();
-    logger.info('MySQL connected');
 
-    process.env.REDIS_DISABLED = process.env.REDIS_DISABLED || '1';
-    await connectRedis();
-    logger.info('Redis connected (or skipped)');
-
-    startSyncScheduler();
-    logger.info('Sync scheduler started');
-
+    // Attach HTTP app immediately (HomeBridge pattern) so nginx never 504s while DB connects
     const app = createApp();
     const attach = (globalThis as { __mamsAttach?: (handler: typeof app) => void }).__mamsAttach;
 
@@ -63,6 +71,19 @@ async function main() {
       app.listen(PORT, '0.0.0.0', () => {
         logger.info(`MAMS server listening on port ${PORT}`);
       });
+    }
+
+    process.env.REDIS_DISABLED = process.env.REDIS_DISABLED || '1';
+    await connectRedis();
+    logger.info('Redis connected (or skipped)');
+
+    const dbOk = await waitForDatabase();
+    if (dbOk) {
+      logger.info('MySQL connected');
+      startSyncScheduler();
+      logger.info('Sync scheduler started');
+    } else {
+      logger.error('MySQL not connected — UI is up; /api and /health will report database error until credentials are fixed');
     }
 
     process.on('SIGTERM', async () => {
