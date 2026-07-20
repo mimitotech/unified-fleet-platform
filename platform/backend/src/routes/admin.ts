@@ -26,6 +26,16 @@ import {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/** Prefer same-origin /uploads paths; strip accidental localhost prefixes from stored URLs. */
+function publicAssetPath(value: unknown): string | null {
+  if (value == null || value === '') return null;
+  const s = String(value).trim();
+  if (!s) return null;
+  const local = s.match(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/uploads\/.+)$/i);
+  if (local) return local[3];
+  return s;
+}
+
 const router = Router();
 router.use(authMiddleware);
 router.use(requireAdminAccess);
@@ -45,8 +55,8 @@ function mapTenant(row: Record<string, unknown>) {
     primaryColor: row.primary_color,
     secondaryColor: row.secondary_color,
     accentColor: row.accent_color,
-    logoUrl: row.logo_url,
-    faviconUrl: row.favicon_url,
+    logoUrl: publicAssetPath(row.logo_url),
+    faviconUrl: publicAssetPath(row.favicon_url),
     isActive: row.is_active,
     status: row.status || (row.is_active ? 'active' : 'inactive'),
     contactEmail: row.contact_email,

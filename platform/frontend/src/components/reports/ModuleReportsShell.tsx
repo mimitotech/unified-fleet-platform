@@ -3,8 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { FileText, Printer, ArrowUpDown, Search, Download } from 'lucide-react';
-import { resolveTenantBranding } from '@/lib/tenantBranding';
-import { loadBrandingCache } from '@/lib/tenantBrandingCache';
+import { useTenantBranding } from '@/hooks/useTenantBranding';
 import { cn } from '@/lib/utils';
 import { PeriodAssetControls } from '@/components/shared/PeriodAssetControls';
 import { notify } from '@/lib/notify';
@@ -111,7 +110,7 @@ export function ModuleReportsShell({
   onToChange,
   onAssetChange,
 }: Props) {
-  const branding = resolveTenantBranding(loadBrandingCache());
+  const branding = useTenantBranding();
   const [localKind, setLocalKind] = useState(reports[0]?.id ?? 'executive');
   const kind = selectedReportId ?? localKind;
   const setKind = onSelectedReportIdChange ?? setLocalKind;

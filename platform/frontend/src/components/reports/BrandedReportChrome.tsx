@@ -2,6 +2,7 @@ import { useMemo, type CSSProperties, type ReactNode } from 'react';
 import { format } from 'date-fns';
 import { BRAND } from '@/lib/branding';
 import type { ResolvedTenantBranding } from '@/lib/tenantBranding';
+import { resolveAssetUrl } from '@/lib/assets';
 import { cn } from '@/lib/utils';
 
 export function makeReportRef(d: Date = new Date()): string {
@@ -14,9 +15,13 @@ type DocumentProps = {
   className?: string;
 };
 
+function reportLogoSrc(branding: ResolvedTenantBranding): string {
+  return resolveAssetUrl(branding.logoUrl) || BRAND.logo;
+}
+
 /** Report shell with client-logo watermark (print / PDF security). */
 export function BrandedReportDocument({ branding, children, className }: DocumentProps) {
-  const logoSrc = branding.logoUrl || BRAND.logo;
+  const logoSrc = reportLogoSrc(branding);
 
   return (
     <div data-report-document className={cn('relative bg-white', className)}>
@@ -29,7 +34,7 @@ export function BrandedReportDocument({ branding, children, className }: Documen
           src={logoSrc}
           alt=""
           data-report-watermark-img
-          className="select-none opacity-[0.06] w-[min(420px,68%)] max-w-none rotate-[-24deg]"
+          className="select-none opacity-[0.07] w-[min(420px,68%)] max-w-none rotate-[-24deg]"
         />
       </div>
       <div data-report-content className="relative z-[1]">
@@ -77,7 +82,7 @@ export function BrandedReportHeader({
     () => makeReportRef(Number.isNaN(generatedDate.getTime()) ? new Date() : generatedDate),
     [generatedDate],
   );
-  const logoSrc = branding.logoUrl || BRAND.logo;
+  const logoSrc = reportLogoSrc(branding);
 
   return (
     <header
@@ -102,6 +107,13 @@ export function BrandedReportHeader({
               src={logoSrc}
               alt={branding.name || 'Client'}
               className="max-h-full max-w-full object-contain"
+              onError={(e) => {
+                const img = e.currentTarget;
+                if (!img.dataset.fallback) {
+                  img.dataset.fallback = '1';
+                  img.src = BRAND.logo;
+                }
+              }}
             />
           </div>
           <p

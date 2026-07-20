@@ -54,7 +54,7 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
     setCollapsed((c) => !c);
   }, [isCompact]);
 
-  const width = isCompact ? 0 : collapsed ? 72 : 232;
+  const width = isCompact ? 0 : collapsed ? 84 : 232;
 
   return (
     <SidebarContext.Provider

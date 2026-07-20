@@ -45,6 +45,13 @@ router.get('/tenant', requireTenant, async (req: TenantRequest, res) => {
   const { rows } = await query(`SELECT * FROM tenants WHERE id = $1`, [req.tenantId]);
   if (!rows[0]) return error(res, 'Tenant not found', 404);
   const t = rows[0] as Record<string, unknown>;
+  const assetPath = (value: unknown): string | null => {
+    if (value == null || value === '') return null;
+    const s = String(value).trim();
+    const local = s.match(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/uploads\/.+)$/i);
+    if (local) return local[3];
+    return s || null;
+  };
   return success(res, {
     id: t.id,
     name: t.name,
@@ -52,8 +59,8 @@ router.get('/tenant', requireTenant, async (req: TenantRequest, res) => {
     primaryColor: t.primary_color,
     secondaryColor: t.secondary_color,
     accentColor: t.accent_color,
-    logoUrl: t.logo_url,
-    faviconUrl: t.favicon_url,
+    logoUrl: assetPath(t.logo_url),
+    faviconUrl: assetPath(t.favicon_url),
     customCss: t.custom_css,
     contactEmail: t.contact_email,
     phone: t.phone,

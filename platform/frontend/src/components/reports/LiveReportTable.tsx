@@ -15,8 +15,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import type { LiveReportDef } from '@/lib/reportCatalog';
 import { formatReportCell, tableToCsv, downloadTextFile } from '@/lib/reportUtils';
 import { renderReportCell } from '@/lib/reportCellStyles';
-import { resolveTenantBranding } from '@/lib/tenantBranding';
-import { loadBrandingCache } from '@/lib/tenantBrandingCache';
+import { useTenantBranding } from '@/hooks/useTenantBranding';
 import { notify } from '@/lib/notify';
 import {
   BrandedReportDocument,
@@ -52,7 +51,7 @@ export function LiveReportTable({
   moduleLabel = 'Reports',
   className,
 }: Props) {
-  const branding = resolveTenantBranding(loadBrandingCache());
+  const branding = useTenantBranding();
   const [busy, setBusy] = useState(false);
 
   const exportCsv = () => {

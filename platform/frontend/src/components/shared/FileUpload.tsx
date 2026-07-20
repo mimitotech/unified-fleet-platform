@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Upload, X, ImageIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { resolveAssetUrl } from '@/lib/assets';
 
 interface FileUploadProps {
   label?: string;
@@ -13,8 +14,12 @@ interface FileUploadProps {
 
 export function FileUpload({ label = 'Upload image', accept = 'image/*', previewUrl, onUpload, className }: FileUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [preview, setPreview] = useState<string | undefined>(previewUrl);
+  const [preview, setPreview] = useState<string | undefined>(resolveAssetUrl(previewUrl) || previewUrl);
   const [uploading, setUploading] = useState(false);
+
+  useEffect(() => {
+    setPreview(resolveAssetUrl(previewUrl) || previewUrl);
+  }, [previewUrl]);
 
   const handleFile = async (file: File) => {
     const reader = new FileReader();

@@ -6,8 +6,7 @@ import { useFleetAssetProfile } from '@/hooks/useFleetAssetProfile';
 import { useAlerts } from '@/hooks/useAlerts';
 import { useDrivers, useWorkshopKpis, useInspections, useMaintenanceLogs, useBreakdowns } from '@/hooks/useDomain';
 import { safeArray } from '@/lib/safeArray';
-import { resolveTenantBranding } from '@/lib/tenantBranding';
-import { loadBrandingCache } from '@/lib/tenantBrandingCache';
+import { useTenantBranding } from '@/hooks/useTenantBranding';
 import type { DomainChartSpec } from '@/lib/domainReportCharts';
 import { CHART } from '@/lib/chartColors';
 
@@ -176,7 +175,7 @@ export function DriversModuleReports() {
 }
 
 export function AlertsModuleReports() {
-  const branding = resolveTenantBranding(loadBrandingCache());
+  const branding = useTenantBranding();
   const todayStr = new Date().toISOString().slice(0, 10);
   const [fromDate, setFromDate] = useState(() => {
     const d = new Date();

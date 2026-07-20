@@ -7,14 +7,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { BrandedReportDocument, BrandedReportFooter, BrandedReportHeader } from '@/components/reports/BrandedReportChrome';
 import { clientApi } from '@/lib/api';
 import { notify } from '@/lib/notify';
-import { resolveTenantBranding } from '@/lib/tenantBranding';
-import { loadBrandingCache } from '@/lib/tenantBrandingCache';
+import { useTenantBranding } from '@/hooks/useTenantBranding';
 import { cn } from '@/lib/utils';
 import type { FuelTabDateRangeProps } from './fuelTabTypes';
 import { QueryErrorBanner } from '@/components/shared/QueryErrorBanner';
 
 export function FuelVarianceTab({ fromDate, toDate }: FuelTabDateRangeProps) {
-  const branding = resolveTenantBranding(loadBrandingCache());
+  const branding = useTenantBranding();
   const printRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
   const { data, isLoading, isError, refetch, isFetching } = useQuery({

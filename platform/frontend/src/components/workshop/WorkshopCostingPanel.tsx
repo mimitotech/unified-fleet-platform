@@ -12,8 +12,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from 'recharts';
-import { resolveTenantBranding } from '@/lib/tenantBranding';
-import { loadBrandingCache } from '@/lib/tenantBrandingCache';
+import { useTenantBranding } from '@/hooks/useTenantBranding';
 import { notify } from '@/lib/notify';
 import { BrandedReportFooter, BrandedReportHeader, BrandedReportDocument } from '@/components/reports/BrandedReportChrome';
 import { cn } from '@/lib/utils';
@@ -140,7 +139,7 @@ export function WorkshopModuleReports({
   pendingJobs?: number;
   openBreakdowns?: number;
 }) {
-  const branding = resolveTenantBranding(loadBrandingCache());
+  const branding = useTenantBranding();
   const [kind, setKind] = useState<ReportKind>('executive');
   const previewRef = useRef<HTMLDivElement>(null);
 

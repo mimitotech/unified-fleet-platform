@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { adminApi } from '@/lib/api';
 import { BRAND } from '@/lib/branding';
+import { resolveAssetUrl } from '@/lib/assets';
 import { notify, withToast } from '@/lib/notify';
 import { FileUpload } from '@/components/shared/FileUpload';
 import { LoadingButton } from '@/components/shared/LoadingButton';
@@ -1213,10 +1214,11 @@ export default function TenantDetail() {
               <FileUpload
                 label="Company Logo"
                 previewUrl={branding.logoUrl}
-                onUpload={async (file, preview) => {
+                onUpload={async (file) => {
                   const result = await adminApi.uploadTenantFile(id!, file, 'logo');
-                  const url = result.publicUrl || result.url;
-                  setBranding({ ...branding, logoUrl: url.startsWith('http') ? url : `${import.meta.env.VITE_API_URL || 'http://localhost:3000'}${url}` });
+                  // Persist relative /uploads/... for same-origin production
+                  const url = result.url || result.publicUrl || '';
+                  setBranding({ ...branding, logoUrl: url });
                   notify.success('Logo uploaded');
                 }}
               />
@@ -1226,8 +1228,8 @@ export default function TenantDetail() {
                 previewUrl={branding.faviconUrl}
                 onUpload={async (file) => {
                   const result = await adminApi.uploadTenantFile(id!, file, 'favicon');
-                  const url = result.publicUrl || result.url;
-                  setBranding({ ...branding, faviconUrl: url.startsWith('http') ? url : `${import.meta.env.VITE_API_URL || 'http://localhost:3000'}${url}` });
+                  const url = result.url || result.publicUrl || '';
+                  setBranding({ ...branding, faviconUrl: url });
                   notify.success('Favicon uploaded');
                 }}
               />
@@ -1246,7 +1248,15 @@ export default function TenantDetail() {
           <div className="fleet-card p-4">
             <p className="text-sm font-medium mb-2">Preview</p>
             <div className="flex items-center gap-3 p-3 rounded border" style={{ backgroundColor: branding.primaryColor, color: '#fff' }}>
-              {branding.logoUrl && <img src={branding.logoUrl} alt="" className="h-8" />}
+              {branding.logoUrl ? (
+                <div className="h-10 px-2 rounded bg-white flex items-center justify-center">
+                  <img
+                    src={resolveAssetUrl(branding.logoUrl) || branding.logoUrl}
+                    alt=""
+                    className="h-8 max-w-[120px] object-contain"
+                  />
+                </div>
+              ) : null}
               <span className="font-bold">{general.name || 'Client Preview'}</span>
             </div>
           </div>

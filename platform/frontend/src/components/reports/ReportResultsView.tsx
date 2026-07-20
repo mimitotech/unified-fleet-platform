@@ -8,8 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { WialonReportResult, WialonReportTable } from '@/lib/reportUtils';
 import { formatReportCell, numericColumns, tableToCsv, downloadTextFile } from '@/lib/reportUtils';
 import { cn } from '@/lib/utils';
-import { resolveTenantBranding } from '@/lib/tenantBranding';
-import { loadBrandingCache } from '@/lib/tenantBrandingCache';
+import { useTenantBranding } from '@/hooks/useTenantBranding';
 import { notify } from '@/lib/notify';
 import { BrandedReportFooter, BrandedReportHeader, BrandedReportDocument } from '@/components/reports/BrandedReportChrome';
 import { FuelReportPerformanceCharts } from '@/components/fuel/FuelReportPerformanceCharts';
@@ -30,7 +29,7 @@ function ReportTableView({
   table: WialonReportTable;
   branded?: boolean;
 }) {
-  const branding = resolveTenantBranding(loadBrandingCache());
+  const branding = useTenantBranding();
   const cols = useMemo(() => {
     if (table.columns.length) return table.columns;
     if (!table.rows[0]) return [];
@@ -144,7 +143,7 @@ function PrintChartPlaceholders() {
 }
 
 export function ReportResultsView({ data, templateName, unitName, moduleLabel = 'Reports', className }: Props) {
-  const branding = resolveTenantBranding(loadBrandingCache());
+  const branding = useTenantBranding();
   const { tables, charts, summary } = data;
   const defaultTab = tables[0] ? String(tables[0].index) : '0';
   const [activeTab, setActiveTab] = useState(defaultTab);

@@ -56,8 +56,8 @@ export function DynamicSidebar() {
       >
         <div
           className={cn(
-            'border-b border-sidebar-border px-3 py-3',
-            collapsed && !isCompact ? 'flex flex-col items-center gap-2' : 'space-y-2',
+            'border-b border-sidebar-border py-3',
+            collapsed && !isCompact ? 'px-1.5 flex flex-col items-center gap-2' : 'px-3 space-y-2',
           )}
         >
           <div

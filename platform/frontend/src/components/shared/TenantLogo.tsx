@@ -12,9 +12,9 @@ interface TenantLogoProps {
 }
 
 const SIZE = {
-  sidebar: { shell: 'h-12 min-w-[48px] max-w-[140px]', img: 'max-h-9 max-w-[120px]', name: 'text-sm' },
-  header: { shell: 'h-11 min-w-[44px] max-w-[120px]', img: 'max-h-8 max-w-[100px]', name: 'text-base' },
-  lg: { shell: 'h-14 min-w-[56px] max-w-[160px]', img: 'max-h-11 max-w-[140px]', name: 'text-base' },
+  sidebar: { shell: 'h-12 min-w-[52px] max-w-[160px]', img: 'max-h-10 max-w-[140px]', name: 'text-sm' },
+  header: { shell: 'h-12 min-w-[48px] max-w-[140px]', img: 'max-h-9 max-w-[120px]', name: 'text-base' },
+  lg: { shell: 'h-14 min-w-[56px] max-w-[180px]', img: 'max-h-12 max-w-[160px]', name: 'text-base' },
 } as const;
 
 /** Tenant logo with high-contrast container; falls back to MAMS logo */

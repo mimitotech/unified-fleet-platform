@@ -27,8 +27,14 @@ router.post('/tenants/:id/upload', async (req: AuthRequest, res, next) => {
       buffer
     );
 
-    const publicUrl = `${process.env.API_PUBLIC_URL || ''}${result.url}`.replace(/\/\/uploads/, '/uploads') || result.url;
-    return success(res, { ...result, publicUrl: result.url.startsWith('http') ? result.url : `${req.protocol}://${req.get('host')}${result.url}` });
+    const publicBase = (process.env.API_PUBLIC_URL || '').replace(/\/$/, '');
+    // Prefer relative /uploads/... so same-origin production works; optionally absolute via API_PUBLIC_URL
+    const publicUrl = result.url.startsWith('http')
+      ? result.url
+      : publicBase
+        ? `${publicBase}${result.url}`
+        : result.url;
+    return success(res, { ...result, publicUrl, url: result.url });
   } catch (e) {
     next(e);
   }
