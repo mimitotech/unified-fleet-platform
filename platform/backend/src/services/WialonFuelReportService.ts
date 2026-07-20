@@ -178,6 +178,7 @@ export class WialonFuelReportService {
     const rows = await withWialonClient(creds, async (client: WialonClient) => {
       const { groupTemplate, unitTemplate, expected } = await findFuelReportTemplates(client, scope, {
         assetCategory: opts.assetCategory,
+        tenantId,
       });
       if (!groupTemplate && !unitTemplate) {
         const catalog = await WialonReportResolverService.listAllTemplates(client, scope, 40);

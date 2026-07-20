@@ -576,10 +576,10 @@ export const clientApi = {
     const timeoutMs = refresh
       ? 20 * 60_000
       : days <= 1
-        ? 15_000
+        ? 2 * 60_000
         : days <= 7
-          ? 30_000
-          : 60_000;
+          ? 4 * 60_000
+          : 6 * 60_000;
     return api<import('./fuelTypes').WialonFuelReportData & { fromTs: number; toTs: number; lastSyncedAt?: string | null }>(
       `/api/client/fuel/transactions${qs ? `?${qs}` : ''}`,
       { timeoutMs },

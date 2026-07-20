@@ -224,9 +224,9 @@ export function CoreFuelTab({
         </div>
       )}
 
-      {isFuelWarming && !fuelError && (
+      {(isFuelWarming || isFuelLoading) && !fuelError && fuelTransactions.length === 0 && (
         <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-primary">
-          Syncing fuel reports in the background. Live levels are shown now; totals update when the sync finishes.
+          Loading fuel reports from Wialon (fills, consumption, drops). Live tank levels are shown now; period totals appear when the report finishes — usually under a minute.
         </div>
       )}
 

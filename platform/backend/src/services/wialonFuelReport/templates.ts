@@ -116,7 +116,7 @@ function pickFuelTemplate(
 export async function findFuelReportTemplates(
   client: WialonClient,
   scope: WialonReportScope,
-  opts?: { assetCategory?: FuelAssetCategory },
+  opts?: { assetCategory?: FuelAssetCategory; tenantId?: string },
 ): Promise<{
   groupTemplate: FuelReportTemplate | null;
   unitTemplate: FuelReportTemplate | null;
@@ -124,6 +124,51 @@ export async function findFuelReportTemplates(
   expected: { group: string; unit: string };
 }> {
   const family = fuelFamilyForCategory(opts?.assetCategory);
+  const expected = CANONICAL_FUEL_REPORTS[family];
+
+  // Prefer admin-selected report templates for this tenant (Fuel module config)
+  if (opts?.tenantId) {
+    try {
+      const { TenantFuelModuleConfigService } = await import('../TenantFuelModuleConfigService.js');
+      const cfg = await TenantFuelModuleConfigService.getConfig(opts.tenantId);
+      const selected = cfg.selectedReports ?? [];
+      const pickSelected = (wantGroup: boolean): FuelReportTemplate | null => {
+        const match = selected.find((s) => {
+          if (s.resourceId == null || s.templateId == null) return false;
+          if (s.isGroupReport != null) return Boolean(s.isGroupReport) === wantGroup;
+          // Infer from name when flag missing
+          const n = String(s.templateName || '').toLowerCase();
+          const looksGroup = /group|gensets?/.test(n) && !/unit/.test(n);
+          return looksGroup === wantGroup;
+        });
+        if (!match) return null;
+        return {
+          resourceId: Number(match.resourceId),
+          templateId: Number(match.templateId),
+          templateName: String(match.templateName || ''),
+          isGroupReport: wantGroup,
+        };
+      };
+      const selectedGroup = pickSelected(true);
+      const selectedUnit = pickSelected(false);
+      if (selectedGroup || selectedUnit) {
+        // Fill gaps with auto-discovered templates
+        const templates = await WialonReportResolverService.findModuleTemplates(client, scope, 'fuel', {
+          includeFallback: true,
+        });
+        const groupTemplate =
+          selectedGroup ||
+          toFuelTemplate(pickFuelTemplate(templates, { isGroupReport: true, assetCategory: opts?.assetCategory }));
+        const unitTemplate =
+          selectedUnit ||
+          toFuelTemplate(pickFuelTemplate(templates, { isGroupReport: false, assetCategory: opts?.assetCategory }));
+        return { groupTemplate, unitTemplate, family, expected };
+      }
+    } catch {
+      // Fall through to auto discovery
+    }
+  }
+
   const templates = await WialonReportResolverService.findModuleTemplates(client, scope, 'fuel', {
     includeFallback: true,
   });
@@ -138,7 +183,7 @@ export async function findFuelReportTemplates(
     groupTemplate,
     unitTemplate,
     family,
-    expected: CANONICAL_FUEL_REPORTS[family],
+    expected,
   };
 }
 

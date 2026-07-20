@@ -2,6 +2,7 @@ import { query } from '../config/database.js';
 import { toCamelRows } from '../utils/mapper.js';
 import { WialonFuelDbSyncService } from './WialonFuelDbSyncService.js';
 import { WialonFuelLiveSnapshotService } from './WialonFuelLiveSnapshotService.js';
+import { WialonFuelReportService } from './WialonFuelReportService.js';
 import {
   computeFuelKpis,
   enrichTankLevels,
@@ -19,6 +20,8 @@ const STALE_MS = 15 * 60 * 1000;
 const ERROR_BACKOFF_MS = 2 * 60 * 1000;
 const inflight = new Map<string, Promise<void>>();
 const lastQueueAt = new Map<string, number>();
+/** In-flight live Wialon fetches (same key as sync) so concurrent polls share one report exec. */
+const liveInflight = new Map<string, Promise<FuelTransaction[]>>();
 
 function isBareDate(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
@@ -294,9 +297,9 @@ export class FuelDbReadService {
           refresh: opts.refresh ?? false,
         });
         await touchSyncCursor(opts.tenantId, cursorKey, {
-          success: true,
+          success: txs.length > 0,
           rowCount: txs.length,
-          error: null,
+          error: txs.length > 0 ? null : 'Wialon report returned 0 fuel rows for this period',
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -312,6 +315,55 @@ export class FuelDbReadService {
     lastQueueAt.set(key, now);
     inflight.set(key, job);
     void job;
+  }
+
+  /**
+   * Live Wialon report fetch (offline-quality path). Shared across concurrent polls.
+   * Persists rows to MariaDB in the background so later reads are fast.
+   */
+  static async fetchLiveFromWialon(opts: {
+    tenantId: string;
+    fromDate: string;
+    toDate: string;
+    assetCategory?: FuelAssetCategory;
+    unitId?: number;
+    refresh?: boolean;
+  }): Promise<FuelTransaction[]> {
+    const key = `${opts.tenantId}:live:${opts.fromDate}:${opts.toDate}:${opts.assetCategory ?? 'all'}:${opts.unitId ?? ''}`;
+    const existing = liveInflight.get(key);
+    if (existing) return existing;
+
+    const job = (async () => {
+      const live = await WialonFuelReportService.getTransactions(opts.tenantId, {
+        from: opts.fromDate,
+        to: opts.toDate,
+        unitId: opts.unitId,
+        assetCategory: opts.assetCategory,
+        refresh: opts.refresh ?? false,
+      });
+      const txs = live.transactions ?? [];
+      if (txs.length) {
+        void WialonFuelDbSyncService.upsertTransactions(
+          opts.tenantId,
+          txs,
+          opts.assetCategory,
+        ).catch((err) =>
+          logger.warn(`[FuelDbRead] persist live rows failed tenant=${opts.tenantId}`, err),
+        );
+        const cursorKey = syncCursorKey(opts.fromDate, opts.toDate, opts.assetCategory);
+        void touchSyncCursor(opts.tenantId, cursorKey, {
+          success: true,
+          rowCount: txs.length,
+          error: null,
+        }).catch(() => undefined);
+      }
+      return txs;
+    })().finally(() => {
+      liveInflight.delete(key);
+    });
+
+    liveInflight.set(key, job);
+    return job;
   }
 
   static async getTransactions(
@@ -379,37 +431,48 @@ export class FuelDbReadService {
     const rowLimit = spanDays <= 7 ? 800 : spanDays <= 14 ? 2000 : 5000;
     const cursorKey = syncCursorKey(fromDate, toDate, opts.assetCategory);
     const cursor = await getSyncCursor(tenantId, cursorKey);
+    const allowQueue = opts.queueSync !== false;
 
-    if (opts.refresh) {
-      // Queue full Wialon sync in background — never block HTTP for large fleets.
-      this.queueBackgroundSync({
-        tenantId,
-        fromDate,
-        toDate,
-        assetCategory: opts.assetCategory,
-        refresh: true,
-      });
-      let transactions = await readTransactionsFromDb({
-        tenantId,
-        fromTs,
-        toTs,
-        assetCategory: opts.assetCategory,
-        unitId: opts.unitId,
-        rowLimit,
-      });
-      transactions = await enrichWithBalanceConsumption(tenantId, transactions);
-      transactions = await applyStationFilledToTransactions(tenantId, fromDate, toDate, transactions);
-      return buildResponse(
-        transactions,
-        fromDate,
-        toDate,
-        fromTs,
-        toTs,
-        transactions.length ? 'db' : 'warming',
-        transactions.length === 0,
-        true,
-        cursor?.last_success_at,
-      );
+    const finalize = async (transactions: FuelTransaction[], source: 'db' | 'wialon' | 'warming') => {
+      let txs = await enrichWithBalanceConsumption(tenantId, transactions);
+      txs = await applyStationFilledToTransactions(tenantId, fromDate, toDate, txs);
+      return { txs };
+    };
+
+    // ── Force refresh: await live Wialon reports (same as offline) ──────────
+    if (opts.refresh && allowQueue) {
+      try {
+        const liveRows = await this.fetchLiveFromWialon({
+          tenantId,
+          fromDate,
+          toDate,
+          assetCategory: opts.assetCategory,
+          unitId: opts.unitId,
+          refresh: true,
+        });
+        const { txs } = await finalize(liveRows, 'wialon');
+        return buildResponse(
+          txs,
+          fromDate,
+          toDate,
+          fromTs,
+          toTs,
+          txs.length ? 'wialon' : 'db',
+          false,
+          false,
+          new Date().toISOString(),
+        );
+      } catch (err) {
+        logger.warn(`[FuelDbRead] live refresh failed tenant=${tenantId}`, err);
+        // Fall through to DB + background sync
+        this.queueBackgroundSync({
+          tenantId,
+          fromDate,
+          toDate,
+          assetCategory: opts.assetCategory,
+          refresh: true,
+        });
+      }
     }
 
     let transactions = await readTransactionsFromDb({
@@ -420,17 +483,69 @@ export class FuelDbReadService {
       unitId: opts.unitId,
       rowLimit,
     });
-    transactions = await enrichWithBalanceConsumption(tenantId, transactions);
-    transactions = await applyStationFilledToTransactions(tenantId, fromDate, toDate, transactions);
+
+    // ── Offline parity: when DB empty, await live Wialon fuel reports ───────
+    if (transactions.length === 0 && allowQueue) {
+      try {
+        logger.info(
+          `[FuelDbRead] DB empty — live Wialon fallback tenant=${tenantId} ${fromDate}→${toDate} cat=${opts.assetCategory ?? 'all'}`,
+        );
+        const liveRows = await this.fetchLiveFromWialon({
+          tenantId,
+          fromDate,
+          toDate,
+          assetCategory: opts.assetCategory,
+          unitId: opts.unitId,
+          refresh: false,
+        });
+        const { txs } = await finalize(liveRows, 'wialon');
+        return buildResponse(
+          txs,
+          fromDate,
+          toDate,
+          fromTs,
+          toTs,
+          txs.length ? 'wialon' : 'db',
+          false,
+          txs.length === 0,
+          txs.length ? new Date().toISOString() : cursor?.last_success_at,
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.warn(`[FuelDbRead] live Wialon fallback failed tenant=${tenantId}: ${message}`);
+        void touchSyncCursor(tenantId, cursorKey, { success: false, error: message }).catch(
+          () => undefined,
+        );
+        // Keep background sync for retry; return empty with warming so UI can poll
+        this.queueBackgroundSync({
+          tenantId,
+          fromDate,
+          toDate,
+          assetCategory: opts.assetCategory,
+        });
+        return buildResponse(
+          [],
+          fromDate,
+          toDate,
+          fromTs,
+          toTs,
+          'warming',
+          true,
+          true,
+          cursor?.last_success_at,
+        );
+      }
+    }
+
+    const { txs } = await finalize(transactions, 'db');
+    transactions = txs;
 
     const stale = isStale(cursor);
     const recentlyFailed =
       Boolean(cursor?.last_error) &&
       Boolean(cursor?.last_synced_at) &&
       Date.now() - new Date(cursor!.last_synced_at!).getTime() < ERROR_BACKOFF_MS;
-    const needsRefresh =
-      !recentlyFailed && (stale || (transactions.length === 0 && !cursor?.last_success_at));
-    const allowQueue = opts.queueSync !== false;
+    const needsRefresh = !recentlyFailed && stale;
 
     if (needsRefresh && allowQueue) {
       this.queueBackgroundSync({
@@ -441,17 +556,14 @@ export class FuelDbReadService {
       });
     }
 
-    // warming = first load with no rows yet (sync in flight). Soft stale refresh is needsRefresh only.
-    const warming = Boolean(needsRefresh && transactions.length === 0 && allowQueue && !cursor?.last_success_at);
-
     return buildResponse(
       transactions,
       fromDate,
       toDate,
       fromTs,
       toTs,
-      transactions.length ? 'db' : warming ? 'warming' : 'db',
-      warming,
+      'db',
+      false,
       needsRefresh && allowQueue,
       cursor?.last_success_at,
     );
