@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/button';
 import type { FuelTransaction } from '@/types/entities';
 import type { FuelAssetCategory } from '@/lib/fuelTypes';
 import { aggregateUnitFuelColumns } from './fuelColumnMetrics';
-import { filterFuelTransactionsByDate, isSyntheticFuelRow } from './fuelTransactionFilters';
+import { filterFuelTransactionsByDate, isSyntheticFuelRow, isWialonGroupSummary } from './fuelTransactionFilters';
 import { PeriodAssetControls } from '@/components/shared/PeriodAssetControls';
 
 type LiveMap = Map<string, number>;
@@ -129,7 +129,11 @@ function buildPerAssetRows(
   });
 }
 
-/** Leaf events only — same volumes as table / KPI aggregation. */
+/**
+ * Daily trend: leaf events by day.
+ * When a unit has only an exact-range group summary (no leaf fills/uses),
+ * plot that period total on the end date so charts match the table.
+ */
 function buildDailyTrend(
   transactions: FuelTransaction[],
   fromDate: string,
@@ -137,23 +141,66 @@ function buildDailyTrend(
   asset: string,
 ) {
   const ranged = filterFuelTransactionsByDate(transactions, fromDate, toDate).filter(
-    (t) => (asset === 'all' || t.unitName === asset) && !isSyntheticFuelRow(t),
+    (t) => asset === 'all' || t.unitName === asset,
   );
   const byDay = new Map<string, { filled: number; used: number; mileage: number }>();
   for (const day of eachDayInclusive(fromDate, toDate)) {
     byDay.set(day, { filled: 0, used: 0, mileage: 0 });
   }
+
+  const unitsWithLeafFill = new Set<string>();
+  const unitsWithLeafUse = new Set<string>();
+
   for (const t of ranged) {
+    if (isSyntheticFuelRow(t) || isWialonGroupSummary(t)) continue;
     if (!t.timestamp) continue;
     const key = new Date(t.timestamp * 1000).toISOString().slice(0, 10);
     if (!byDay.has(key)) byDay.set(key, { filled: 0, used: 0, mileage: 0 });
     const row = byDay.get(key)!;
-    if (t.section === 'filling' && Number(t.filled) > 0) row.filled += Number(t.filled);
+    if (t.section === 'filling' && Number(t.filled) > 0) {
+      row.filled += Number(t.filled);
+      unitsWithLeafFill.add(t.unitName);
+    }
     if (t.section === 'consumption' && Number(t.fuelUsed) > 0) {
       row.used += Number(t.fuelUsed);
+      unitsWithLeafUse.add(t.unitName);
       if (t.tank !== 'reserve') row.mileage += t.mileage || 0;
     }
   }
+
+  // Gap-fill from exact-range summaries onto the period end day
+  const endBucket = byDay.get(toDate) ?? { filled: 0, used: 0, mileage: 0 };
+  if (!byDay.has(toDate)) byDay.set(toDate, endBucket);
+
+  const byUnit = new Map<string, typeof ranged>();
+  for (const t of ranged) {
+    if (!isWialonGroupSummary(t)) continue;
+    if (!t.periodFromTs || !t.periodToTs) continue;
+    const pFrom = new Date(t.periodFromTs * 1000).toISOString().slice(0, 10);
+    const pTo = new Date(t.periodToTs * 1000).toISOString().slice(0, 10);
+    if (pFrom !== fromDate || pTo !== toDate) continue;
+    const list = byUnit.get(t.unitName) ?? [];
+    list.push(t);
+    byUnit.set(t.unitName, list);
+  }
+
+  for (const [unitName, summaries] of byUnit) {
+    let summaryFilled = 0;
+    let summaryUsed = 0;
+    for (const t of summaries) {
+      if (t.filled > summaryFilled) summaryFilled = t.filled;
+      if (t.fuelUsed > summaryUsed) summaryUsed = t.fuelUsed;
+    }
+    if (!unitsWithLeafFill.has(unitName) && summaryFilled > 0) {
+      endBucket.filled += summaryFilled;
+      unitsWithLeafFill.add(unitName);
+    }
+    if (!unitsWithLeafUse.has(unitName) && summaryUsed > 0) {
+      endBucket.used += summaryUsed;
+      unitsWithLeafUse.add(unitName);
+    }
+  }
+
   return [...byDay.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([day, v]) => ({

@@ -125,9 +125,9 @@ async function readTransactionsFromDb(opts: {
     WHERE tenant_id = $1 AND timestamp >= $2 AND timestamp <= $3`;
   const params: unknown[] = [opts.tenantId, opts.fromTs, opts.toTs];
 
-  // Prefer category match; include NULL so older sync rows are not hidden after category tagging shipped
+  // Prefer exact category. Untagged rows are backfilled on live sync with assetCategory.
   if (opts.assetCategory) {
-    sql += ` AND (asset_category = $${params.length + 1} OR asset_category IS NULL)`;
+    sql += ` AND asset_category = $${params.length + 1}`;
     params.push(opts.assetCategory);
   }
   if (opts.unitId != null) {

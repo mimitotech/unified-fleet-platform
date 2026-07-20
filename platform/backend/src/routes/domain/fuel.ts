@@ -63,6 +63,8 @@ router.get('/monthly-trend', requireTenant, async (req: TenantRequest, res) => {
      FROM fuel_transactions
      WHERE tenant_id = $1
        AND timestamp >= UNIX_TIMESTAMP(DATE_SUB(CURRENT_DATE, INTERVAL 12 MONTH))
+       AND COALESCE(sensor, '') NOT LIKE 'wialon_group_summary%'
+       AND COALESCE(sensor, '') <> 'balance'
      GROUP BY 1
      ORDER BY 1 ASC
      LIMIT 12`,

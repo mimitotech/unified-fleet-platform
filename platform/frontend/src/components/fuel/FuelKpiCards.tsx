@@ -62,7 +62,12 @@ export function FuelKpiCards({
     return out.sort((a, b) => b.timestamp - a.timestamp);
   }, [fuelTransactions]);
 
-  const totalDropVolume = suddenDropAlerts.reduce((sum, a) => sum + a.volume, 0);
+  // Prefer consolidated KPI volume (includes exact-range summary gap-fill); fall back to leaf sum
+  const totalDropVolume =
+    kpis.theftVolume > 0
+      ? kpis.theftVolume
+      : suddenDropAlerts.reduce((sum, a) => sum + a.volume, 0);
+  const dropEventCount = Math.max(kpis.theftEvents, suddenDropAlerts.length);
   const uniqueVehiclesWithDrops = new Set(suddenDropAlerts.map((a) => a.unitName)).size;
 
   if (isLoading) {
@@ -118,10 +123,10 @@ export function FuelKpiCards({
         />
         <MetricCard
           title="Sudden Drops"
-          value={`${suddenDropAlerts.length}`}
+          value={`${dropEventCount}`}
           subtitle={`${totalDropVolume.toFixed(1)} L · ${uniqueVehiclesWithDrops} ${uniqueVehiclesWithDrops === 1 ? unitLabel.toLowerCase() : unitLabelPlural}`}
           icon={TrendingDown}
-          variant={suddenDropAlerts.length > 0 ? 'destructive' : 'default'}
+          variant={dropEventCount > 0 ? 'destructive' : 'default'}
           size="xs"
           onClick={suddenDropAlerts.length > 0 ? () => setShowDropModal(true) : undefined}
           className={cn(suddenDropAlerts.length > 0 && 'cursor-pointer')}

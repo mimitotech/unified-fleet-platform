@@ -2,7 +2,7 @@ import type { FuelTransaction } from '@/types/entities';
 
 /**
  * Reject FLS events that are physically impossible vs the live tank.
- * Matches backend/src/services/fuelEventPlausibility.ts
+ * Kept in sync with backend/src/services/fuelEventPlausibility.ts
  */
 export function isPlausibleFuelEvent(tx: FuelTransaction, liveLiters?: number): boolean {
   if (tx.sensor === 'balance') return false;
@@ -25,13 +25,19 @@ export function isPlausibleFuelEvent(tx: FuelTransaction, liveLiters?: number): 
   }
 
   if (ref > 0) {
-    if (maxLevel > 0 && maxLevel > ref * 2.5 && maxLevel > ref + 500) return false;
-    if (volume > 0 && volume > ref * 1.5 && volume > 500) return false;
+    const softStationary =
+      maxLevel > 0 && ref < 50 && maxLevel >= 100 && maxLevel < 50_000;
+    if (!softStationary && maxLevel > 0 && maxLevel > ref * 2.5 && maxLevel > ref + 500) {
+      return false;
+    }
+    if (volume > 0 && volume > ref * 1.5 && volume > 500) {
+      if (!(ref < 50 && volume < 50_000)) return false;
+    }
     return true;
   }
 
-  if (maxLevel > 20_000) return false;
-  if (volume > 20_000) return false;
+  if (maxLevel > 50_000) return false;
+  if (volume > 50_000) return false;
   return true;
 }
 

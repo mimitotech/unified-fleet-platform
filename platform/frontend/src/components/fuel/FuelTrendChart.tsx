@@ -32,58 +32,73 @@ const getWeekStart = (date: Date): string => {
 export function FuelTrendChart({ transactions, isLoading }: FuelTrendChartProps) {
 
   // Group transactions by week and calculate fuel volume and mileage
+  // Leaves first; group summaries only fill a week when that unit has no leaf volume that week.
   const chartData = useMemo(() => {
     if (!transactions.length) return [];
 
-    const relevantTransactions = transactions.filter((t) => {
-      if (t.section === 'filling' || t.section === 'consumption') return true;
-      if (t.sensor === 'wialon_group_summary' && (t.fuelUsed > 0 || t.filled > 0)) return true;
-      return false;
-    });
+    const weeklyData: Record<
+      string,
+      { fuelFilled: number; fuelConsumed: number; mileage: number; unitsWithLeafFill: Set<number>; unitsWithLeafUse: Set<number> }
+    > = {};
 
-    if (!relevantTransactions.length) return [];
+    const ensure = (weekKey: string) => {
+      if (!weeklyData[weekKey]) {
+        weeklyData[weekKey] = {
+          fuelFilled: 0,
+          fuelConsumed: 0,
+          mileage: 0,
+          unitsWithLeafFill: new Set(),
+          unitsWithLeafUse: new Set(),
+        };
+      }
+      return weeklyData[weekKey];
+    };
 
-    // Group by week
-    const weeklyData: Record<string, { fuelFilled: number; fuelConsumed: number; mileage: number }> = {};
-
-    relevantTransactions.forEach(tx => {
+    // Pass 1: leaf events
+    for (const tx of transactions) {
+      if (tx.sensor === 'wialon_group_summary' || tx.sensor?.startsWith('wialon_group_summary')) continue;
+      if (tx.sensor === 'balance') continue;
       const txDate = new Date(tx.timestamp * 1000);
       const weekKey = getWeekStart(txDate);
+      const bucket = ensure(weekKey);
 
-      if (!weeklyData[weekKey]) {
-        weeklyData[weekKey] = { fuelFilled: 0, fuelConsumed: 0, mileage: 0 };
-      }
-
-      // Add fuel filled (from filling section)
       if (tx.section === 'filling' && tx.filled > 0) {
-        weeklyData[weekKey].fuelFilled += tx.filled;
+        bucket.fuelFilled += tx.filled;
+        if (tx.unitId) bucket.unitsWithLeafFill.add(tx.unitId);
       }
-
-      if (tx.sensor === 'wialon_group_summary') {
-        if (tx.filled > 0) weeklyData[weekKey].fuelFilled += tx.filled;
-        if (tx.fuelUsed > 0) weeklyData[weekKey].fuelConsumed += tx.fuelUsed;
-        return;
-      }
-
-      // Add fuel consumed and mileage (from consumption section)
       if (tx.section === 'consumption') {
-        weeklyData[weekKey].fuelConsumed += tx.fuelUsed || 0;
-        weeklyData[weekKey].mileage += tx.mileage || 0;
+        bucket.fuelConsumed += tx.fuelUsed || 0;
+        bucket.mileage += tx.mileage || 0;
+        if (tx.unitId && (tx.fuelUsed || 0) > 0) bucket.unitsWithLeafUse.add(tx.unitId);
       }
-    });
+    }
 
-    // Convert to array and sort by date
-    const sortedData = Object.entries(weeklyData)
-      .sort(([a], [b]) => a.localeCompare(b));
+    // Pass 2: exact summaries only gap-fill units without leaf volume that week
+    for (const tx of transactions) {
+      if (!(tx.sensor === 'wialon_group_summary' || tx.sensor?.startsWith('wialon_group_summary'))) continue;
+      const txDate = new Date(tx.timestamp * 1000);
+      const weekKey = getWeekStart(txDate);
+      const bucket = ensure(weekKey);
+      const uid = tx.unitId || 0;
+      if (tx.filled > 0 && !bucket.unitsWithLeafFill.has(uid)) {
+        bucket.fuelFilled += tx.filled;
+        bucket.unitsWithLeafFill.add(uid);
+      }
+      if (tx.fuelUsed > 0 && !bucket.unitsWithLeafUse.has(uid)) {
+        bucket.fuelConsumed += tx.fuelUsed;
+        bucket.unitsWithLeafUse.add(uid);
+      }
+    }
 
-    // Format dates for display
+    const sortedData = Object.entries(weeklyData).sort(([a], [b]) => a.localeCompare(b));
+
     return sortedData.map(([week, data]) => {
       const [year, month, day] = week.split('-').map(Number);
       const weekDate = new Date(year, month - 1, day);
       return {
         week: weekDate.toLocaleDateString('en-UG', {
           month: 'short',
-          day: 'numeric'
+          day: 'numeric',
         }),
         fuelFilled: Math.round(data.fuelFilled * 10) / 10,
         fuelConsumed: Math.round(data.fuelConsumed * 10) / 10,

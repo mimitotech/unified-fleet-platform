@@ -18,6 +18,32 @@ function dateFromTs(ts: number): string {
   return new Date(ts * 1000).toISOString().slice(0, 10);
 }
 
+/** Derive fill liters from level rise when the filled column is empty (matches backend). */
+function deriveFilled(filled: number, initialLevel: number, finalLevel: number): number {
+  if (filled > 0) return filled;
+  if (initialLevel > 0 && finalLevel > initialLevel) return finalLevel - initialLevel;
+  return filled;
+}
+
+/** Derive used liters from level drop when fuelUsed is empty (matches backend). */
+function deriveFuelUsed(fuelUsed: number, initialLevel: number, finalLevel: number): number {
+  if (fuelUsed > 0) return fuelUsed;
+  if (initialLevel > 0 && finalLevel >= 0 && initialLevel > finalLevel) {
+    return initialLevel - finalLevel;
+  }
+  return fuelUsed;
+}
+
+function effectiveFilledVol(t: FuelTransaction): number {
+  if (t.section !== 'filling') return 0;
+  return deriveFilled(Number(t.filled) || 0, Number(t.initialLevel) || 0, Number(t.finalLevel) || 0);
+}
+
+function effectiveUsedVol(t: FuelTransaction): number {
+  if (t.section !== 'consumption') return 0;
+  return deriveFuelUsed(Number(t.fuelUsed) || 0, Number(t.initialLevel) || 0, Number(t.finalLevel) || 0);
+}
+
 /** Exact-range Wialon group summaries only (not wider nested periods). */
 function exactRangeSummaries(
   txs: FuelTransaction[],
@@ -44,14 +70,16 @@ export function getTransactionColumnValues(t: FuelTransaction): TransactionDispl
   let dropMain = 0;
   let dropReserve = 0;
 
-  if (t.section === 'filling' && t.filled > 0) {
-    if (isReserve) filledReserve = t.filled;
-    else filledMain = t.filled;
+  const filledVol = effectiveFilledVol(t);
+  if (filledVol > 0) {
+    if (isReserve) filledReserve = filledVol;
+    else filledMain = filledVol;
   }
 
-  if (t.section === 'consumption' && (t.fuelUsed ?? 0) > 0) {
-    if (isReserve) usedReserve = t.fuelUsed;
-    else usedMain = t.fuelUsed;
+  const usedVol = effectiveUsedVol(t);
+  if (usedVol > 0) {
+    if (isReserve) usedReserve = usedVol;
+    else usedMain = usedVol;
   }
 
   const dropVol = t.section === 'theft' ? effectiveSuddenDropVolume(t) : 0;
@@ -117,9 +145,9 @@ export function aggregateUnitFuelColumns(
   const exactSummaries = exactRangeSummaries(periodTxs, opts?.fromDate, opts?.toDate);
   const latestMainTs = { value: -1 };
   const latestReserveTs = { value: -1 };
-  const hasRealUsed = leaves.some(
-    (t) => t.section === 'consumption' && Number(t.fuelUsed ?? 0) > 0,
-  ) || exactSummaries.some((t) => Number(t.fuelUsed ?? 0) > 0);
+  const hasRealUsed =
+    leaves.some((t) => effectiveUsedVol(t) > 0) ||
+    exactSummaries.some((t) => Number(t.fuelUsed ?? 0) > 0);
 
   const totals: UnitFuelColumnTotals = {
     filledMain: 0,
@@ -150,16 +178,16 @@ export function aggregateUnitFuelColumns(
     const isMain = t.tank === 'main' || !t.tank;
     const isReserve = t.tank === 'reserve';
 
-    if (t.section === 'filling' && Number(t.filled) > 0) {
-      const vol = Number(t.filled);
-      if (isReserve) totals.filledReserve += vol;
-      else totals.filledMain += vol;
+    const filledVol = effectiveFilledVol(t);
+    if (filledVol > 0) {
+      if (isReserve) totals.filledReserve += filledVol;
+      else totals.filledMain += filledVol;
     }
 
-    if (t.section === 'consumption' && Number(t.fuelUsed ?? 0) > 0) {
-      const vol = Number(t.fuelUsed);
-      if (isReserve) totals.usedReserve += vol;
-      else totals.usedMain += vol;
+    const usedVol = effectiveUsedVol(t);
+    if (usedVol > 0) {
+      if (isReserve) totals.usedReserve += usedVol;
+      else totals.usedMain += usedVol;
     }
 
     if (t.section === 'theft') {
@@ -233,10 +261,9 @@ export function aggregateUnitFuelColumns(
     if (derived > 0) totals.usedReserve = derived;
   }
 
-  // Level from live sensor when available.
+  // Live sensor updates main tank only — keep reserve from period events.
   if (opts?.liveLevel && opts.liveLevel > 0) {
     totals.levelMain = opts.liveLevel;
-    totals.levelReserve = 0;
   }
 
   totals.totalFilledFls = totals.filledMain + totals.filledReserve;
@@ -306,16 +333,14 @@ export function computePeriodFuelKpis(
     totalFilled += cols.filledMain + cols.filledReserve;
     totalConsumed += cols.totalUsed;
     theftVolume += cols.totalDrop;
+    theftEvents += cols.alertCount;
 
     for (const t of filterPlausibleFuelEvents(unitTxs, liveLevel)) {
       if (isSyntheticFuelRow(t)) continue;
-      if (t.section === 'filling' && Number(t.filled) > 0) fillingCount += 1;
-      if (t.section === 'consumption' && Number(t.fuelUsed) > 0) {
+      if (effectiveFilledVol(t) > 0) fillingCount += 1;
+      if (effectiveUsedVol(t) > 0) {
         consumptionCount += 1;
         if (t.tank !== 'reserve') totalMileage += t.mileage || 0;
-      }
-      if (t.section === 'theft' && effectiveSuddenDropVolume(t) > 0) {
-        theftEvents += t.count > 0 ? t.count : 1;
       }
     }
   }

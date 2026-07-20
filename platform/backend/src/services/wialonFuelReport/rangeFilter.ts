@@ -47,9 +47,22 @@ function dateFromTs(ts: number): string {
   return new Date(ts * 1000).toISOString().slice(0, 10);
 }
 
+/** Group summary whose stamped period exactly matches the selected from/to dates. */
+export function isExactRangeSummary(
+  row: FuelTransaction,
+  fromDate?: string,
+  toDate?: string,
+): boolean {
+  if (!isWialonGroupSummary(row) || !fromDate || !toDate) return false;
+  if (!row.periodFromTs || !row.periodToTs) return false;
+  return dateFromTs(row.periodFromTs) === fromDate && dateFromTs(row.periodToTs) === toDate;
+}
+
 /**
  * Keep a group-summary when it represents the selected report period.
  * Prefer stamped periodFrom/periodTo; fall back to timestamp/Beginning in range.
+ * Nested covers (selected ⊆ summary) are for membership only — KPI volumes
+ * must use {@link isExactRangeSummary} / {@link exactRangeSummaryUnitIds}.
  */
 export function summaryCoversSelectedRange(
   row: FuelTransaction,
@@ -61,9 +74,7 @@ export function summaryCoversSelectedRange(
   if (row.periodFromTs && row.periodToTs) {
     const pFrom = dateFromTs(row.periodFromTs);
     const pTo = dateFromTs(row.periodToTs);
-    // Exact range match (what Force Refresh / exact sync wrote)
     if (pFrom === fromDate && pTo === toDate) return true;
-    // Selected range fully inside the stamped report period
     if (fromDate >= pFrom && toDate <= pTo) return true;
     return false;
   }
@@ -89,18 +100,29 @@ export function summaryMonthOverlapsRange(
   return end >= fromDate && start <= toDate;
 }
 
+/** Units with an exact-range Wialon group summary — safe for volume KPIs (no MTD inflation). */
+export function exactRangeSummaryUnitIds(
+  rows: FuelTransaction[],
+  fromDate?: string,
+  toDate?: string,
+): Set<number> {
+  const ids = new Set<number>();
+  for (const r of rows) {
+    if (!isExactRangeSummary(r, fromDate, toDate)) continue;
+    if (r.unitId) ids.add(r.unitId);
+  }
+  return ids;
+}
+
+/**
+ * Alias of exactRangeSummaryUnitIds — KPI volumes never use wider nested month summaries.
+ */
 export function effectiveSummaryUnitIds(
   rows: FuelTransaction[],
   fromDate?: string,
   toDate?: string
 ): Set<number> {
-  const ids = new Set<number>();
-  for (const r of rows) {
-    if (!isWialonGroupSummary(r)) continue;
-    if (fromDate && toDate && !summaryCoversSelectedRange(r, fromDate, toDate)) continue;
-    ids.add(r.unitId);
-  }
-  return ids;
+  return exactRangeSummaryUnitIds(rows, fromDate, toDate);
 }
 
 export function filterTransactionsByDateRange(
@@ -114,7 +136,6 @@ export function filterTransactionsByDateRange(
 
   for (const r of rows) {
     if (isWialonGroupSummary(r)) {
-      // Always prefer covering period summaries for any range (not only full months).
       if (summaryCoversSelectedRange(r, fromDate, toDate)) {
         deduped.set(r.id, r);
       } else if (isCompleteMonthSpan(fromDate, toDate) && summaryMonthOverlapsRange(r, fromDate, toDate)) {
