@@ -2,35 +2,44 @@
 
 Multi-tenant fleet management unifying **Wialon**, **LocoNav**, and **TrackSolid Pro**.
 
-## Production (Hostinger Node + MySQL)
+## Layout (Hostinger-aligned)
 
-1. Import [`database/mysql/ufp_complete_schema.sql`](database/mysql/ufp_complete_schema.sql) in phpMyAdmin.
-2. Follow [`deploy/HOSTINGER_DEPLOY.md`](deploy/HOSTINGER_DEPLOY.md) for Git build settings and env vars.
-3. Use [`deploy/hostinger.env.example`](deploy/hostinger.env.example) as the env template.
+```
+platform/          ← Hostinger Root directory = platform
+  hostinger-start.mjs
+  backend/         Express API
+  frontend/        Vite React PWA
+  packages/        Shared types
+  database/mysql/  phpMyAdmin schema
+  deploy/          Env templates + deploy docs
+```
 
-Health check: `https://your-domain/health` → `database: connected`, `engine: mysql`.
+## Production (Hostinger)
+
+| Setting | Value |
+|---------|--------|
+| **Root directory** | **`platform`** |
+| Branch | `master` (or this feature branch) |
+| Node | `22.x` |
+| Build command | `npm run build` |
+| Output directory | *(empty)* |
+| Entry file | **`hostinger-start.mjs`** |
+
+1. Import [`platform/database/mysql/ufp_complete_schema.sql`](platform/database/mysql/ufp_complete_schema.sql) in phpMyAdmin.
+2. Env vars: [`platform/deploy/hostinger.env.example`](platform/deploy/hostinger.env.example)
+3. Full guide: [`platform/deploy/HOSTINGER_DEPLOY.md`](platform/deploy/HOSTINGER_DEPLOY.md)
 
 ## Local development
 
-Node 18+, MySQL 8 (or MariaDB). Copy `.env.example` → `.env`, fill MySQL credentials, then:
-
 ```bash
+cd platform
+cp .env.example .env   # fill MySQL credentials
 npm install
-npm run build -w @ufp/shared
+npm run build:local    # or npm run build
 npm run dev
 ```
 
-- Frontend (Vite): http://localhost:5173  
+- Frontend: http://localhost:5173  
 - API: http://localhost:3000/health  
 
-Docker/Postgres is no longer the production path. Redis is optional (`REDIS_DISABLED=1`).
-
-## Structure
-
-```
-backend/     Express API (serves /api + built PWA in production)
-frontend/    Vite React PWA
-database/mysql/   phpMyAdmin import schema
-deploy/      Hostinger env + deploy notes
-migrations/  Legacy Postgres history (reference only)
-```
+Redis optional (`REDIS_DISABLED=1`). Docker/Postgres is not required for production MySQL.

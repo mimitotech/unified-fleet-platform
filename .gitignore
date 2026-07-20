@@ -1,5 +1,6 @@
 # dependencies & builds
 node_modules/
+**/node_modules/
 dist/
 build/
 coverage/
@@ -9,19 +10,20 @@ coverage/
 .env
 .env.local
 .env.*.local
-deploy/*.local.env
-deploy/hostinger.env
-deploy/hostinger-env-paste.txt
+platform/.env
+platform/deploy/*.local.env
+platform/deploy/hostinger.env
+platform/deploy/hostinger-env-paste.txt
 
 # logs & OS
 *.log
 .DS_Store
 Thumbs.db
 
-# runtime uploads (tenant logos, sheets) — keep folder placeholder only
-backend/uploads/**
-!backend/uploads/.gitkeep
+# runtime uploads
+platform/backend/uploads/**
+!platform/backend/uploads/.gitkeep
 
 # local dumps / one-off scratch
-scripts/dump-*.mts
+platform/scripts/dump-*.mts
 *.sql.bak
