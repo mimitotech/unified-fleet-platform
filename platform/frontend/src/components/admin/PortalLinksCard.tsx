@@ -73,8 +73,11 @@ export function PortalLinksCard({ slug, className }: Props) {
         </div>
 
         <p className="text-[10px] text-muted-foreground border-t pt-2">
-          App: <code className="text-[10px]">{typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173'}</code>
-          {' · '}API: <code className="text-[10px]">{import.meta.env.VITE_API_URL || 'http://localhost:3000'}</code>
+          App: <code className="text-[10px]">{typeof window !== 'undefined' ? window.location.origin : '(browser)'}</code>
+          {' · '}API:{' '}
+          <code className="text-[10px]">
+            {import.meta.env.VITE_API_URL ? String(import.meta.env.VITE_API_URL) : '(same origin)'}
+          </code>
         </p>
       </div>
     </div>

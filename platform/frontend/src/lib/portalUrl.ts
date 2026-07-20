@@ -3,7 +3,7 @@ export function getAppBaseUrl(): string {
   if (typeof window !== 'undefined' && window.location?.origin) {
     return window.location.origin;
   }
-  return import.meta.env.VITE_APP_URL || 'http://localhost:5173';
+  return String(import.meta.env.VITE_APP_URL || '').replace(/\/$/, '') || '';
 }
 
 export function getClientLoginUrl(): string {

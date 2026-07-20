@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { query } from '../config/database.js';
+import { getPublicBaseUrl } from '../utils/publicUrl.js';
 
 export type VideoClipRef = {
   unitId: number;
@@ -19,11 +20,7 @@ export type VideoShareLink = {
 };
 
 function shareBaseUrl(): string {
-  return (
-    process.env.API_PUBLIC_URL ||
-    process.env.BACKEND_URL ||
-    `http://localhost:${process.env.PORT || '3000'}`
-  ).replace(/\/$/, '');
+  return getPublicBaseUrl();
 }
 
 export class VideoShareLinkService {

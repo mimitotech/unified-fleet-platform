@@ -2,8 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { query } from '../config/database.js';
+import { resolveUploadRoot } from '../utils/paths.js';
 
-const UPLOAD_ROOT = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
+const UPLOAD_ROOT = resolveUploadRoot();
 const MAX_BYTES = 5 * 1024 * 1024;
 const ALLOWED = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/svg+xml', 'image/x-icon', 'image/vnd.microsoft.icon']);
 

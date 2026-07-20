@@ -114,7 +114,9 @@ export async function api<T>(
       throw new Error('Request timed out — fuel reports can take several minutes. Try again or narrow the date range.');
     }
     throw new Error(
-      'Cannot reach the MAMS server. Start Docker Desktop, then run: docker compose up -d postgres redis && npm run dev'
+      import.meta.env.DEV
+        ? 'Cannot reach the MAMS server. Start Docker Desktop, then run: docker compose up -d postgres redis && npm run dev'
+        : 'Cannot reach the MAMS server. Check your connection and try again.'
     );
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
@@ -129,12 +131,16 @@ export async function api<T>(
       throw new Error(
         res.ok
           ? 'Unexpected server response'
-          : 'MAMS server unavailable — ensure Postgres is running (Docker Desktop) and restart with npm run dev'
+          : import.meta.env.DEV
+            ? 'MAMS server unavailable — ensure Postgres is running (Docker Desktop) and restart with npm run dev'
+            : 'MAMS server unavailable. Please refresh the page or try again shortly.'
       );
     }
   } else if (!res.ok) {
     throw new Error(
-      'MAMS server unavailable — ensure Postgres is running (Docker Desktop) and restart with npm run dev'
+      import.meta.env.DEV
+        ? 'MAMS server unavailable — ensure Postgres is running (Docker Desktop) and restart with npm run dev'
+        : 'MAMS server unavailable. Please refresh the page or try again shortly.'
     );
   }
 

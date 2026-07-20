@@ -2,6 +2,8 @@ import { AdminLayout } from '@/components/admin/AdminLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 export default function AdminSupportPage() {
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+
   return (
     <AdminLayout title="Support" subtitle="Help and documentation">
       <div className="grid gap-4 max-w-2xl">
@@ -15,17 +17,10 @@ export default function AdminSupportPage() {
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle>Demo Credentials</CardTitle></CardHeader>
-          <CardContent className="text-sm font-mono space-y-1">
-            <p>Platform Admin: admin@ufp.local / admin123</p>
-            <p>Client Admin: demo@mimito.ug / demo123 (slug: demo)</p>
-          </CardContent>
-        </Card>
-        <Card>
           <CardHeader><CardTitle>Webhook URLs</CardTitle></CardHeader>
-          <CardContent className="text-sm font-mono space-y-1">
-            <p>LocoNav: POST /api/webhooks/loconav/:tenantSlug</p>
-            <p>TrackSolid: POST /api/webhooks/tracksolid/:tenantSlug</p>
+          <CardContent className="text-sm font-mono space-y-1 break-all">
+            <p>LocoNav: POST {origin}/api/webhooks/loconav/:tenantSlug</p>
+            <p>TrackSolid: POST {origin}/api/webhooks/tracksolid/:tenantSlug</p>
           </CardContent>
         </Card>
       </div>

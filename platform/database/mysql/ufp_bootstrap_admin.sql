@@ -1,5 +1,7 @@
--- Bootstrap Mimito platform admin (run in phpMyAdmin → SQL on u454222977_mams).
+-- Bootstrap Mimito platform admin (run ONCE in phpMyAdmin → SQL on u454222977_mams).
 -- Login: admin@mimitotracking.co.ug / MamsAdmin@@123
+-- WARNING: The UPDATE below resets that password every time this script is run.
+-- Do not re-run on production after the admin has changed their password.
 
 INSERT INTO tenants (id, name, slug, primary_color, status, is_active)
 SELECT UUID(), 'Mimito', 'mimito', '#004225', 'active', 1
@@ -15,7 +17,7 @@ WHERE t.slug = 'mimito'
   AND NOT EXISTS (SELECT 1 FROM users WHERE email = 'admin@mimitotracking.co.ug')
 LIMIT 1;
 
--- If user already exists, reset password / role
+-- Optional: reset password / role only when intentionally recovering access
 UPDATE users
 SET password_hash = '$2b$10$zI3rDQYQNN8DdTZS1c90Ceut7.wgj.B38coWlgg/nqoM0daFWsQKG',
     full_name = 'Platform Admin',

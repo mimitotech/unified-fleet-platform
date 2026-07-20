@@ -23,6 +23,7 @@ import {
   getUserModules,
   isValidTenantRole,
 } from '../utils/userAccess.js';
+import { publicUrlOrPath } from '../utils/publicUrl.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -573,15 +574,14 @@ router.get('/tenants/:id/integrations', async (req, res) => {
     }
   }
 
-  const baseUrl = process.env.API_PUBLIC_URL || 'http://localhost:3000';
   const { rows: tenant } = await query<{ slug: string }>(`SELECT slug FROM tenants WHERE id = $1`, [req.params.id]);
   const slug = tenant[0]?.slug || '';
   return success(res, rows.map((r: Record<string, unknown>) => ({
     ...r,
     webhookUrl: r.source_type === 'loconav'
-      ? `${baseUrl}/api/webhooks/loconav/${slug}`
+      ? publicUrlOrPath(`/api/webhooks/loconav/${slug}`)
       : r.source_type === 'tracksolid'
-        ? `${baseUrl}/api/webhooks/tracksolid/${slug}`
+        ? publicUrlOrPath(`/api/webhooks/tracksolid/${slug}`)
         : null,
   })));
 });

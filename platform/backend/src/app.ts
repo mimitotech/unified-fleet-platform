@@ -17,9 +17,10 @@ import uploadRoutes from './routes/upload.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { rateLimit } from './middleware/rateLimit.js';
 import { query } from './config/database.js';
+import { resolveUploadRoot } from './utils/paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const UPLOAD_ROOT = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
+const UPLOAD_ROOT = resolveUploadRoot();
 
 function resolveFrontendDist(): string | null {
   const candidates = [

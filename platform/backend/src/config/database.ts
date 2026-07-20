@@ -170,6 +170,9 @@ export function normalizeSql(text: string): string {
   sql = sql.replace(/::interval/gi, '');
 
   sql = sql.replace(/\bILIKE\b/gi, 'LIKE');
+  // Postgres regex operators → MySQL REGEXP (case-insensitive under default collations)
+  sql = sql.replace(/(\S+)\s+~\*\s+'/g, "$1 REGEXP '");
+  sql = sql.replace(/(\S+)\s+~\s+'/g, "$1 REGEXP '");
   sql = sql.replace(/\bTRUE\b/gi, '1');
   sql = sql.replace(/\bFALSE\b/gi, '0');
   sql = sql.replace(/\bEXCLUDED\.(\w+)/gi, 'VALUES($1)');
@@ -436,44 +439,77 @@ async function queryWithConn(
       const table = insert[2];
       const colList = insert[3];
       const cols = colList.split(',').map((c) => c.trim().replace(/`/g, ''));
+      const valsMatch = sql.match(
+        /VALUES\s*\(([\s\S]*?)\)\s*(?:ON\s+(?:DUPLICATE|CONFLICT)|RETURNING|$)/i
+      );
+      const valueParts = valsMatch?.[1].split(',').map((v) => v.trim()) ?? [];
 
-      let id: string | undefined;
-      if (!cols.some((c) => c.toLowerCase() === 'id')) {
-        id = randomUUID();
-        sql = sql.replace(
-          /INSERT\s+(IGNORE\s+)?INTO\s+`?(\w+)`?\s*\(([^)]+)\)\s*VALUES\s*\(/i,
-          `INSERT ${ignore}INTO ${table} (id, ${colList}) VALUES ('${id}', `
-        );
-      } else {
-        const valsMatch = sql.match(/VALUES\s*\(([^)]+)\)/i);
-        const idIdx = cols.findIndex((c) => c.toLowerCase() === 'id');
-        const ph = valsMatch?.[1].split(',').map((v) => v.trim())[idIdx];
-        const dollar = ph?.match(/\$(\d+)/);
-        if (dollar) id = String(bind[Number(dollar[1]) - 1]);
-        else if (ph && /^'[0-9a-f-]{36}'$/i.test(ph)) id = ph.slice(1, -1);
+      const bindForCol = (colName: string): unknown | undefined => {
+        const idx = cols.findIndex((c) => c.toLowerCase() === colName.toLowerCase());
+        if (idx < 0) return undefined;
+        const ph = valueParts[idx];
+        const dollar = ph?.match(/^\$(\d+)$/);
+        if (dollar) return bind[Number(dollar[1]) - 1];
+        if (ph && /^'[0-9a-f-]{36}'$/i.test(ph)) return ph.slice(1, -1);
+        return undefined;
+      };
+
+      // Natural / alternate PKs — never invent an `id` column (e.g. user_preferences.user_id)
+      let reselectCol: string | null = null;
+      let reselectVal: unknown;
+      for (const key of ['user_id', 'token', 'key', 'slug'] as const) {
+        const v = bindForCol(key);
+        if (v != null) {
+          reselectCol = key;
+          reselectVal = v;
+          break;
+        }
       }
 
-      await executeRaw(conn, sql, bind);
-      if (id) {
+      let id: string | undefined;
+      if (!reselectCol) {
+        id = bindForCol('id') != null ? String(bindForCol('id')) : undefined;
+        if (!id && !cols.some((c) => c.toLowerCase() === 'id')) {
+          id = randomUUID();
+          sql = sql.replace(
+            /INSERT\s+(IGNORE\s+)?INTO\s+`?(\w+)`?\s*\(([^)]+)\)\s*VALUES\s*\(/i,
+            `INSERT ${ignore}INTO ${table} (id, ${colList}) VALUES ('${id}', `
+          );
+        }
+        if (id) {
+          reselectCol = 'id';
+          reselectVal = id;
+        }
+      }
+
+      const execResult = await executeRaw(conn, sql, bind);
+      if (reselectCol != null && reselectVal != null) {
+        return executeRaw(
+          conn,
+          `SELECT ${selectCols === '*' ? '*' : selectCols} FROM ${table} WHERE \`${reselectCol}\` = $1`,
+          [reselectVal]
+        );
+      }
+      if (execResult.insertId) {
         return executeRaw(
           conn,
           `SELECT ${selectCols === '*' ? '*' : selectCols} FROM ${table} WHERE id = $1`,
-          [id]
+          [execResult.insertId]
         );
       }
       return { rows: [], rowCount: 0 };
     }
 
+    // UPDATE … RETURNING: re-select with the same WHERE (supports id, key, composites)
     const tableMatch = sql.match(/^\s*UPDATE\s+`?(\w+)`?/i);
-    const whereId = sql.match(/\bWHERE\s+id\s*=\s*\$(\d+)/i);
-    if (tableMatch && whereId) {
+    const whereMatch = sql.match(/\bWHERE\s+([\s\S]+)$/i);
+    if (tableMatch && whereMatch) {
       const table = tableMatch[1];
-      const id = bind[Number(whereId[1]) - 1];
       await executeRaw(conn, sql, bind);
       return executeRaw(
         conn,
-        `SELECT ${selectCols === '*' ? '*' : selectCols} FROM ${table} WHERE id = $1`,
-        [id]
+        `SELECT ${selectCols === '*' ? '*' : selectCols} FROM ${table} WHERE ${whereMatch[1]}`,
+        bind
       );
     }
   }

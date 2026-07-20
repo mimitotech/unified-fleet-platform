@@ -20,6 +20,11 @@ export function validateEnv(): void {
     process.exit(1);
   }
 
+  if (isProd && !process.env.API_PUBLIC_URL?.trim() && !process.env.FRONTEND_URL?.trim()) {
+    logger.error('API_PUBLIC_URL or FRONTEND_URL is required in production (webhooks, share links, CORS).');
+    process.exit(1);
+  }
+
   if (!isProd) {
     if (!process.env.JWT_SECRET) {
       logger.warn('JWT_SECRET not set — using insecure dev default');

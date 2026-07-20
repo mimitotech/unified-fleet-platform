@@ -22,6 +22,7 @@ import {
   fleetToSnapshotResponse,
 } from '../services/wialonFleetMapper.js';
 import { logger } from '../config/logger.js';
+import { toCamelCase } from '../utils/mapper.js';
 
 import domainRoutes from './domain/index.js';
 import clientWialonRoutes from './clientWialon.js';
@@ -157,7 +158,8 @@ router.get('/modules', requireTenant, async (req: TenantRequest, res) => {
 // User preferences
 router.get('/preferences', requireTenant, async (req: TenantRequest, res) => {
   const { rows } = await query(`SELECT * FROM user_preferences WHERE user_id = $1`, [req.user!.id]);
-  return success(res, rows[0] || {
+  if (rows[0]) return success(res, toCamelCase(rows[0] as Record<string, unknown>));
+  return success(res, {
     language: 'en', timezone: 'UTC', dateFormat: 'YYYY-MM-DD',
     timeFormat: '24h', unitSystem: 'metric',
     emailNotifications: true, inAppNotifications: true, smsNotifications: false,
@@ -188,7 +190,7 @@ router.put('/preferences', requireTenant, async (req: TenantRequest, res) => {
       b.dashboardLayout ? JSON.stringify(b.dashboardLayout) : null,
     ]
   );
-  return success(res, rows[0]);
+  return success(res, rows[0] ? toCamelCase(rows[0] as Record<string, unknown>) : null);
 });
 
 // Tenant users (tenant_admin only)
