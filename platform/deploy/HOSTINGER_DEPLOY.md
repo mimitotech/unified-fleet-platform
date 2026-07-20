@@ -27,9 +27,8 @@ Import from `deploy/hostinger.env.example` (inside the `platform` folder on disk
 Critical:
 
 ```
-DB_HOST=localhost
 DB_USER=u454222977_mams
-DB_PASSWORD=…
+DB_PASSWORD=…          # exact password from hPanel → Databases (reset if unsure)
 DB_NAME=u454222977_mams
 API_PUBLIC_URL=https://mams.frontstardigital.com
 FRONTEND_URL=https://mams.frontstardigital.com
@@ -37,8 +36,8 @@ VITE_API_URL=
 REDIS_DISABLED=1
 ```
 
-Use **`localhost`**, not `127.0.0.1` — Hostinger MySQL grants are usually `user@localhost` (socket).  
-`127.0.0.1` causes: `Access denied for user '…'@'127.0.0.1'`.
+`DB_HOST` is optional — the app tries **Unix socket** first, then **TCP 127.0.0.1** (never bare `localhost`, which Node resolves to `::1`).  
+Prefer discrete `DB_*` over `DATABASE_URL`. Confirm the same user/password opens **phpMyAdmin**.
 
 ## After deploy
 

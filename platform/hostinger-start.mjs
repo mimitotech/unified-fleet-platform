@@ -3,8 +3,7 @@
  * Hostinger entry (same pattern as HomeBridge+ platform/hostinger-start.mjs).
  * Binds PORT immediately for Passenger, then loads the compiled MAMS server.
  *
- * Hostinger MySQL users are typically granted as user@localhost (Unix socket).
- * Using 127.0.0.1 forces TCP → Access denied for 'user'@'127.0.0.1'.
+ * MySQL: prefer Unix socket, then TCP 127.0.0.1 (never bare "localhost" → ::1).
  */
 import { createServer } from 'node:http';
 import { existsSync } from 'node:fs';
@@ -16,23 +15,11 @@ process.env.REDIS_DISABLED = process.env.REDIS_DISABLED || '1';
 
 if (!process.env.PORT) process.env.PORT = '3000';
 
-// Prefer localhost (socket). Do NOT rewrite to 127.0.0.1 on Hostinger.
-if (!process.env.DB_HOST) process.env.DB_HOST = 'localhost';
-if (process.env.DB_HOST === '127.0.0.1') process.env.DB_HOST = 'localhost';
-
-if (!process.env.MYSQL_HOST) process.env.MYSQL_HOST = process.env.DB_HOST;
-if (process.env.MYSQL_HOST === '127.0.0.1') process.env.MYSQL_HOST = 'localhost';
+// Prefer discrete DB_* — Hostinger often mangles DATABASE_URL encoding.
+// Connection strategy (socket → 127.0.0.1) is handled in the app.
 if (!process.env.MYSQL_USER && process.env.DB_USER) process.env.MYSQL_USER = process.env.DB_USER;
 if (!process.env.MYSQL_PASSWORD && process.env.DB_PASSWORD) process.env.MYSQL_PASSWORD = process.env.DB_PASSWORD;
 if (!process.env.MYSQL_DATABASE && process.env.DB_NAME) process.env.MYSQL_DATABASE = process.env.DB_NAME;
-
-// DATABASE_URL with 127.0.0.1 also breaks Hostinger grants — normalize host
-if (process.env.DATABASE_URL) {
-  process.env.DATABASE_URL = process.env.DATABASE_URL.replace(
-    /@(127\.0\.0\.1|\[::1\])(:\d+)?\//,
-    '@localhost$2/'
-  );
-}
 
 const root = dirname(fileURLToPath(import.meta.url));
 const serverBundle = join(root, 'backend', 'dist', 'index.js');
@@ -41,10 +28,9 @@ const host = process.env.HOST || '0.0.0.0';
 
 console.log('[mams-start] node=', process.version);
 console.log('[mams-start] PORT=', port);
-console.log('[mams-start] DB_HOST=', process.env.DB_HOST);
-console.log('[mams-start] DB_USER=', process.env.DB_USER || process.env.MYSQL_USER || '(unset)');
-console.log('[mams-start] DB_NAME=', process.env.DB_NAME || process.env.MYSQL_DATABASE || '(unset)');
-console.log('[mams-start] DATABASE_URL=', process.env.DATABASE_URL ? 'set' : 'unset');
+console.log('[mams-start] DB_USER=', process.env.DB_USER || '(unset)');
+console.log('[mams-start] DB_NAME=', process.env.DB_NAME || '(unset)');
+console.log('[mams-start] DB_PASSWORD length=', (process.env.DB_PASSWORD || '').length);
 
 if (!existsSync(serverBundle)) {
   console.error('[mams-start] FATAL: backend/dist/index.js missing — run npm run build');

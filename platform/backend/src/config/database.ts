@@ -1,5 +1,6 @@
 import mysql, { type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from 'mysql2/promise';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
+import { existsSync } from 'fs';
 
 export type QueryResultRow = Record<string, unknown>;
 
@@ -10,55 +11,135 @@ export interface QueryResult<T extends QueryResultRow = QueryResultRow> {
 }
 
 let pool: Pool | null = null;
+let poolReady: Promise<Pool> | null = null;
 
-function buildPoolConfig(): mysql.PoolOptions {
-  const user = process.env.DB_USER || process.env.MYSQL_USER || process.env.DB_USERNAME || '';
-  const password = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || '';
-  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || process.env.DB_DATABASE || '';
-  let host = process.env.DB_HOST || process.env.MYSQL_HOST || 'localhost';
-  if (host === '127.0.0.1' || host === '::1') host = 'localhost';
-  const port = parseInt(process.env.DB_PORT || process.env.MYSQL_PORT || '3306', 10);
+function strip(value: string): string {
+  const v = value.trim();
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+    return v.slice(1, -1);
+  }
+  return v;
+}
 
-  // Prefer discrete DB_* on Hostinger — more reliable than DATABASE_URL parsing with special chars
-  if (user && database) {
-    console.log('[mams-db] connecting', { host, port, user, database, via: 'DB_*' });
-    return {
-      host,
-      port,
-      user,
-      password,
-      database,
-      waitForConnections: true,
-      connectionLimit: 10,
-      timezone: 'Z',
-      supportBigNumbers: true,
-      // localhost → Unix socket on Linux (Hostinger); required for user@localhost grants
-      ...(host === 'localhost' ? { socketPath: process.env.DB_SOCKET || undefined } : {}),
-    };
+function findMysqlSocket(): string | undefined {
+  if (process.env.DB_SOCKET?.trim()) return process.env.DB_SOCKET.trim();
+  const candidates = [
+    '/var/run/mysqld/mysqld.sock',
+    '/run/mysqld/mysqld.sock',
+    '/tmp/mysql.sock',
+    '/var/lib/mysql/mysql.sock',
+  ];
+  return candidates.find((p) => existsSync(p));
+}
+
+type ConnParts = {
+  user: string;
+  password: string;
+  database: string;
+  port: number;
+};
+
+function readParts(): ConnParts {
+  let user = strip(process.env.DB_USER || process.env.MYSQL_USER || process.env.DB_USERNAME || '');
+  let password = strip(process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || '');
+  let database = strip(process.env.DB_NAME || process.env.MYSQL_DATABASE || process.env.DB_DATABASE || '');
+  let port = parseInt(process.env.DB_PORT || process.env.MYSQL_PORT || '3306', 10);
+
+  if ((!user || !database || !password) && process.env.DATABASE_URL?.startsWith('mysql')) {
+    const u = new URL(
+      process.env.DATABASE_URL.replace(/^mysql2:\/\//, 'mysql://')
+    );
+    user = user || decodeURIComponent(u.username);
+    password = password || decodeURIComponent(u.password);
+    database = database || decodeURIComponent((u.pathname || '/').replace(/^\//, ''));
+    port = Number(u.port || port);
   }
 
-  const url = process.env.DATABASE_URL?.trim();
-  if (url && (url.startsWith('mysql://') || url.startsWith('mysql2://'))) {
-    const normalized = url
-      .replace(/^mysql2:\/\//, 'mysql://')
-      .replace(/@(127\.0\.0\.1|\[::1\])(:\d+)?\//, '@localhost$2/');
-    console.log('[mams-db] connecting via DATABASE_URL');
-    return {
-      uri: normalized,
-      waitForConnections: true,
-      connectionLimit: 10,
-      timezone: 'Z',
-    };
+  if (!user || !database) {
+    throw new Error('MySQL is not configured. Set DB_USER / DB_PASSWORD / DB_NAME.');
   }
 
+  return { user, password, database, port };
+}
+
+async function tryConnect(label: string, opts: mysql.PoolOptions): Promise<Pool> {
+  const p = mysql.createPool({
+    ...opts,
+    waitForConnections: true,
+    connectionLimit: 10,
+    timezone: 'Z',
+    supportBigNumbers: true,
+    connectTimeout: 10000,
+    enableKeepAlive: true,
+  });
+  try {
+    const conn = await p.getConnection();
+    try {
+      await conn.query('SELECT 1');
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    await p.end().catch(() => undefined);
+    throw err;
+  }
+  console.log('[mams-db] connected via', label);
+  return p;
+}
+
+async function createWorkingPool(): Promise<Pool> {
+  const parts = readParts();
+  const fp = createHash('sha256').update(parts.password).digest('hex').slice(0, 8);
+  console.log('[mams-db] credentials', {
+    user: parts.user,
+    database: parts.database,
+    passwordLength: parts.password.length,
+    passwordFingerprint: fp,
+  });
+
+  const base = {
+    user: parts.user,
+    password: parts.password,
+    database: parts.database,
+  };
+
+  const errors: string[] = [];
+
+  // 1) Unix socket → MySQL authenticates as user@localhost (Hostinger phpMyAdmin style)
+  const socket = findMysqlSocket();
+  if (socket) {
+    try {
+      return await tryConnect(`socket:${socket}`, { ...base, socketPath: socket });
+    } catch (err) {
+      errors.push(`socket ${socket}: ${(err as Error).message}`);
+    }
+  } else {
+    console.warn('[mams-db] no mysql.sock found — will try TCP');
+  }
+
+  // 2) TCP IPv4 127.0.0.1 (never localhost — Node resolves localhost to ::1)
+  try {
+    return await tryConnect('tcp:127.0.0.1', {
+      ...base,
+      host: '127.0.0.1',
+      port: parts.port,
+      family: 4,
+    } as mysql.PoolOptions);
+  } catch (err) {
+    errors.push(`tcp 127.0.0.1: ${(err as Error).message}`);
+  }
+
+  console.error('[mams-db] all connection strategies failed:\n - ' + errors.join('\n - '));
   throw new Error(
-    'MySQL is not configured. Set DB_HOST/DB_USER/DB_PASSWORD/DB_NAME (or DATABASE_URL).'
+    `MySQL Access denied. passwordLength=${parts.password.length} fingerprint=${fp}. ` +
+      `Open phpMyAdmin with the same user/password; re-save DB_PASSWORD in Hostinger; ` +
+      `ensure user is assigned to database ${parts.database}.`
   );
 }
 
 export function getPool(): Pool {
   if (!pool) {
-    pool = mysql.createPool(buildPoolConfig());
+    throw new Error('Database pool not initialized — connectDatabase() must run first');
   }
   return pool;
 }
@@ -258,12 +339,27 @@ async function queryWithConn(
 }
 
 export async function connectDatabase(): Promise<void> {
-  const conn = await getPool().getConnection();
-  try {
-    await conn.query('SELECT 1');
-  } finally {
-    conn.release();
+  if (pool) {
+    const conn = await pool.getConnection();
+    try {
+      await conn.query('SELECT 1');
+    } finally {
+      conn.release();
+    }
+    return;
   }
+  if (!poolReady) {
+    poolReady = createWorkingPool()
+      .then((p) => {
+        pool = p;
+        return p;
+      })
+      .catch((err) => {
+        poolReady = null;
+        throw err;
+      });
+  }
+  await poolReady;
 }
 
 export async function query<T extends QueryResultRow = QueryResultRow>(

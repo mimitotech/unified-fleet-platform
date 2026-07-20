@@ -17,7 +17,7 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 
 function isAuthError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return /access denied|er_access_denied|er_dbaccess_denied/i.test(msg);
+  return /access denied|er_access_denied|er_dbaccess_denied|passwordFingerprint/i.test(msg);
 }
 
 async function waitForDatabase(maxAttempts = 8, delayMs = 1500): Promise<boolean> {
@@ -32,16 +32,15 @@ async function waitForDatabase(maxAttempts = 8, delayMs = 1500): Promise<boolean
       // Wrong password / host grant — do not burn 40s retrying the same failure
       if (isAuthError(err)) {
         logger.error(`
-MySQL Access denied for this user/host.
+MySQL Access denied for this user/password.
 
-On Hostinger, set:
-  DB_HOST=localhost
+In Hostinger → Environment variables, set (and re-save):
   DB_USER=u454222977_mams
-  DB_PASSWORD=<exact password from hPanel → Databases>
+  DB_PASSWORD=<exact password from hPanel → Databases — reset it if unsure>
   DB_NAME=u454222977_mams
 
-Remove DATABASE_URL or make its host localhost (not 127.0.0.1).
-Confirm the user can open the DB in phpMyAdmin with the same password.
+Remove DATABASE_URL (optional; DB_* is enough).
+Confirm the same user/password opens the DB in phpMyAdmin.
 `);
         return false;
       }
