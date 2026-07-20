@@ -24,17 +24,13 @@ import {
   isValidTenantRole,
 } from '../utils/userAccess.js';
 import { publicUrlOrPath } from '../utils/publicUrl.js';
+import { normalizeUploadPath } from '../utils/normalizeUploadPath.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/** Prefer same-origin /uploads paths; strip accidental localhost prefixes from stored URLs. */
+/** Prefer same-origin /uploads paths; strip localhost / absolute hosts from stored URLs. */
 function publicAssetPath(value: unknown): string | null {
-  if (value == null || value === '') return null;
-  const s = String(value).trim();
-  if (!s) return null;
-  const local = s.match(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/uploads\/.+)$/i);
-  if (local) return local[3];
-  return s;
+  return normalizeUploadPath(value == null ? null : String(value));
 }
 
 const router = Router();
@@ -384,7 +380,7 @@ router.post('/tenants', async (req: AuthRequest, res) => {
       const { rows } = await tx(
         `INSERT INTO tenants (name, slug, primary_color, logo_url, favicon_url, contact_email, timezone, language, status, is_active, assigned_manager_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'draft', false, $9) RETURNING *`,
-        [name, normalizedSlug, primaryColor || '#004225', logoUrl, faviconUrl, contactEmail, timezone || 'UTC', language || 'en', assignedManagerId]
+        [name, normalizedSlug, primaryColor || '#004225', normalizeUploadPath(logoUrl), normalizeUploadPath(faviconUrl), contactEmail, timezone || 'UTC', language || 'en', assignedManagerId]
       );
 
       const id = rows[0].id as string;
@@ -465,6 +461,18 @@ router.patch('/tenants/:id', async (req: AuthRequest, res) => {
   }
 
   const setManager = isSuperAdmin(req.user?.role) && 'assignedManagerId' in b;
+  const setLogo = Object.prototype.hasOwnProperty.call(b, 'logoUrl');
+  const setFavicon = Object.prototype.hasOwnProperty.call(b, 'faviconUrl');
+  const logoUrl = setLogo
+    ? b.logoUrl
+      ? normalizeUploadPath(String(b.logoUrl))
+      : null
+    : null;
+  const faviconUrl = setFavicon
+    ? b.faviconUrl
+      ? normalizeUploadPath(String(b.faviconUrl))
+      : null
+    : null;
 
   const { rows } = await query(
     `UPDATE tenants SET
@@ -473,8 +481,8 @@ router.patch('/tenants/:id', async (req: AuthRequest, res) => {
       primary_color = COALESCE($4, primary_color),
       secondary_color = COALESCE($5, secondary_color),
       accent_color = COALESCE($6, accent_color),
-      logo_url = COALESCE($7, logo_url),
-      favicon_url = COALESCE($8, favicon_url),
+      logo_url = CASE WHEN $23 THEN $7 ELSE logo_url END,
+      favicon_url = CASE WHEN $24 THEN $8 ELSE favicon_url END,
       is_active = COALESCE($9, is_active),
       status = COALESCE($10, status),
       contact_email = COALESCE($11, contact_email),
@@ -492,9 +500,9 @@ router.patch('/tenants/:id', async (req: AuthRequest, res) => {
      WHERE id = $1 RETURNING *`,
     [
       req.params.id, b.name, b.slug, b.primaryColor, b.secondaryColor, b.accentColor,
-      b.logoUrl, b.faviconUrl, isActive, b.status, b.contactEmail, b.phone,
+      logoUrl, faviconUrl, isActive, b.status, b.contactEmail, b.phone,
       b.address, b.country, b.timezone, b.language, b.maxVehicles, b.maxUsers,
-      b.maxStorageGb, b.customCss, assignedManagerId, setManager,
+      b.maxStorageGb, b.customCss, assignedManagerId, setManager ? 1 : 0, setLogo ? 1 : 0, setFavicon ? 1 : 0,
     ]
   );
   if (!rows[0]) return error(res, 'Tenant not found', 404);

@@ -22,21 +22,13 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { formatDistanceToNow } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { clientFacingText } from '@/lib/clientFacingText';
 
 interface AppLayoutProps {
   children: ReactNode;
   title: string;
   subtitle?: string;
   actions?: ReactNode;
-}
-
-function clientFacingText(text?: string) {
-  if (!text) return text;
-  return text
-    .replace(/\bWialon\b/gi, '')
-    .replace(/\s{2,}/g, ' ')
-    .replace(/\s+([.,;:])/g, '$1')
-    .trim();
 }
 
 function sourceLabel(sourceType?: string) {

@@ -23,6 +23,7 @@ import {
 } from '../services/wialonFleetMapper.js';
 import { logger } from '../config/logger.js';
 import { toCamelCase } from '../utils/mapper.js';
+import { normalizeUploadPath } from '../utils/normalizeUploadPath.js';
 
 import domainRoutes from './domain/index.js';
 import clientWialonRoutes from './clientWialon.js';
@@ -46,13 +47,8 @@ router.get('/tenant', requireTenant, async (req: TenantRequest, res) => {
   const { rows } = await query(`SELECT * FROM tenants WHERE id = $1`, [req.tenantId]);
   if (!rows[0]) return error(res, 'Tenant not found', 404);
   const t = rows[0] as Record<string, unknown>;
-  const assetPath = (value: unknown): string | null => {
-    if (value == null || value === '') return null;
-    const s = String(value).trim();
-    const local = s.match(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/uploads\/.+)$/i);
-    if (local) return local[3];
-    return s || null;
-  };
+  const assetPath = (value: unknown): string | null =>
+    normalizeUploadPath(value == null ? null : String(value));
   return success(res, {
     id: t.id,
     name: t.name,

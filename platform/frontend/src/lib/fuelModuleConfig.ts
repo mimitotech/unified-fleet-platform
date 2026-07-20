@@ -1,5 +1,5 @@
 export const FUEL_TABLE_COLUMN_DEFS = [
-  { key: 'filledMain', label: 'Filled(Main)', description: 'Liters refilled into the main tank (Wialon fillings)' },
+  { key: 'filledMain', label: 'Filled(Main)', description: 'Liters refilled into the main tank (sensor fillings)' },
   { key: 'filledReserve', label: 'Filled(Reserve)', description: 'Liters refilled into the reserve tank' },
   { key: 'filledStation', label: 'Filled(Station)', description: 'Liters from petrol-station sheet uploads' },
   { key: 'variance', label: 'Variance', description: 'FLS filled minus station filled (enables Variance tab)' },

@@ -39,10 +39,15 @@ REDIS_DISABLED=1
 `DB_HOST` is optional — the app tries **Unix socket** first, then **TCP 127.0.0.1** (never bare `localhost`, which Node resolves to `::1`).  
 Prefer discrete `DB_*` over `DATABASE_URL`. Confirm the same user/password opens **phpMyAdmin**.
 
-## After deploy
+## Logos & uploads
 
-- `https://mams.frontstardigital.com/health` → `"database":"connected"`, `"engine":"mysql"`
-- Logs should show `[mams-start] early listen` then `app ready`
+Tenant logos/favicons are stored in **MySQL** (`tenant_files.content`) and also written under `UPLOAD_DIR` (default `uploads/`).
+
+On Hostinger, redeploys often wipe the local `uploads/` folder. The app serves `/uploads/...` from disk first, then **falls back to MySQL** and rehydrates the file — so logos survive redeploys after a fresh upload.
+
+After deploy, re-upload any logo that was saved before this change (older rows have no `content` bytes).
+
+Optional: `UPLOAD_DIR=/absolute/persistent/path` if Hostinger gives you durable disk.
 
 ## Architecture
 

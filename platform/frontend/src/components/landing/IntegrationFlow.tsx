@@ -4,24 +4,25 @@ import { MamsLogoMark } from '@/components/shared/MamsLogo';
 import { BRAND } from '@/lib/branding';
 import { ArrowRight, Radio, Truck, Video, Fuel, Bell, Users } from 'lucide-react';
 
+/** Public marketing labels — never name third-party telematics vendors. */
 const SOURCES = [
   {
-    id: 'wialon',
-    name: 'Wialon',
+    id: 'gps',
+    name: 'Fleet GPS',
     color: '#2563eb',
     capabilities: ['GPS & trips', 'Fuel & sensors', 'Drivers', 'Geofences', 'Commands'],
     icon: Truck,
   },
   {
-    id: 'loconav',
-    name: 'LocoNav',
+    id: 'video',
+    name: 'Video telematics',
     color: '#7c3aed',
-    capabilities: ['Live GPS', 'Video alerts', 'Vehicle list', 'Webhooks'],
+    capabilities: ['Live GPS', 'Video alerts', 'Vehicle list', 'Event webhooks'],
     icon: Video,
   },
   {
-    id: 'tracksolid',
-    name: 'TrackSolid Pro',
+    id: 'devices',
+    name: 'Device platform',
     color: '#059669',
     capabilities: ['GPS & video', 'Fuel & OBD', 'Geofences', 'Alerts', 'Commands'],
     icon: Radio,
@@ -29,16 +30,15 @@ const SOURCES = [
 ] as const;
 
 export function IntegrationFlow() {
-  const [active, setActive] = useState<string>('wialon');
+  const [active, setActive] = useState<string>('gps');
   const selected = SOURCES.find((s) => s.id === active) ?? SOURCES[0];
 
   return (
     <div className="rounded-2xl border border-primary/15 bg-white/80 backdrop-blur-sm p-6 lg:p-8 shadow-xl shadow-primary/5">
       <div className="grid lg:grid-cols-[1fr_auto_1fr_auto_1fr] gap-4 lg:gap-6 items-center">
-        {/* Sources */}
         <div className="space-y-3">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-4">
-            Telematics sources
+            Connected data sources
           </p>
           {SOURCES.map((source) => {
             const Icon = source.icon;
@@ -77,7 +77,6 @@ export function IntegrationFlow() {
           <ArrowRight className="w-6 h-6 animate-pulse delay-150" />
         </div>
 
-        {/* MAMS hub */}
         <div className="relative">
           <div className="absolute inset-0 rounded-2xl bg-primary/20 blur-xl animate-pulse" />
           <div
@@ -105,7 +104,6 @@ export function IntegrationFlow() {
           <ArrowRight className="w-6 h-6" />
         </div>
 
-        {/* Client output */}
         <div className="rounded-xl border border-primary/20 bg-gradient-to-br from-primary/[0.06] to-transparent p-5">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
             What {selected.name} brings in

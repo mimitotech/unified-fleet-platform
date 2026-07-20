@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { BRAND } from '@/lib/branding';
 import { resolveAssetUrl } from '@/lib/assets';
@@ -12,12 +13,19 @@ interface TenantLogoProps {
 }
 
 const SIZE = {
-  sidebar: { shell: 'h-12 min-w-[52px] max-w-[160px]', img: 'max-h-10 max-w-[140px]', name: 'text-sm' },
-  header: { shell: 'h-12 min-w-[48px] max-w-[140px]', img: 'max-h-9 max-w-[120px]', name: 'text-base' },
-  lg: { shell: 'h-14 min-w-[56px] max-w-[180px]', img: 'max-h-12 max-w-[160px]', name: 'text-base' },
+  sidebar: { shell: 'h-12 min-w-[52px] max-w-[160px]', img: 'max-h-10 max-w-[140px]', name: 'text-sm', initial: 'text-lg' },
+  header: { shell: 'h-12 min-w-[48px] max-w-[140px]', img: 'max-h-9 max-w-[120px]', name: 'text-base', initial: 'text-base' },
+  lg: { shell: 'h-14 min-w-[56px] max-w-[180px]', img: 'max-h-12 max-w-[160px]', name: 'text-base', initial: 'text-xl' },
 } as const;
 
-/** Tenant logo with high-contrast container; falls back to MAMS logo */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return 'F';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] ?? ''}${parts[1][0] ?? ''}`.toUpperCase();
+}
+
+/** Tenant logo with high-contrast container; MAMS only when tenant has no logo. */
 export function TenantLogo({
   logoUrl,
   name,
@@ -29,6 +37,15 @@ export function TenantLogo({
   const s = SIZE[size];
   const resolved = resolveAssetUrl(logoUrl);
   const onDark = variant === 'on-dark';
+  const hasCustom = Boolean(resolved);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [resolved]);
+
+  const showImage = hasCustom ? !failed : true;
+  const imgSrc = hasCustom ? resolved! : BRAND.logo;
 
   return (
     <div className={cn('flex items-center gap-3 min-w-0', className)}>
@@ -39,18 +56,35 @@ export function TenantLogo({
           onDark ? 'bg-white/95 ring-1 ring-white/20' : 'bg-white ring-1 ring-border'
         )}
       >
-        <img
-          src={resolved || BRAND.logo}
-          alt={`${name} logo`}
-          className={cn(s.img, 'w-auto object-contain object-center')}
-          onError={(e) => {
-            const img = e.currentTarget;
-            if (!img.dataset.fallback) {
-              img.dataset.fallback = '1';
-              img.src = BRAND.logoFallback;
-            }
-          }}
-        />
+        {showImage ? (
+          <img
+            key={imgSrc}
+            src={imgSrc}
+            alt={`${name} logo`}
+            className={cn(s.img, 'w-auto object-contain object-center')}
+            onError={(e) => {
+              const img = e.currentTarget;
+              if (hasCustom) {
+                setFailed(true);
+                return;
+              }
+              if (!img.dataset.fallback) {
+                img.dataset.fallback = '1';
+                img.src = BRAND.logoFallback;
+              }
+            }}
+          />
+        ) : (
+          <span
+            className={cn(
+              'font-bold tracking-tight text-primary',
+              s.initial
+            )}
+            aria-hidden
+          >
+            {initials(name)}
+          </span>
+        )}
       </div>
       {showName && (
         <div className="min-w-0">

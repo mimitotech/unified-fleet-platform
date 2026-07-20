@@ -2,6 +2,7 @@ import { Satellite } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useWialonContext } from '@/hooks/useWialon';
 import { useFleetAssetProfile } from '@/hooks/useFleetAssetProfile';
+import { clientFacingText } from '@/lib/clientFacingText';
 import { cn } from '@/lib/utils';
 
 type Props = {
@@ -15,6 +16,8 @@ export function WialonContextBanner({ className, compact }: Props) {
 
   if (isLoading || !configured) return null;
 
+  const lastError = clientFacingText(ctx?.lastError);
+
   if (!connected) {
     return (
       <div
@@ -27,7 +30,7 @@ export function WialonContextBanner({ className, compact }: Props) {
           <Satellite className="h-4 w-4 text-destructive shrink-0" />
           <span>
             Telematics is configured but not connected
-            {ctx?.lastError ? `: ${ctx.lastError}` : '.'}
+            {lastError ? `: ${lastError}` : '.'}
             {' '}Contact your account manager to restore the connection.
           </span>
         </div>
@@ -58,9 +61,9 @@ export function WialonContextBanner({ className, compact }: Props) {
             {tierName}
           </Badge>
         )}
-        {!compact && ctx?.lastError && (
-          <span className="text-xs text-amber-700 dark:text-amber-400 truncate max-w-md" title={ctx.lastError}>
-            Sync note: {ctx.lastError}
+        {!compact && lastError && (
+          <span className="text-xs text-amber-700 dark:text-amber-400 truncate max-w-md" title={lastError}>
+            Sync note: {lastError}
           </span>
         )}
         {!compact && (

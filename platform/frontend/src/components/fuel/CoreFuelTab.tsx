@@ -19,6 +19,7 @@ import { effectiveSuddenDropVolume, fuelTheftEventKey } from '@/components/fuel/
 import type { FleetFuelLevel } from '@/components/fuel/FuelLevelAlerts';
 import type { FuelEvent } from '@/types/entities';
 import type { FuelAssetCategory } from '@/lib/fuelTypes';
+import { clientFacingText } from '@/lib/clientFacingText';
 import type { FuelTabDateRangeProps } from './fuelTabTypes';
 import type { StationaryFuelType } from './useStationaryFuelHooks';
 import type { FuelTableUnit } from './FuelTransactionsTable/types';
@@ -220,13 +221,15 @@ export function CoreFuelTab({
     <div className="space-y-4 min-w-0 max-w-full">
       {fuelError && !isFuelWarming && (
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          Report data unavailable: {fuelError.message}. Live sensor levels below may still update.
+          Report data unavailable
+          {clientFacingText(fuelError.message) ? `: ${clientFacingText(fuelError.message)}` : ''}.
+          {' '}Live sensor levels below may still update.
         </div>
       )}
 
       {(isFuelWarming || isFuelLoading) && !fuelError && fuelTransactions.length === 0 && (
         <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-primary">
-          Loading fuel reports from Wialon (fills, consumption, drops). Live tank levels are shown now; period totals appear when the report finishes — usually under a minute.
+          Loading fuel reports (fills, consumption, drops). Live tank levels are shown now; period totals appear when the report finishes — usually under a minute.
         </div>
       )}
 

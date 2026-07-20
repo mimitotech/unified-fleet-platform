@@ -27,7 +27,7 @@ function mergeRow(unit: FleetUnit, live?: WialonFuelFleetUnit) {
     fuelFiltered: live?.fuelFiltered || '',
     fuelPercent: live?.fuelPercent ?? unit.fuelLevel,
     filled: live?.filledLiters ?? live?.fuel?.filled,
-    method: live?.method || (snapshotDisplay !== '—' ? 'Wialon sensor' : hasFuelSensors(unit) ? 'No reading' : '—'),
+    method: live?.method || (snapshotDisplay !== '—' ? 'Fuel sensor' : hasFuelSensors(unit) ? 'No reading' : '—'),
     tripState: live?.tripStateLabel || '',
   };
 }
@@ -48,7 +48,7 @@ export function WialonFuelFleetTable({ units, onSelect }: Props) {
       {isLoading && (
         <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5 text-xs text-muted-foreground bg-card/90 px-2 py-1 rounded-md border">
           <Loader2 className="h-3 w-3 animate-spin" />
-          Syncing Wialon fuel…
+          Syncing fuel data…
         </div>
       )}
       <Table>

@@ -29,7 +29,7 @@ export function WialonFuelUnitProfile({ unitId, unitName }: Props) {
   if (!unitId) {
     return (
       <div className="p-8 text-center text-muted-foreground text-sm">
-        Select a vehicle to view Wialon fuel configuration.
+        Select a vehicle to view fuel configuration.
       </div>
     );
   }
@@ -61,7 +61,7 @@ export function WialonFuelUnitProfile({ unitId, unitName }: Props) {
     <div className="space-y-4 p-4">
       <div className="flex items-center gap-2">
         <Settings2 className="h-4 w-4 text-primary" />
-        <h3 className="font-semibold text-sm">{unitName || `Unit ${unitId}`} — Wialon fuel profile</h3>
+        <h3 className="font-semibold text-sm">{unitName || `Unit ${unitId}`} — Fuel profile</h3>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
@@ -99,7 +99,7 @@ export function WialonFuelUnitProfile({ unitId, unitName }: Props) {
       </div>
 
       <div className="rounded-lg border p-3">
-        <p className="text-xs font-semibold mb-2">Consumption settings (Wialon)</p>
+        <p className="text-xs font-semibold mb-2">Consumption settings</p>
         <div className="grid grid-cols-3 gap-3 text-xs">
           <div><span className="text-muted-foreground">Idle</span><p className="font-medium">{math?.idling ?? '—'} L/h</p></div>
           <div><span className="text-muted-foreground">Urban</span><p className="font-medium">{math?.urban ?? '—'} L/100km</p></div>

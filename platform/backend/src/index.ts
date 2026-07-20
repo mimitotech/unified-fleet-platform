@@ -78,6 +78,13 @@ async function main() {
 
     const dbOk = await waitForDatabase();
     if (dbOk) {
+      try {
+        const { UploadService } = await import('./services/UploadService.js');
+        await UploadService.ensureSchema();
+        logger.info('Upload schema ready (tenant_files content)');
+      } catch (e) {
+        logger.warn(`Upload schema ensure skipped: ${(e as Error).message}`);
+      }
       logger.info('MySQL connected');
       startSyncScheduler();
       logger.info('Sync scheduler started');

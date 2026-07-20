@@ -35,6 +35,7 @@ import { AlertsModuleReports } from '@/components/reports/moduleReportPanels';
 import { WialonNotificationsPanel } from '@/components/app/WialonLivePanels';
 import { useModules } from '@/hooks/useModules';
 import { cn } from '@/lib/utils';
+import { clientFacingText } from '@/lib/clientFacingText';
 
 interface AlertRow {
   id: string;
@@ -126,14 +127,6 @@ function prettySource(sourceType?: string) {
   return sourceType!.replace(/_/g, ' ');
 }
 
-function clientFacingText(text?: string) {
-  if (!text) return text;
-  return text
-    .replace(/\bWialon\b/gi, '')
-    .replace(/\s{2,}/g, ' ')
-    .replace(/\s+([.,;:])/g, '$1')
-    .trim();
-}
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 

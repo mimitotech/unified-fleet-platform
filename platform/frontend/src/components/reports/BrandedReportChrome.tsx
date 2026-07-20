@@ -15,13 +15,13 @@ type DocumentProps = {
   className?: string;
 };
 
-function reportLogoSrc(branding: ResolvedTenantBranding): string {
-  return resolveAssetUrl(branding.logoUrl) || BRAND.logo;
+function reportLogoSrc(branding: ResolvedTenantBranding): string | null {
+  return resolveAssetUrl(branding.logoUrl) || null;
 }
 
 /** Report shell with client-logo watermark (print / PDF security). */
 export function BrandedReportDocument({ branding, children, className }: DocumentProps) {
-  const logoSrc = reportLogoSrc(branding);
+  const logoSrc = reportLogoSrc(branding) || BRAND.logo;
 
   return (
     <div data-report-document className={cn('relative bg-white', className)}>
@@ -103,18 +103,26 @@ export function BrandedReportHeader({
             data-report-logo
             className="shrink-0 h-16 w-16 rounded-lg border border-slate-200 bg-white flex items-center justify-center p-2 shadow-sm"
           >
-            <img
-              src={logoSrc}
-              alt={branding.name || 'Client'}
-              className="max-h-full max-w-full object-contain"
-              onError={(e) => {
-                const img = e.currentTarget;
-                if (!img.dataset.fallback) {
-                  img.dataset.fallback = '1';
-                  img.src = BRAND.logo;
-                }
-              }}
-            />
+            {logoSrc ? (
+              <img
+                src={logoSrc}
+                alt={branding.name || 'Client'}
+                className="max-h-full max-w-full object-contain"
+                onError={(e) => {
+                  // Do not swap to MAMS — hide broken custom logo
+                  e.currentTarget.style.display = 'none';
+                }}
+              />
+            ) : (
+              <span className="text-sm font-bold" style={{ color: branding.primaryColor }}>
+                {(branding.name || 'F')
+                  .split(/\s+/)
+                  .filter(Boolean)
+                  .slice(0, 2)
+                  .map((p) => p[0]?.toUpperCase() ?? '')
+                  .join('') || 'F'}
+              </span>
+            )}
           </div>
           <p
             data-report-client-name

@@ -17,10 +17,9 @@ import uploadRoutes from './routes/upload.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { rateLimit } from './middleware/rateLimit.js';
 import { query } from './config/database.js';
-import { resolveUploadRoot } from './utils/paths.js';
+import { createUploadsMiddleware } from './middleware/uploadsServe.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const UPLOAD_ROOT = resolveUploadRoot();
 
 function resolveFrontendDist(): string | null {
   const candidates = [
@@ -64,7 +63,7 @@ export function createApp() {
   app.use(compression());
   app.use(express.json({ limit: '15mb' }));
 
-  app.use('/uploads', express.static(UPLOAD_ROOT));
+  app.use('/uploads', createUploadsMiddleware());
 
   app.get('/health', async (_req, res) => {
     try {

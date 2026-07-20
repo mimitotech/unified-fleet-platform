@@ -20,7 +20,7 @@ export function FuelReportTrendChart({ trend, className }: Props) {
   if (!trend.length) {
     return (
       <div className={`flex items-center justify-center h-48 text-sm text-muted-foreground ${className ?? ''}`}>
-        Load a Wialon fuel report to see monthly filled vs consumed.
+        Load a fuel report to see monthly filled vs consumed.
       </div>
     );
   }

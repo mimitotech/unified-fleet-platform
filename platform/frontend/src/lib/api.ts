@@ -1899,15 +1899,32 @@ export const adminApi = {
     api(`/api/admin/tenants/${id}/api-keys`, { method: 'POST', body: JSON.stringify(data) }),
 
   uploadTenantFile: (tenantId: string, file: File, fileType: 'logo' | 'favicon' = 'logo') =>
-    new Promise<{ publicUrl: string; url: string }>((resolve, reject) => {
+    new Promise<{ publicUrl: string; url: string; persisted?: boolean }>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = async () => {
         try {
           const data = reader.result as string;
-          const result = await api<{ publicUrl: string; url: string }>(`/api/admin/tenants/${tenantId}/upload`, {
-            method: 'POST',
-            body: JSON.stringify({ fileName: file.name, mimeType: file.type, data, fileType }),
-          });
+          const ext = file.name.includes('.') ? file.name.slice(file.name.lastIndexOf('.')).toLowerCase() : '';
+          const mimeGuess: Record<string, string> = {
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.webp': 'image/webp',
+            '.svg': 'image/svg+xml',
+            '.ico': 'image/x-icon',
+            '.gif': 'image/gif',
+          };
+          const mimeType =
+            file.type && file.type !== 'application/octet-stream'
+              ? file.type
+              : mimeGuess[ext] || 'image/png';
+          const result = await api<{ publicUrl: string; url: string; persisted?: boolean }>(
+            `/api/admin/tenants/${tenantId}/upload`,
+            {
+              method: 'POST',
+              body: JSON.stringify({ fileName: file.name, mimeType, data, fileType }),
+            }
+          );
           resolve(result);
         } catch (e) {
           reject(e);

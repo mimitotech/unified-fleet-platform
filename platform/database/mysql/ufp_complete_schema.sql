@@ -610,8 +610,11 @@ CREATE TABLE tenant_files (
   mime_type TEXT NOT NULL,
   file_path TEXT NOT NULL,
   size_bytes INT NOT NULL DEFAULT 0,
+  content LONGBLOB NULL,
+  public_url VARCHAR(512) NULL,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   KEY idx_tenant_files (tenant_id, file_type),
+  KEY idx_tenant_files_public_url (public_url),
   CONSTRAINT fk_tenant_files_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

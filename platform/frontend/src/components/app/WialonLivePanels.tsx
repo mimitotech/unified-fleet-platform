@@ -256,7 +256,7 @@ export function WialonReportsPanel() {
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <p className="text-sm font-medium">{reportRows.length} rows</p>
-                  <Button size="sm" variant="outline" onClick={() => downloadCsv(reportRows, 'wialon-report.csv')}>
+                  <Button size="sm" variant="outline" onClick={() => downloadCsv(reportRows, 'fleet-report.csv')}>
                     Download CSV
                   </Button>
                 </div>

@@ -5,6 +5,7 @@ import { AdminLayout } from '@/components/admin/AdminLayout';
 import { adminApi } from '@/lib/api';
 import { BRAND } from '@/lib/branding';
 import { resolveAssetUrl } from '@/lib/assets';
+import { normalizeUploadPath } from '@/lib/normalizeUploadPath';
 import { notify, withToast } from '@/lib/notify';
 import { FileUpload } from '@/components/shared/FileUpload';
 import { LoadingButton } from '@/components/shared/LoadingButton';
@@ -196,8 +197,8 @@ export default function TenantDetail() {
         primaryColor: String(t.primaryColor || BRAND.primary),
         secondaryColor: String(t.secondaryColor || '#0f172a'),
         accentColor: String(t.accentColor || '#3b82f6'),
-        logoUrl: String(t.logoUrl || ''),
-        faviconUrl: String(t.faviconUrl || ''),
+        logoUrl: normalizeUploadPath(String(t.logoUrl || '')) || '',
+        faviconUrl: normalizeUploadPath(String(t.faviconUrl || '')) || '',
         customCss: String(t.customCss || ''),
       });
     }
@@ -1216,21 +1217,45 @@ export default function TenantDetail() {
                 previewUrl={branding.logoUrl}
                 onUpload={async (file) => {
                   const result = await adminApi.uploadTenantFile(id!, file, 'logo');
-                  // Persist relative /uploads/... for same-origin production
-                  const url = result.url || result.publicUrl || '';
-                  setBranding({ ...branding, logoUrl: url });
-                  notify.success('Logo uploaded');
+                  // Prefer relative /uploads path — never store absolute publicUrl
+                  const url = result.url || '';
+                  if (!url) throw new Error('Upload succeeded but no logo URL returned');
+                  setBranding((b) => ({ ...b, logoUrl: url }));
+                  notify.success('Logo uploaded and saved');
+                  qc.invalidateQueries({ queryKey: ['tenant', id] });
+                  qc.invalidateQueries({ queryKey: ['tenant'] });
+                }}
+                onClear={async () => {
+                  setBranding((b) => ({ ...b, logoUrl: '' }));
+                  await withToast(adminApi.updateTenant(id!, { logoUrl: '' }), {
+                    loading: 'Removing logo...',
+                    success: 'Logo cleared',
+                  });
+                  qc.invalidateQueries({ queryKey: ['tenant', id] });
+                  qc.invalidateQueries({ queryKey: ['tenant'] });
                 }}
               />
               <FileUpload
                 label="Favicon"
-                accept="image/png,image/x-icon,image/vnd.microsoft.icon"
+                accept="image/png,image/x-icon,image/vnd.microsoft.icon,image/svg+xml,image/webp"
                 previewUrl={branding.faviconUrl}
                 onUpload={async (file) => {
                   const result = await adminApi.uploadTenantFile(id!, file, 'favicon');
-                  const url = result.url || result.publicUrl || '';
-                  setBranding({ ...branding, faviconUrl: url });
-                  notify.success('Favicon uploaded');
+                  const url = result.url || '';
+                  if (!url) throw new Error('Upload succeeded but no favicon URL returned');
+                  setBranding((b) => ({ ...b, faviconUrl: url }));
+                  notify.success('Favicon uploaded and saved');
+                  qc.invalidateQueries({ queryKey: ['tenant', id] });
+                  qc.invalidateQueries({ queryKey: ['tenant'] });
+                }}
+                onClear={async () => {
+                  setBranding((b) => ({ ...b, faviconUrl: '' }));
+                  await withToast(adminApi.updateTenant(id!, { faviconUrl: '' }), {
+                    loading: 'Removing favicon...',
+                    success: 'Favicon cleared',
+                  });
+                  qc.invalidateQueries({ queryKey: ['tenant', id] });
+                  qc.invalidateQueries({ queryKey: ['tenant'] });
                 }}
               />
               <div><Label>Primary</Label><Input type="color" value={branding.primaryColor} onChange={(e) => setBranding({ ...branding, primaryColor: e.target.value })} className="h-10" /></div>
@@ -1260,6 +1285,9 @@ export default function TenantDetail() {
               <span className="font-bold">{general.name || 'Client Preview'}</span>
             </div>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Logos and favicons save as soon as you upload — no extra click needed. Use Save Branding for colors, pasted URLs, and custom CSS.
+          </p>
           <LoadingButton loading={saveBranding.isPending} onClick={() => saveBranding.mutate()}>Save Branding</LoadingButton>
         </TabsContent>
 
