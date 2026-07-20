@@ -54,9 +54,16 @@ async function main() {
     logger.info('Sync scheduler started');
 
     const app = createApp();
-    app.listen(PORT, '0.0.0.0', () => {
-      logger.info(`MAMS server listening on port ${PORT}`);
-    });
+    const attach = (globalThis as { __mamsAttach?: (handler: typeof app) => void }).__mamsAttach;
+
+    if (typeof attach === 'function') {
+      attach(app);
+      logger.info(`MAMS attached to Hostinger early listener on port ${PORT}`);
+    } else {
+      app.listen(PORT, '0.0.0.0', () => {
+        logger.info(`MAMS server listening on port ${PORT}`);
+      });
+    }
 
     process.on('SIGTERM', async () => {
       logger.info('SIGTERM received, shutting down');

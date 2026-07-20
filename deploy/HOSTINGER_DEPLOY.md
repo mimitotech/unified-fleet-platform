@@ -27,9 +27,9 @@ FROM tenants t WHERE t.slug = 'mimito' LIMIT 1;
 | Branch | `master` |
 | Node | `22.x` |
 | Root directory | `./` |
-| **Build command** | `npm install --legacy-peer-deps --ignore-scripts && node scripts/hostinger-build.mjs` |
-| **Output / entry** | Entry file: `backend/dist/index.js` (Node app — not static-only) |
-| Start command (if asked) | `node backend/dist/index.js` |
+| **Build command** | `npm run build` *(dropdown — repo `build` runs Hostinger-safe script)* |
+| **Output / entry** | Output: *(empty)* · Entry: **`hostinger-start.mjs`** |
+| Start command (if asked) | `node hostinger-start.mjs` |
 
 ## 4. Environment variables
 

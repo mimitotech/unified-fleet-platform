@@ -14,19 +14,14 @@ let pool: Pool | null = null;
 function buildPoolConfig(): mysql.PoolOptions {
   const url = process.env.DATABASE_URL?.trim();
   if (url && (url.startsWith('mysql://') || url.startsWith('mysql2://'))) {
-    return {
-      uri: url.replace(/^mysql2:\/\//, 'mysql://'),
-      waitForConnections: true,
-      connectionLimit: 20,
-      timezone: 'Z',
-    };
+    return { uri: url.replace(/^mysql2:\/\//, 'mysql://'), waitForConnections: true, connectionLimit: 20, timezone: 'Z' };
   }
 
-  const host = process.env.DB_HOST || 'localhost';
-  const port = parseInt(process.env.DB_PORT || '3306', 10);
-  const user = process.env.DB_USER || process.env.DB_USERNAME || '';
-  const password = process.env.DB_PASSWORD || '';
-  const database = process.env.DB_NAME || process.env.DB_DATABASE || '';
+  const host = process.env.DB_HOST || process.env.MYSQL_HOST || '127.0.0.1';
+  const port = parseInt(process.env.DB_PORT || process.env.MYSQL_PORT || '3306', 10);
+  const user = process.env.DB_USER || process.env.MYSQL_USER || process.env.DB_USERNAME || '';
+  const password = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || '';
+  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || process.env.DB_DATABASE || '';
 
   if (!user || !database) {
     throw new Error(
