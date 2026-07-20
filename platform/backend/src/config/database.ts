@@ -165,10 +165,22 @@ export function normalizeSql(text: string): string {
   sql = sql.replace(/::interval/gi, '');
 
   sql = sql.replace(/\bILIKE\b/gi, 'LIKE');
-  sql = sql.replace(/\bTRUE\b/g, '1');
-  sql = sql.replace(/\bFALSE\b/g, '0');
+  sql = sql.replace(/\bTRUE\b/gi, '1');
+  sql = sql.replace(/\bFALSE\b/gi, '0');
   sql = sql.replace(/\bNOW\(\)/gi, 'CURRENT_TIMESTAMP(3)');
   sql = sql.replace(/\bEXCLUDED\.(\w+)/gi, 'VALUES($1)');
+
+  // Reserved column names used as identifiers
+  sql = sql.replace(/\bmd\.key\b/gi, 'md.`key`');
+  sql = sql.replace(/\bm\.key\b/gi, 'm.`key`');
+  sql = sql.replace(/\bSELECT\s+key\s*,/gi, 'SELECT `key`,');
+  sql = sql.replace(/\bSELECT\s+key\s+FROM\b/gi, 'SELECT `key` FROM');
+  sql = sql.replace(/,\s*key\s*,/gi, ', `key`,');
+  sql = sql.replace(/\bORDER BY\s+key\b/gi, 'ORDER BY `key`');
+  sql = sql.replace(/\bFROM\s+module_definitions\s+WHERE\s+key\b/gi, 'FROM module_definitions WHERE `key`');
+  sql = sql.replace(/\bWHERE\s+key\s*=/gi, 'WHERE `key` =');
+  sql = sql.replace(/\bON CONFLICT\s*\(\s*key\s*\)/gi, 'ON CONFLICT (`key`)');
+  sql = sql.replace(/\bON CONFLICT\s*\(\s*`key`\s*\)/gi, 'ON CONFLICT (`key`)');
 
   sql = sql.replace(
     /ON CONFLICT\s*\(([^)]+)\)\s*WHERE[\s\S]*?DO UPDATE SET/gi,
@@ -182,22 +194,26 @@ export function normalizeSql(text: string): string {
     sql = sql.replace(/ON CONFLICT[\s\S]*DO NOTHING/gi, '');
   }
 
+  // FILTER (WHERE …) with balanced parentheses
+  sql = rewriteFilterAggregates(sql);
+
   sql = sql.replace(
-    /COUNT\(\*\)\s*FILTER\s*\(\s*WHERE\s+([\s\S]*?)\)/gi,
-    'SUM(CASE WHEN $1 THEN 1 ELSE 0 END)'
+    /string_agg\s*\(\s*([\s\S]+?)\s*,\s*'([^']*)'\s*\)/gi,
+    "GROUP_CONCAT($1 SEPARATOR '$2')"
+  );
+  sql = sql.replace(/json_agg\s*\(\s*([\s\S]+?)\s*\)/gi, 'JSON_ARRAYAGG($1)');
+
+  // ORDER BY col ASC NULLS LAST → ORDER BY (col IS NULL), col ASC
+  sql = sql.replace(
+    /(\S+)\s+(ASC|DESC)\s+NULLS\s+LAST\b/gi,
+    '($1 IS NULL), $1 $2'
   );
   sql = sql.replace(
-    /COUNT\(DISTINCT\s+(\w+(?:\.\w+)?)\)\s*FILTER\s*\(\s*WHERE\s+([\s\S]*?)\)/gi,
-    'COUNT(DISTINCT CASE WHEN $2 THEN $1 END)'
+    /(\S+)\s+(ASC|DESC)\s+NULLS\s+FIRST\b/gi,
+    '($1 IS NOT NULL), $1 $2'
   );
-  sql = sql.replace(
-    /COALESCE\(SUM\(([^)]+)\)\s*FILTER\s*\(\s*WHERE\s+([\s\S]*?)\),\s*0\)/gi,
-    'COALESCE(SUM(CASE WHEN $2 THEN $1 ELSE 0 END), 0)'
-  );
-  sql = sql.replace(
-    /SUM\(([^)]+)\)\s*FILTER\s*\(\s*WHERE\s+([\s\S]*?)\)/gi,
-    'SUM(CASE WHEN $2 THEN $1 ELSE 0 END)'
-  );
+  sql = sql.replace(/(\S+)\s+NULLS\s+LAST\b/gi, '($1 IS NULL), $1');
+  sql = sql.replace(/(\S+)\s+NULLS\s+FIRST\b/gi, '($1 IS NOT NULL), $1');
 
   sql = sql.replace(/date_trunc\(\s*'day'\s*,\s*([^)]+)\)/gi, 'DATE($1)');
   sql = sql.replace(
@@ -214,10 +230,97 @@ export function normalizeSql(text: string): string {
   sql = sql.replace(/INTERVAL\s+'(\d+)\s+minutes?'/gi, 'INTERVAL $1 MINUTE');
   sql = sql.replace(/to_timestamp\(([^)]+)\)/gi, 'FROM_UNIXTIME($1)');
 
+  // Double-quoted identifiers → backticks (MySQL)
+  sql = sql.replace(/"([a-zA-Z_][a-zA-Z0-9_]*)"/g, '`$1`');
+
   // Hostinger MySQL may not support RETURNING — query() re-selects; strip for raw prepareSql too
   sql = sql.replace(/\sRETURNING\s+[\s\S]+$/i, '');
 
   return sql;
+}
+
+/** Rewrite COUNT/SUM … FILTER (WHERE …) using paren-balanced matching. */
+function rewriteFilterAggregates(sql: string): string {
+  // COALESCE(SUM(x) FILTER (WHERE …), 0)
+  sql = replaceAllBalanced(
+    sql,
+    /COALESCE\(\s*SUM\(([^)]+)\)\s*FILTER\s*\(\s*WHERE\s+/gi,
+    (m, whereClause) =>
+      `COALESCE(SUM(CASE WHEN ${whereClause} THEN ${m[1]} ELSE 0 END), 0)`
+  );
+
+  sql = replaceAllBalanced(
+    sql,
+    /COUNT\(DISTINCT\s+(\w+(?:\.\w+)?)\)\s*FILTER\s*\(\s*WHERE\s+/gi,
+    (m, whereClause) => `COUNT(DISTINCT CASE WHEN ${whereClause} THEN ${m[1]} END)`
+  );
+
+  sql = replaceAllBalanced(
+    sql,
+    /COUNT\(\*\)\s*FILTER\s*\(\s*WHERE\s+/gi,
+    (_m, whereClause) => `SUM(CASE WHEN ${whereClause} THEN 1 ELSE 0 END)`
+  );
+
+  sql = replaceAllBalanced(
+    sql,
+    /SUM\(([^)]+)\)\s*FILTER\s*\(\s*WHERE\s+/gi,
+    (m, whereClause) => `SUM(CASE WHEN ${whereClause} THEN ${m[1]} ELSE 0 END)`
+  );
+
+  return sql;
+}
+
+/**
+ * Match `prefixRe` then consume through the FILTER's closing `)`.
+ * For COALESCE(SUM…FILTER…), also consume the trailing `, 0)`.
+ */
+function replaceAllBalanced(
+  sql: string,
+  prefixRe: RegExp,
+  build: (m: RegExpExecArray, whereClause: string) => string
+): string {
+  let out = '';
+  let last = 0;
+  prefixRe.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = prefixRe.exec(sql)) !== null) {
+    const filterOpen = sql.lastIndexOf('(', m.index + m[0].length - 1);
+    const filterClose = findMatchingParen(sql, filterOpen);
+    if (filterClose < 0) continue;
+
+    const whereClause = sql
+      .slice(filterOpen + 1, filterClose)
+      .replace(/^\s*WHERE\s+/i, '')
+      .trim();
+
+    let end = filterClose + 1;
+    const built = build(m, whereClause);
+
+    // COALESCE(SUM…FILTER…), 0) — swallow trailing `, 0)`
+    if (built.startsWith('COALESCE(')) {
+      const rest = sql.slice(end).match(/^\s*,\s*0\s*\)/);
+      if (rest) end += rest[0].length;
+    }
+
+    out += sql.slice(last, m.index) + built;
+    last = end;
+    prefixRe.lastIndex = last;
+  }
+  return out + sql.slice(last);
+}
+
+function findMatchingParen(sql: string, openIdx: number): number {
+  if (openIdx < 0 || sql[openIdx] !== '(') return -1;
+  let depth = 0;
+  for (let i = openIdx; i < sql.length; i++) {
+    const ch = sql[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
 }
 
 /** Expand $1 / ANY($1::uuid[]) into MySQL `?` placeholders. */
@@ -245,10 +348,11 @@ export function prepareSql(text: string, params: unknown[] = []): { sql: string;
     out += src.slice(last, m.index);
     if (m[0] === '__ANY__') {
       out += '?';
-      outParams.push(anyValues[anyIdx++]);
+      outParams.push(anyValues[anyIdx++] ?? null);
     } else {
       out += '?';
-      outParams.push(params[Number(m[1]) - 1]);
+      const v = params[Number(m[1]) - 1];
+      outParams.push(v === undefined ? null : v);
     }
     last = m.index + m[0].length;
   }

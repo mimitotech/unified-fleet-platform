@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { query } from '../config/database.js';
+import { query, withTransaction } from '../config/database.js';
 import { authMiddleware, requireAdminAccess, requireSuperAdmin, type AuthRequest } from '../middleware/auth.js';
 import { requireTenantAccess } from '../middleware/tenantAccess.js';
 import { isSuperAdmin, isSystemRole } from '../utils/systemRoles.js';
@@ -83,7 +83,7 @@ router.get('/system/health', async (_req, res) => {
 // ─── System settings ─────────────────────────────────────────────────────────
 
 router.get('/system/settings', async (_req, res) => {
-  const { rows } = await query(`SELECT key, value FROM system_settings ORDER BY key`);
+  const { rows } = await query(`SELECT \`key\`, value FROM system_settings ORDER BY \`key\``);
   const settings: Record<string, unknown> = {};
   for (const r of rows as Array<{ key: string; value: unknown }>) {
     settings[r.key] = r.value;
@@ -95,8 +95,8 @@ router.put('/system/settings/:key', async (req: AuthRequest, res) => {
   const { value } = req.body;
   if (!value) return error(res, 'value required');
   await query(
-    `INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2, NOW())
-     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+    `INSERT INTO system_settings (\`key\`, value, updated_at) VALUES ($1, $2, NOW())
+     ON CONFLICT (\`key\`) DO UPDATE SET value = $2, updated_at = NOW()`,
     [req.params.key, JSON.stringify(value)]
   );
   await AuditService.log({
@@ -121,7 +121,7 @@ router.patch('/marketplace/:key', async (req, res) => {
   const { isEnabledGlobally } = req.body;
   const { rows } = await query(
     `UPDATE marketplace_integrations SET is_enabled_globally = COALESCE($2, is_enabled_globally)
-     WHERE key = $1 RETURNING *`,
+     WHERE \`key\` = $1 RETURNING *`,
     [req.params.key, isEnabledGlobally]
   );
   if (!rows[0]) return error(res, 'Integration not found', 404);
@@ -369,23 +369,31 @@ router.post('/tenants', async (req: AuthRequest, res) => {
     : undefined;
 
   try {
-    const { rows } = await query(
-      `INSERT INTO tenants (name, slug, primary_color, logo_url, favicon_url, contact_email, timezone, language, status, is_active, assigned_manager_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'draft', false, $9) RETURNING *`,
-      [name, normalizedSlug, primaryColor || '#004225', logoUrl, faviconUrl, contactEmail, timezone || 'UTC', language || 'en', assignedManagerId]
-    );
+    const tenantId = await withTransaction(async (tx) => {
+      const { rows } = await tx(
+        `INSERT INTO tenants (name, slug, primary_color, logo_url, favicon_url, contact_email, timezone, language, status, is_active, assigned_manager_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'draft', false, $9) RETURNING *`,
+        [name, normalizedSlug, primaryColor || '#004225', logoUrl, faviconUrl, contactEmail, timezone || 'UTC', language || 'en', assignedManagerId]
+      );
 
-    const tenantId = rows[0].id as string;
+      const id = rows[0].id as string;
 
-    await query(
-      `INSERT INTO tenant_modules (tenant_id, module_key, is_enabled)
-       SELECT $1, key, default_enabled FROM module_definitions ON CONFLICT DO NOTHING`,
-      [tenantId]
-    );
-    await query(
-      `INSERT INTO tenant_backup_settings (tenant_id) VALUES ($1) ON CONFLICT DO NOTHING`,
-      [tenantId]
-    );
+      await tx(
+        `INSERT INTO tenant_modules (id, tenant_id, module_key, is_enabled, is_visible)
+         SELECT UUID(), $1, m.\`key\`, m.default_enabled, 1
+         FROM module_definitions m
+         ON CONFLICT DO NOTHING`,
+        [id]
+      );
+      await tx(
+        `INSERT INTO tenant_backup_settings (tenant_id) VALUES ($1) ON CONFLICT DO NOTHING`,
+        [id]
+      );
+
+      return id;
+    });
+
+    const { rows } = await query(`SELECT * FROM tenants WHERE id = $1`, [tenantId]);
 
     let wialonLink: Awaited<ReturnType<typeof import('../services/WialonUserProvisionService.js').WialonAccountLinkService.linkAccount>> | null = null;
     if (!Number.isNaN(wialonAccountId)) {
@@ -419,7 +427,7 @@ router.post('/tenants', async (req: AuthRequest, res) => {
         500
       );
     }
-    if (msg.includes('tenants_slug_key') || msg.includes('duplicate key')) {
+    if (msg.includes('tenants_slug_key') || msg.includes('duplicate key') || /Duplicate entry/i.test(msg)) {
       return error(res, `Slug "${normalizedSlug}" is already in use`, 409);
     }
     throw err;
@@ -808,11 +816,11 @@ router.post('/tenants/:id/integrations/:sourceType/sync', async (req: AuthReques
 
 router.get('/tenants/:id/modules', async (req, res) => {
   const { rows } = await query(
-    `SELECT md.key, md.label, md.description, md.icon, md.sources,
+    `SELECT md.\`key\`, md.label, md.description, md.icon, md.sources,
             COALESCE(tm.is_enabled, md.default_enabled) as is_enabled,
             COALESCE(tm.is_visible, true) as is_visible
      FROM module_definitions md
-     LEFT JOIN tenant_modules tm ON tm.module_key = md.key AND tm.tenant_id = $1
+     LEFT JOIN tenant_modules tm ON tm.module_key = md.\`key\` AND tm.tenant_id = $1
      ORDER BY md.sort_order`,
     [req.params.id]
   );
@@ -952,9 +960,9 @@ router.get('/tenants/:id/users', async (req, res) => {
   const { rows } = await query(
     `SELECT u.id, u.email, u.full_name, u.role, u.is_active, u.last_login_at, u.created_at,
             COALESCE(
-              (SELECT json_agg(um.module_key ORDER BY um.module_key)
+              (SELECT JSON_ARRAYAGG(um.module_key)
                FROM user_modules um WHERE um.user_id = u.id AND um.is_enabled = true),
-              '[]'::json
+              JSON_ARRAY()
             ) AS modules
      FROM users u WHERE u.tenant_id = $1 ORDER BY u.full_name`,
     [req.params.id]

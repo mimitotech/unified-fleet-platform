@@ -304,7 +304,7 @@ export class AdminOrchestrator {
       vehicles: 'vehicle_count DESC',
       users: 'user_count DESC',
       created: 't.created_at DESC',
-      manager: 'mgr.full_name ASC NULLS LAST, t.name ASC',
+      manager: '(mgr.full_name IS NULL), mgr.full_name ASC, t.name ASC',
     };
     const orderBy = sortMap[filters.sort || 'name'] || 't.name ASC';
 
@@ -325,13 +325,13 @@ export class AdminOrchestrator {
                 ELSE COUNT(DISTINCT a.id)::int
               END as vehicle_count,
               COUNT(DISTINCT u.id)::int as user_count,
-              COUNT(DISTINCT tm.module_key) FILTER (WHERE tm.is_enabled)::int as enabled_modules,
+              COUNT(DISTINCT CASE WHEN tm.is_enabled THEN tm.module_key END)::int as enabled_modules,
               (SELECT COUNT(*)::int FROM module_definitions) as total_modules,
               COALESCE(
-                (SELECT string_agg(
-                  CASE ds.source_type::text
+                (SELECT GROUP_CONCAT(
+                  CASE ds.source_type
                     WHEN 'wialon' THEN 'W' WHEN 'loconav' THEN 'L' WHEN 'tracksolid' THEN 'T'
-                  END, ','
+                  END SEPARATOR ','
                 ) FROM data_sources ds WHERE ds.tenant_id = t.id AND ds.is_active),
                 ''
               ) as integration_codes
@@ -517,7 +517,7 @@ export class AdminOrchestrator {
     const connected = sources.map((s) => s.source_type);
 
     const { rows: modules } = await query<{ key: string; label: string; sources: string[] }>(
-      `SELECT key, label, sources FROM module_definitions ORDER BY sort_order`
+      `SELECT \`key\`, label, sources FROM module_definitions ORDER BY sort_order`
     );
 
     return modules.map((m) => {

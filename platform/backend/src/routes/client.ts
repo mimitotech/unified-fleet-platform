@@ -105,10 +105,10 @@ router.get('/modules', requireTenant, async (req: TenantRequest, res) => {
   const connected = new Set(connectedSources.map((s) => s.source_type));
 
   const { rows } = await query(
-    `SELECT md.key as "moduleKey", md.label, md.icon, md.sources, md.sort_order as "sortOrder",
-            tm.is_enabled as "isEnabled", COALESCE(tm.is_visible, true) as "isVisible"
+    `SELECT md.\`key\` as moduleKey, md.label, md.icon, md.sources, md.sort_order as sortOrder,
+            tm.is_enabled as isEnabled, COALESCE(tm.is_visible, true) as isVisible
      FROM tenant_modules tm
-     JOIN module_definitions md ON md.key = tm.module_key
+     JOIN module_definitions md ON md.\`key\` = tm.module_key
      WHERE tm.tenant_id = $1 AND tm.is_enabled = true
      ORDER BY md.sort_order`,
     [req.tenantId]

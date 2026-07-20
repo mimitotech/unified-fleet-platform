@@ -82,7 +82,7 @@ router.get('/sync-status', requireTenant, async (req: TenantRequest, res) => {
     `SELECT cursor_key, last_synced_at, last_success_at, row_count, last_error
      FROM fuel_sync_cursor
      WHERE tenant_id = $1
-     ORDER BY last_synced_at DESC NULLS LAST`,
+     ORDER BY last_synced_at DESC`,
     [req.tenantId],
   );
   return success(res, toCamelRows(rows));
