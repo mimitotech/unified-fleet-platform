@@ -4,19 +4,11 @@ import { LoadingButton } from '@/components/shared/LoadingButton';
 import { MamsLogo } from '@/components/shared/MamsLogo';
 import { PasswordInput } from '@/components/shared/PasswordInput';
 import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
 import { LogIn } from 'lucide-react';
 import { notify } from '@/lib/notify';
 import { BRAND } from '@/lib/branding';
 import { postLoginPath } from '@/lib/authRedirect';
 import { MamsBrandName } from '@/components/shared/MamsBrandName';
-
-const QUICK_ACCOUNTS = [
-  { label: 'Super Admin', email: 'super@mimito.ug', password: 'super123' },
-  { label: 'Platform Admin', email: 'admin@ufp.local', password: 'admin123' },
-  { label: 'Demo Client', email: 'demo@mimito.ug', password: 'demo123' },
-  { label: 'Nsamba Motors', email: 'nsambajunior190@gmail.com', password: 'client123' },
-] as const;
 
 export default function Login() {
   const { signIn } = useAuth();
@@ -37,11 +29,6 @@ export default function Login() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const fillAccount = (acct: (typeof QUICK_ACCOUNTS)[number]) => {
-    setEmail(acct.email);
-    setPassword(acct.password);
   };
 
   return (
@@ -119,25 +106,6 @@ export default function Login() {
                 Sign In
               </LoadingButton>
             </form>
-
-            <div className="mt-6 pt-5 border-t border-border/60">
-              <p className="text-xs font-medium text-muted-foreground mb-2 text-center">Quick sign-in (demo accounts)</p>
-              <div className="grid grid-cols-2 gap-2">
-                {QUICK_ACCOUNTS.map((acct) => (
-                  <Button
-                    key={acct.email}
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="text-xs h-auto py-2 px-2 flex flex-col items-start gap-0.5"
-                    onClick={() => fillAccount(acct)}
-                  >
-                    <span className="font-medium">{acct.label}</span>
-                    <span className="text-[10px] text-muted-foreground truncate w-full">{acct.email}</span>
-                  </Button>
-                ))}
-              </div>
-            </div>
           </div>
         </div>
       </div>
