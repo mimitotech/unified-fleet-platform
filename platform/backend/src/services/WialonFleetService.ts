@@ -24,8 +24,8 @@ export type WialonFleetSnapshot = {
   accountName?: string;
 };
 
-const FLEET_CACHE_TTL_MS = 2_500;
-const FLEET_REDIS_TTL_SEC = 5;
+const FLEET_CACHE_TTL_MS = 8_000;
+const FLEET_REDIS_TTL_SEC = 15;
 
 const memoryCache = new Map<string, { data: WialonFleetSnapshot; expires: number }>();
 const inflight = new Map<string, Promise<WialonFleetSnapshot>>();

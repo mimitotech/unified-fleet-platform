@@ -448,7 +448,8 @@ router.get('/alerts', requireTenant, async (req: TenantRequest, res) => {
   const from = parseDate(req.query.from);
   const to = parseDate(req.query.to);
   const orch = new AlertOrchestrator(req.tenantId!);
-  const wantSync = req.query.sync !== '0' && req.query.sync !== 'false';
+  // Default: read inbox only. Sync is expensive (Wialon round-trips) — opt in with ?sync=1
+  const wantSync = req.query.sync === '1' || req.query.sync === 'true';
   if (wantSync) {
     const last = alertSyncAt.get(req.tenantId!) || 0;
     if (Date.now() - last >= ALERT_SYNC_MIN_MS) {

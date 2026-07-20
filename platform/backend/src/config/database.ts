@@ -159,7 +159,10 @@ export function normalizeSql(text: string): string {
   sql = sql.replace(/::bigint/gi, '');
   sql = sql.replace(/::numeric/gi, '');
   sql = sql.replace(/::float8/gi, '');
+  sql = sql.replace(/::float/gi, '');
   sql = sql.replace(/::double precision/gi, '');
+  sql = sql.replace(/::double/gi, '');
+  sql = sql.replace(/::real/gi, '');
   sql = sql.replace(/::timestamptz/gi, '');
   sql = sql.replace(/::timestamp/gi, '');
   sql = sql.replace(/::date/gi, '');
@@ -169,8 +172,16 @@ export function normalizeSql(text: string): string {
   sql = sql.replace(/\bILIKE\b/gi, 'LIKE');
   sql = sql.replace(/\bTRUE\b/gi, '1');
   sql = sql.replace(/\bFALSE\b/gi, '0');
-  sql = sql.replace(/\bNOW\(\)/gi, 'CURRENT_TIMESTAMP(3)');
   sql = sql.replace(/\bEXCLUDED\.(\w+)/gi, 'VALUES($1)');
+
+  // date_trunc BEFORE NOW() rewrite (NOW() becomes CURRENT_TIMESTAMP(3) and breaks [^)]+ matching)
+  sql = rewriteDateTrunc(sql);
+  sql = sql.replace(/\bto_char\s*\(\s*([^,]+)\s*,\s*'YYYY-MM-DD[^']*'\s*\)/gi, "DATE_FORMAT($1, '%Y-%m-%d')");
+  sql = sql.replace(/\bto_char\s*\(\s*([^,]+)\s*,\s*'YYYY-MM'\s*\)/gi, "DATE_FORMAT($1, '%Y-%m')");
+  sql = sql.replace(/\bto_char\s*\(\s*([^,]+)\s*,\s*'HH24[^']*'\s*\)/gi, "DATE_FORMAT($1, '%H')");
+  sql = sql.replace(/\bEXTRACT\s*\(\s*EPOCH\s+FROM\s+([^)]+)\)/gi, 'UNIX_TIMESTAMP($1)');
+
+  sql = sql.replace(/\bNOW\(\)/gi, 'CURRENT_TIMESTAMP(3)');
 
   // Reserved column names used as identifiers
   sql = sql.replace(/\bmd\.key\b/gi, 'md.`key`');
@@ -217,16 +228,6 @@ export function normalizeSql(text: string): string {
   sql = sql.replace(/(\S+)\s+NULLS\s+LAST\b/gi, '($1 IS NULL), $1');
   sql = sql.replace(/(\S+)\s+NULLS\s+FIRST\b/gi, '($1 IS NOT NULL), $1');
 
-  sql = sql.replace(/date_trunc\(\s*'day'\s*,\s*([^)]+)\)/gi, 'DATE($1)');
-  sql = sql.replace(
-    /date_trunc\(\s*'hour'\s*,\s*([^)]+)\)/gi,
-    "DATE_FORMAT($1, '%Y-%m-%d %H:00:00')"
-  );
-  sql = sql.replace(
-    /date_trunc\(\s*'month'\s*,\s*([^)]+)\)/gi,
-    "DATE_FORMAT($1, '%Y-%m-01')"
-  );
-
   sql = sql.replace(/INTERVAL\s+'(\d+)\s+hours?'/gi, 'INTERVAL $1 HOUR');
   sql = sql.replace(/INTERVAL\s+'(\d+)\s+days?'/gi, 'INTERVAL $1 DAY');
   sql = sql.replace(/INTERVAL\s+'(\d+)\s+minutes?'/gi, 'INTERVAL $1 MINUTE');
@@ -239,6 +240,42 @@ export function normalizeSql(text: string): string {
   sql = sql.replace(/\sRETURNING\s+[\s\S]+$/i, '');
 
   return sql;
+}
+
+/** Rewrite date_trunc('unit', expr) with paren-balanced expr matching. */
+function rewriteDateTrunc(sql: string): string {
+  const re = /date_trunc\(\s*'(\w+)'\s*,\s*/gi;
+  let out = '';
+  let last = 0;
+  let m: RegExpExecArray | null;
+  re.lastIndex = 0;
+  while ((m = re.exec(sql)) !== null) {
+    const unit = m[1].toLowerCase();
+    const exprStart = m.index + m[0].length;
+    // Find end of expr: either matching close for nested parens, or the date_trunc closing )
+    let i = exprStart;
+    let depth = 0;
+    for (; i < sql.length; i++) {
+      const ch = sql[i];
+      if (ch === '(') depth++;
+      else if (ch === ')') {
+        if (depth === 0) break;
+        depth--;
+      }
+    }
+    if (i >= sql.length) continue;
+    const expr = sql.slice(exprStart, i).trim();
+    let replacement: string;
+    if (unit === 'day') replacement = `DATE(${expr})`;
+    else if (unit === 'hour') replacement = `DATE_FORMAT(${expr}, '%Y-%m-%d %H:00:00')`;
+    else if (unit === 'month') replacement = `DATE_FORMAT(${expr}, '%Y-%m-01')`;
+    else if (unit === 'year') replacement = `DATE_FORMAT(${expr}, '%Y-01-01')`;
+    else replacement = `DATE(${expr})`;
+    out += sql.slice(last, m.index) + replacement;
+    last = i + 1; // skip closing )
+    re.lastIndex = last;
+  }
+  return out + sql.slice(last);
 }
 
 /** Rewrite COUNT/SUM … FILTER (WHERE …) using paren-balanced matching. */
