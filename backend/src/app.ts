@@ -3,6 +3,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import authRoutes from './routes/auth.js';
 import adminRoutes from './routes/admin.js';
 import wialonAdminRoutes from './routes/wialonAdmin.js';
@@ -16,18 +18,42 @@ import { errorHandler } from './middleware/errorHandler.js';
 import { rateLimit } from './middleware/rateLimit.js';
 import { query } from './config/database.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOAD_ROOT = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
+
+function resolveFrontendDist(): string | null {
+  const candidates = [
+    process.env.FRONTEND_DIST,
+    path.resolve(process.cwd(), 'frontend/dist'),
+    path.resolve(process.cwd(), '../frontend/dist'),
+    path.resolve(__dirname, '../../frontend/dist'),
+  ].filter(Boolean) as string[];
+
+  for (const dir of candidates) {
+    if (fs.existsSync(path.join(dir, 'index.html'))) return dir;
+  }
+  return null;
+}
 
 export function createApp() {
   const app = express();
+  const frontendDist = resolveFrontendDist();
+  const publicOrigin = process.env.FRONTEND_URL || process.env.API_PUBLIC_URL || true;
 
   app.set('trust proxy', 1);
 
-  app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
-  app.use(cors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
-    credentials: true,
-  }));
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+      contentSecurityPolicy: false,
+    })
+  );
+  app.use(
+    cors({
+      origin: publicOrigin,
+      credentials: true,
+    })
+  );
   app.use(compression());
   app.use(express.json({ limit: '15mb' }));
 
@@ -39,12 +65,14 @@ export function createApp() {
       res.json({
         status: 'ok',
         database: 'connected',
+        engine: 'mysql',
         timestamp: new Date().toISOString(),
       });
     } catch {
       res.status(503).json({
         status: 'degraded',
         database: 'disconnected',
+        engine: 'mysql',
         timestamp: new Date().toISOString(),
       });
     }
@@ -61,9 +89,21 @@ export function createApp() {
   app.use('/api/public', rateLimit({ windowMs: 60_000, max: 180 }), publicRoutes);
   app.use('/api/webhooks', rateLimit({ windowMs: 60_000, max: 120 }), webhookRoutes);
 
-  app.use((_req, res) => {
-    res.status(404).json({ success: false, error: 'Not found' });
-  });
+  if (frontendDist) {
+    app.use(
+      express.static(frontendDist, {
+        maxAge: process.env.NODE_ENV === 'production' ? '7d' : 0,
+        index: false,
+      })
+    );
+    app.get(/^(?!\/api(?:\/|$)|\/uploads(?:\/|$)|\/health(?:\/|$)).*/, (_req, res) => {
+      res.sendFile(path.join(frontendDist, 'index.html'));
+    });
+  } else {
+    app.use((_req, res) => {
+      res.status(404).json({ success: false, error: 'Not found' });
+    });
+  }
 
   app.use(errorHandler);
   return app;

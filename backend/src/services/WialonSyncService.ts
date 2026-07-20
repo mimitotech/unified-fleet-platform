@@ -141,7 +141,7 @@ export class WialonSyncService {
          last_sync_at = NOW(),
          last_error = NULL,
          preview_asset_count = $2,
-         wialon_session_meta = COALESCE(wialon_session_meta, '{}'::jsonb) || $3::jsonb,
+         wialon_session_meta = JSON_MERGE_PATCH(COALESCE(wialon_session_meta, JSON_OBJECT()), CAST($3 AS JSON)),
          updated_at = NOW()
        WHERE tenant_id = $1 AND source_type = 'wialon'`,
       [

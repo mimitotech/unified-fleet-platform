@@ -11,6 +11,15 @@ export function validateEnv(): void {
     process.exit(1);
   }
 
+  const hasMysql =
+    Boolean(process.env.DATABASE_URL?.startsWith('mysql')) ||
+    Boolean(process.env.DB_USER && process.env.DB_NAME);
+
+  if (isProd && !hasMysql) {
+    logger.error('MySQL is required in production. Set DB_USER/DB_NAME/DB_PASSWORD/DB_HOST or DATABASE_URL.');
+    process.exit(1);
+  }
+
   if (!isProd) {
     if (!process.env.JWT_SECRET) {
       logger.warn('JWT_SECRET not set — using insecure dev default');

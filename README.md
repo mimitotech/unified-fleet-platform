@@ -1,96 +1,36 @@
-# Unified Fleet Platform
+# Unified Fleet Platform / MAMS
 
 Multi-tenant fleet management unifying **Wialon**, **LocoNav**, and **TrackSolid Pro**.
 
-## Prerequisites
+## Production (Hostinger Node + MySQL)
 
-1. **Node.js 18+** and npm
-2. **Docker Desktop** installed and **running** (whale icon in menu bar — must say "Running")
+1. Import [`database/mysql/ufp_complete_schema.sql`](database/mysql/ufp_complete_schema.sql) in phpMyAdmin.
+2. Follow [`deploy/HOSTINGER_DEPLOY.md`](deploy/HOSTINGER_DEPLOY.md) for Git build settings and env vars.
+3. Use [`deploy/hostinger.env.example`](deploy/hostinger.env.example) as the env template.
 
-Without Docker running, Postgres will not start and the API will fail with `ECONNREFUSED`.
+Health check: `https://your-domain/health` → `database: connected`, `engine: mysql`.
 
-## Quick start (copy each line separately)
+## Local development
+
+Node 18+, MySQL 8 (or MariaDB). Copy `.env.example` → `.env`, fill MySQL credentials, then:
 
 ```bash
-cd /Users/mimac/unified-fleet-platform
 npm install
-bash scripts/setup.sh
+npm run build -w @ufp/shared
 npm run dev
 ```
 
-`setup.sh` will:
-- Create `.env` if missing
-- Start Postgres + Redis in Docker
-- Wait for Postgres to be ready
-- Run migrations and seed demo users
+- Frontend (Vite): http://localhost:5173  
+- API: http://localhost:3000/health  
 
-Then open:
-- **Frontend:** http://localhost:5173
-- **API:** http://localhost:3000/health
-
-### Login
-
-| Role | Email | Password | Tenant slug (on login form) |
-|------|-------|----------|----------------------------|
-| Tenant admin | demo@mimito.ug | demo123 | demo |
-| Platform admin | admin@ufp.local | admin123 | demo (or any) |
-
-## Troubleshooting
-
-### `docker.sock: connect: no such file or directory`
-
-**Docker Desktop is not running.** Open it from Applications → Docker, wait until it shows **Running**, then run:
-
-```bash
-bash scripts/setup.sh
-```
-
-### `ECONNREFUSED` on port 5432
-
-Postgres is not up yet. Either Docker isn't running (see above), or containers need starting:
-
-```bash
-docker compose up -d postgres redis
-node --import tsx scripts/wait-for-postgres.mts
-npm run db:migrate
-```
-
-### `zsh: command not found: #`
-
-You pasted comment lines from the README. Only run the actual commands, not lines starting with `#`.
-
-### `cp: optional is not a directory`
-
-Run this instead of a line with inline comments:
-
-```bash
-cp .env.example .env
-```
-
-### Frontend works but API errors
-
-The backend needs Postgres. Run `bash scripts/setup.sh` first, then `npm run dev`.
-
-## Manual commands
-
-```bash
-docker compose up -d postgres redis
-npm run db:migrate
-npm run dev
-```
+Docker/Postgres is no longer the production path. Redis is optional (`REDIS_DISABLED=1`).
 
 ## Structure
 
 ```
-unified-fleet-platform/
-├── packages/shared/   # Shared TypeScript types
-├── backend/           # Express API + adapters + orchestrators
-├── frontend/          # Vite React SPA (admin + client)
-├── migrations/        # Postgres schema
-└── scripts/           # setup.sh, seed-db.sh, create-tenant.sh
+backend/     Express API (serves /api + built PWA in production)
+frontend/    Vite React PWA
+database/mysql/   phpMyAdmin import schema
+deploy/      Hostinger env + deploy notes
+migrations/  Legacy Postgres history (reference only)
 ```
-
-## Docs
-
-- [ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- [API.md](docs/API.md)

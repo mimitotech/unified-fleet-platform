@@ -21,12 +21,13 @@ export class AdminOrchestrator {
     );
 
     const { rows: vehicleStats } = await query<{ total: string; active: string }>(
-      `SELECT COUNT(*)::int as total,
-              COUNT(*) FILTER (WHERE ast.status IN ('moving','idle','stopped'))::int as active
-       FROM assets a
-       LEFT JOIN LATERAL (
-         SELECT status FROM asset_status WHERE asset_id = a.id ORDER BY recorded_at DESC LIMIT 1
-       ) ast ON true`
+      `SELECT COUNT(*) as total,
+              SUM(CASE WHEN (
+                SELECT status FROM asset_status s
+                WHERE s.asset_id = a.id
+                ORDER BY s.recorded_at DESC LIMIT 1
+              ) IN ('moving','idle','stopped') THEN 1 ELSE 0 END) as active
+       FROM assets a`
     );
 
     const { rows: userStats } = await query<{ total: string }>(
@@ -95,11 +96,13 @@ export class AdminOrchestrator {
     );
 
     const { rows: assetStatusBreakdown } = await query<{ status: string; count: number }>(
-      `SELECT COALESCE(ast.status, 'offline') as status, COUNT(DISTINCT a.id)::int as count
+      `SELECT COALESCE((
+         SELECT s.status FROM asset_status s
+         WHERE s.asset_id = a.id
+         ORDER BY s.recorded_at DESC LIMIT 1
+       ), 'offline') as status,
+       COUNT(DISTINCT a.id) as count
        FROM assets a
-       LEFT JOIN LATERAL (
-         SELECT status FROM asset_status WHERE asset_id = a.id ORDER BY recorded_at DESC LIMIT 1
-       ) ast ON true
        GROUP BY 1`
     );
 

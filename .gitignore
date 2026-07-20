@@ -9,6 +9,8 @@ coverage/
 .env
 .env.local
 .env.*.local
+deploy/*.local.env
+deploy/hostinger.env
 
 # logs & OS
 *.log

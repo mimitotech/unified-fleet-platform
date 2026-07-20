@@ -70,12 +70,16 @@ export class WialonFuelLiveSnapshotService {
 
   static async getLatestByTenant(tenantId: string) {
     const { rows } = await query(
-      `SELECT DISTINCT ON (unit_id)
-         unit_id, unit_name, fuel_liters, fuel_percent, filled_liters,
-         main_tank_liters, reserve_tank_liters, recorded_at
-       FROM fuel_live_snapshots
-       WHERE tenant_id = $1
-       ORDER BY unit_id, recorded_at DESC`,
+      `SELECT unit_id, unit_name, fuel_liters, fuel_percent, filled_liters,
+              main_tank_liters, reserve_tank_liters, recorded_at
+       FROM (
+         SELECT unit_id, unit_name, fuel_liters, fuel_percent, filled_liters,
+                main_tank_liters, reserve_tank_liters, recorded_at,
+                ROW_NUMBER() OVER (PARTITION BY unit_id ORDER BY recorded_at DESC) AS rn
+         FROM fuel_live_snapshots
+         WHERE tenant_id = $1
+       ) ranked
+       WHERE rn = 1`,
       [tenantId],
     );
     return rows;
@@ -106,7 +110,7 @@ export class WialonFuelLiveSnapshotService {
     try {
       await query(
         `DELETE FROM fuel_live_snapshots
-         WHERE tenant_id = $1 AND recorded_at < NOW() - ($2 || ' days')::interval`,
+         WHERE tenant_id = $1 AND recorded_at < DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL $2 DAY)`,
         [tenantId, keepDays],
       );
     } catch (err) {

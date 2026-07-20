@@ -15,7 +15,7 @@ import { validateEnv } from './config/env.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
-async function waitForDatabase(maxAttempts = 15, delayMs = 2000): Promise<void> {
+async function waitForDatabase(maxAttempts = 20, delayMs = 2000): Promise<void> {
   for (let i = 1; i <= maxAttempts; i++) {
     try {
       await connectDatabase();
@@ -23,18 +23,18 @@ async function waitForDatabase(maxAttempts = 15, delayMs = 2000): Promise<void> 
     } catch (err) {
       if (i === maxAttempts) {
         logger.error(`
-Database connection failed after ${maxAttempts} attempts.
+MySQL connection failed after ${maxAttempts} attempts.
 
-Postgres is not running. To fix:
+Check Hostinger environment variables:
+  DB_HOST / DB_USER / DB_PASSWORD / DB_NAME
+  (or DATABASE_URL=mysql://user:pass@host:3306/dbname)
 
-  1. Open Docker Desktop (wait until "Running")
-  2. Run:  bash scripts/setup.sh
-     or:   docker compose up -d postgres redis && npm run db:migrate
-  3. Then: npm run dev
+Import schema first:
+  database/mysql/ufp_complete_schema.sql via phpMyAdmin
 `);
         throw err;
       }
-      logger.warn(`Waiting for database (${i}/${maxAttempts})...`);
+      logger.warn(`Waiting for MySQL (${i}/${maxAttempts})...`);
       await new Promise((r) => setTimeout(r, delayMs));
     }
   }
@@ -44,8 +44,9 @@ async function main() {
   try {
     validateEnv();
     await waitForDatabase();
-    logger.info('Database connected');
+    logger.info('MySQL connected');
 
+    process.env.REDIS_DISABLED = process.env.REDIS_DISABLED || '1';
     await connectRedis();
     logger.info('Redis connected (or skipped)');
 
@@ -53,8 +54,8 @@ async function main() {
     logger.info('Sync scheduler started');
 
     const app = createApp();
-    app.listen(PORT, () => {
-      logger.info(`Server running on port ${PORT}`);
+    app.listen(PORT, '0.0.0.0', () => {
+      logger.info(`MAMS server listening on port ${PORT}`);
     });
 
     process.on('SIGTERM', async () => {
