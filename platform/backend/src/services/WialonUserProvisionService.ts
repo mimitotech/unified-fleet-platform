@@ -298,7 +298,7 @@ export class WialonAccountLinkService {
         `UPDATE data_sources SET
            last_error = NULL,
            last_sync_at = NOW(),
-           wialon_session_meta = JSON_MERGE_PATCH(COALESCE(wialon_session_meta, JSON_OBJECT()), CAST($2 AS JSON)),
+           wialon_session_meta = JSON_MERGE_PATCH(COALESCE(wialon_session_meta, '{}'), $2),
            updated_at = NOW()
          WHERE tenant_id = $1 AND source_type = 'wialon'`,
         [

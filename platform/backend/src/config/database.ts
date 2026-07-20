@@ -152,6 +152,8 @@ export function normalizeSql(text: string): string {
   sql = sql.replace(/::uuid/gi, '');
   sql = sql.replace(/::jsonb/gi, '');
   sql = sql.replace(/::json/gi, '');
+  // MariaDB prepared statements reject CAST(? AS JSON) — pass JSON strings directly
+  sql = sql.replace(/CAST\(\s*(\$\d+|\?)\s+AS\s+JSON\s*\)/gi, '$1');
   sql = sql.replace(/::text/gi, '');
   sql = sql.replace(/::int(?:eger)?/gi, '');
   sql = sql.replace(/::bigint/gi, '');
