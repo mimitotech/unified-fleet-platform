@@ -13,6 +13,8 @@ export async function printReportDocument(opts: {
   mode?: PrintReportMode;
   /** Capture charts from this node (e.g. on-screen preview) instead of `root`. */
   chartSourceRoot?: HTMLElement | null;
+  /** Download basename without extension — falls back to sanitized title. */
+  filename?: string;
 }): Promise<void> {
   const {
     root,
@@ -21,6 +23,7 @@ export async function printReportDocument(opts: {
     secondaryColor = '#0f172a',
     mode = 'both',
     chartSourceRoot,
+    filename: filenameOpt,
   } = opts;
 
   // Snapshot charts from the live on-screen preview when provided so PDF matches exactly.
@@ -38,7 +41,7 @@ export async function printReportDocument(opts: {
     maxColumns,
     landscape,
   });
-  const filename = sanitizeFilename(title);
+  const filename = filenameOpt?.replace(/\.pdf$/i, '') || sanitizeFilename(title);
 
   if (mode === 'download' || mode === 'both') {
     await downloadPdf(html, filename, landscape);
@@ -385,14 +388,18 @@ function reportStyles(opts: {
     .print-table-wrap { width: 100%; overflow: visible; }
     table {
       width: 100% !important; min-width: 0 !important; max-width: 100% !important;
-      border-collapse: collapse; font-size: ${tableFontPx}px; margin-top: 4px; table-layout: fixed;
+      border-collapse: collapse; font-size: ${tableFontPx}px; margin-top: 4px;
+      table-layout: ${maxColumns >= 10 ? 'auto' : 'fixed'};
     }
     th, td {
       border: 1px solid #e2e8f0; padding: ${cellPad}; vertical-align: top;
-      white-space: normal !important; word-break: break-word; overflow-wrap: anywhere;
-      hyphens: auto; line-height: 1.25;
+      white-space: normal !important; word-break: break-word; overflow-wrap: break-word;
+      hyphens: auto; line-height: 1.3; max-width: none;
     }
-    th { background: ${primaryColor}; color: #fff; text-align: left; font-weight: 600; }
+    th {
+      background: ${primaryColor}; color: #fff; text-align: left; font-weight: 600;
+      white-space: normal !important;
+    }
     td { color: #000 !important; }
     tr:nth-child(even) td { background: #f8fafc; }
     [data-report-header] {
@@ -440,6 +447,20 @@ function reportStyles(opts: {
     }
     [data-report-footer-note] { margin: 0; font-size: 10px; color: #475569; line-height: 1.4; }
     [data-report-footer-ref] { margin: 0; font-size: 10px; color: #94a3b8; }
+    [data-report-footer-powered] {
+      display: flex; align-items: center; gap: 8px; margin-top: 10px;
+      padding-top: 10px; border-top: 1px solid #e2e8f0;
+    }
+    [data-report-footer-powered-label] {
+      margin: 0; font-size: 10px; color: #64748b; white-space: nowrap;
+    }
+    [data-report-footer-powered-logo] {
+      height: 22px !important; width: auto !important; max-width: 72px !important;
+      object-fit: contain !important;
+    }
+    [data-report-footer-powered-name] {
+      margin: 0; font-size: 10px; font-weight: 600; color: #004225; white-space: nowrap;
+    }
 
     /* KPI strip — match on-screen preview sizes */
     [data-report-kpi-grid] {
@@ -837,17 +858,19 @@ function preparePrintRoot(root: HTMLElement): { maxColumns: number; landscape: b
     const bodyCols = el.querySelectorAll('tbody tr:first-child td').length;
     const cols = Math.max(headerCols, bodyCols, 1);
     maxColumns = Math.max(maxColumns, cols);
-    const colWidth = `${(100 / cols).toFixed(3)}%`;
+    const colWidth = cols >= 10 ? undefined : `${(100 / cols).toFixed(3)}%`;
 
     el.querySelectorAll('thead th').forEach((th) => {
-      (th as HTMLElement).style.width = colWidth;
+      if (colWidth) (th as HTMLElement).style.width = colWidth;
+      else (th as HTMLElement).style.width = 'auto';
+      (th as HTMLElement).style.minWidth = cols >= 10 ? '64px' : '0';
     });
 
     el.querySelectorAll('th, td').forEach((cell) => {
       const c = cell as HTMLElement;
       c.style.whiteSpace = 'normal';
       c.style.wordBreak = 'break-word';
-      c.style.overflowWrap = 'anywhere';
+      c.style.overflowWrap = 'break-word';
       c.classList.remove('whitespace-nowrap');
     });
   });

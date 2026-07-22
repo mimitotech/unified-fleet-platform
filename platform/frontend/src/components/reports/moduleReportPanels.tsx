@@ -9,53 +9,172 @@ import { safeArray } from '@/lib/safeArray';
 import { useTenantBranding } from '@/hooks/useTenantBranding';
 import type { DomainChartSpec } from '@/lib/domainReportCharts';
 import { CHART } from '@/lib/chartColors';
+import { useBatchWialonGeocode } from '@/hooks/useBatchWialonGeocode';
+import type { FleetUnit } from '@/lib/fleetUnits';
 
-function statusLabel(status: string, generatorOnly: boolean) {
-  if (generatorOnly && (status === 'idle' || status === 'moving')) return 'Running';
+function statusLabel(status: string, stationary: boolean) {
+  if (stationary && (status === 'idle' || status === 'moving')) return 'Running';
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
+function isStationaryUnit(u: Pick<FleetUnit, 'stationary' | 'assetCategory'>): boolean {
+  return (
+    u.stationary === true ||
+    u.assetCategory === 'generator' ||
+    u.assetCategory === 'machinery'
+  );
+}
+
+function fuelPctDisplay(u: FleetUnit): string {
+  if (u.fuelLiters != null && u.tankCapacity != null && u.tankCapacity > 0) {
+    return `${Math.min(100, Math.round((u.fuelLiters / u.tankCapacity) * 100))}%`;
+  }
+  if (u.fuelLevel != null && u.fuelLevel > 0 && u.fuelLevel <= 100) {
+    return `${Math.round(u.fuelLevel)}%`;
+  }
+  return '—';
+}
+
+function fuelPctNumber(u: FleetUnit): number {
+  if (u.fuelLiters != null && u.tankCapacity != null && u.tankCapacity > 0) {
+    return Math.min(100, Math.round((u.fuelLiters / u.tankCapacity) * 100));
+  }
+  if (u.fuelLevel != null && u.fuelLevel > 0 && u.fuelLevel <= 100) return u.fuelLevel;
+  return 0;
+}
+
+type MonitoringKind = 'executive' | 'status' | 'fuel' | 'location';
+
 export function MonitoringModuleReports() {
-  const { units, counts } = useFleetUnits();
+  const { units, counts, refetch, isFetching } = useFleetUnits();
   const profile = useFleetAssetProfile();
   const generatorOnly = profile.isGeneratorOnly;
+  const [kind, setKind] = useState<MonitoringKind>('executive');
+  const [runTick, setRunTick] = useState(0);
 
   const assetNames = useMemo(() => units.map((u) => u.name).sort((a, b) => a.localeCompare(b)), [units]);
 
-  const rows = useMemo(
+  const geocodePoints = useMemo(
     () =>
-      units.map((u) => ({
-        name: u.name,
-        status: statusLabel(u.status || 'offline', generatorOnly),
-        speed: generatorOnly ? '—' : `${Math.round(u.speed ?? 0)} km/h`,
-        fuel: u.fuelLiters != null ? `${Math.round(u.fuelLiters)} L` : '—',
-        fuelPct:
-          u.fuelLevel != null && u.fuelLevel > 0 && u.fuelLevel <= 100
-            ? `${Math.round(u.fuelLevel)}%`
-            : '—',
-        odometer: u.mileage != null ? `${Math.round(u.mileage)} km` : '—',
-        engineHours: u.engineHours != null ? `${Math.round(u.engineHours)} h` : '—',
-        location:
-          u.lat != null && u.lng != null ? `${u.lat.toFixed(4)}, ${u.lng.toFixed(4)}` : '—',
-        plate: u.plate || '—',
-        fuelL: u.fuelLiters ?? 0,
-        fuelPctN: u.fuelLevel != null && u.fuelLevel > 0 && u.fuelLevel <= 100 ? u.fuelLevel : 0,
-        engineH: u.engineHours ?? 0,
-        odoKm: u.mileage ?? 0,
-      })),
-    [units, generatorOnly],
+      units
+        .filter((u) => u.lat != null && u.lng != null)
+        .map((u) => ({ key: u.id, lat: u.lat!, lng: u.lng! })),
+    [units],
   );
+  const addresses = useBatchWialonGeocode(geocodePoints, kind === 'location' || kind === 'executive');
+
+  const baseRows = useMemo(
+    () =>
+      units.map((u) => {
+        const stationary = isStationaryUnit(u);
+        const coords =
+          u.lat != null && u.lng != null ? `${u.lat.toFixed(4)}, ${u.lng.toFixed(4)}` : '—';
+        const address = addresses.get(u.id);
+        return {
+          name: u.name,
+          status: statusLabel(u.status || 'offline', stationary),
+          speed: stationary ? '—' : `${Math.round(u.speed ?? 0)} km/h`,
+          fuel: u.fuelLiters != null ? `${Math.round(u.fuelLiters)} L` : '—',
+          fuelPct: fuelPctDisplay(u),
+          odometer: stationary
+            ? '—'
+            : u.mileage != null
+              ? `${Math.round(u.mileage)} km`
+              : '—',
+          engineHours: u.engineHours != null ? `${Math.round(u.engineHours)} h` : '—',
+          location: address || coords,
+          coords,
+          address: address || '—',
+          fuelL: u.fuelLiters ?? 0,
+          fuelPctN: fuelPctNumber(u),
+          engineH: u.engineHours ?? 0,
+          odoKm: stationary ? 0 : u.mileage ?? 0,
+          _stationary: stationary ? 1 : 0,
+        };
+      }),
+    // runTick forces remap after explicit Run
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [units, addresses, runTick],
+  );
+
+  const columns = useMemo(() => {
+    if (kind === 'status') {
+      return [
+        { key: 'name', label: 'Asset' },
+        { key: 'status', label: 'Status' },
+        { key: 'engineHours', label: 'Engine h', align: 'right' as const },
+        ...(generatorOnly
+          ? []
+          : [{ key: 'speed', label: 'Speed', align: 'right' as const }]),
+      ];
+    }
+    if (kind === 'fuel') {
+      return [
+        { key: 'name', label: 'Asset' },
+        { key: 'fuel', label: 'Fuel', align: 'right' as const },
+        { key: 'fuelPct', label: 'Fuel %', align: 'right' as const },
+        { key: 'status', label: 'Status' },
+        { key: 'engineHours', label: 'Engine h', align: 'right' as const },
+      ];
+    }
+    if (kind === 'location') {
+      return [
+        { key: 'name', label: 'Asset' },
+        { key: 'location', label: 'Address' },
+        { key: 'coords', label: 'Coordinates' },
+        { key: 'status', label: 'Status' },
+      ];
+    }
+    // executive — Asset only (no Plate / ID duplicate)
+    const cols = [
+      { key: 'name', label: 'Asset' },
+      { key: 'status', label: 'Status' },
+      { key: 'fuel', label: 'Fuel', align: 'right' as const },
+      { key: 'fuelPct', label: 'Fuel %', align: 'right' as const },
+      { key: 'engineHours', label: 'Engine h', align: 'right' as const },
+      { key: 'location', label: 'Location' },
+    ];
+    if (!generatorOnly) {
+      cols.splice(2, 0, { key: 'speed', label: 'Speed', align: 'right' as const });
+      cols.splice(5, 0, { key: 'odometer', label: 'Odometer', align: 'right' as const });
+    }
+    return cols;
+  }, [kind, generatorOnly]);
+
+  const rows = useMemo(() => {
+    if (kind === 'status') {
+      return [...baseRows].sort((a, b) => String(a.status).localeCompare(String(b.status)));
+    }
+    if (kind === 'fuel') {
+      return [...baseRows]
+        .filter((r) => r.fuelL > 0 || r.fuelPctN > 0)
+        .sort((a, b) => b.fuelL - a.fuelL);
+    }
+    if (kind === 'location') {
+      return [...baseRows].filter((r) => r.coords !== '—');
+    }
+    return baseRows;
+  }, [baseRows, kind]);
 
   const charts: DomainChartSpec = {
     heading: 'Asset performance · monitoring analytics',
     categoryKey: 'name',
     bar: {
-      title: 'Fuel & engine load by asset',
-      subtitle: 'Standing bars — live fuel (L) and engine hours',
-      metrics: [
-        { key: 'fuelL', label: 'Fuel (L)', color: CHART.brand },
-        { key: 'engineH', label: 'Engine h', color: '#0d9488' },
-      ],
+      title: kind === 'fuel' ? 'Fuel by asset' : 'Fuel & engine load by asset',
+      subtitle:
+        kind === 'fuel'
+          ? 'Standing bars — live fuel (L) and fill %'
+          : 'Standing bars — live fuel (L) and engine hours',
+      metrics:
+        kind === 'fuel'
+          ? [
+              { key: 'fuelL', label: 'Fuel (L)', color: CHART.brand },
+              { key: 'fuelPctN', label: 'Fuel %', color: '#2563eb' },
+            ]
+          : [
+              { key: 'fuelL', label: 'Fuel (L)', color: CHART.brand },
+              { key: 'engineH', label: 'Engine h', color: '#0d9488' },
+            ],
       topN: 8,
     },
     secondary: {
@@ -71,11 +190,18 @@ export function MonitoringModuleReports() {
     <ModuleReportsShell
       moduleLabel="Monitoring"
       assetNames={assetNames}
+      selectedReportId={kind}
+      onSelectedReportIdChange={(id) => setKind(id as MonitoringKind)}
+      onRun={async () => {
+        await refetch();
+        setRunTick((t) => t + 1);
+      }}
+      running={isFetching}
       reports={[
         { id: 'executive', title: 'Live fleet executive', blurb: 'Status mix, fuel and positions.' },
         { id: 'status', title: 'Status roll-up', blurb: 'Running / moving / stopped / offline.' },
         { id: 'fuel', title: 'Live fuel focus', blurb: 'Levels and % where sensors report.' },
-        { id: 'location', title: 'Location register', blurb: 'Coordinates and identity details.' },
+        { id: 'location', title: 'Location register', blurb: 'Addresses and coordinates.' },
       ]}
       kpis={[
         { label: profile.primaryLabel, value: counts.total },
@@ -86,17 +212,7 @@ export function MonitoringModuleReports() {
         { label: 'Stopped', value: counts.stopped },
         { label: 'Offline', value: counts.offline },
       ]}
-      columns={[
-        { key: 'name', label: 'Asset' },
-        { key: 'plate', label: 'Plate / ID' },
-        { key: 'status', label: 'Status' },
-        { key: 'speed', label: 'Speed', align: 'right' },
-        { key: 'fuel', label: 'Fuel', align: 'right' },
-        { key: 'fuelPct', label: 'Fuel %', align: 'right' },
-        { key: 'odometer', label: 'Odometer', align: 'right' },
-        { key: 'engineHours', label: 'Engine h', align: 'right' },
-        { key: 'location', label: 'Location' },
-      ]}
+      columns={columns}
       rows={rows}
       charts={charts}
     />
@@ -104,7 +220,7 @@ export function MonitoringModuleReports() {
 }
 
 export function DriversModuleReports() {
-  const { data: drivers } = useDrivers();
+  const { data: drivers, refetch, isFetching } = useDrivers();
   const list = safeArray<{
     name?: string;
     status?: string;
@@ -113,6 +229,7 @@ export function DriversModuleReports() {
     assignedAssetName?: string;
     assignedAssetPlate?: string;
   }>(drivers);
+  const [kind, setKind] = useState('roster');
 
   const rows = list.map((d) => {
     const assigned = d.assignedAssetPlate || d.assignedAssetName || '';
@@ -126,6 +243,41 @@ export function DriversModuleReports() {
       count: 1,
     };
   });
+
+  const filteredRows = useMemo(() => {
+    if (kind === 'availability') {
+      return rows.filter((r) => /available|driving|on.?duty/i.test(String(r.status)));
+    }
+    if (kind === 'assignment') {
+      return rows.filter((r) => r.assignment === 'Assigned');
+    }
+    return rows;
+  }, [rows, kind]);
+
+  const columns = useMemo(() => {
+    if (kind === 'availability') {
+      return [
+        { key: 'name', label: 'Driver' },
+        { key: 'status', label: 'Status' },
+        { key: 'phone', label: 'Phone' },
+      ];
+    }
+    if (kind === 'assignment') {
+      return [
+        { key: 'name', label: 'Driver' },
+        { key: 'vehicle', label: 'Assigned' },
+        { key: 'status', label: 'Status' },
+        { key: 'license', label: 'License' },
+      ];
+    }
+    return [
+      { key: 'name', label: 'Driver' },
+      { key: 'status', label: 'Status' },
+      { key: 'license', label: 'License' },
+      { key: 'phone', label: 'Phone' },
+      { key: 'vehicle', label: 'Assigned' },
+    ];
+  }, [kind]);
 
   const charts: DomainChartSpec = {
     heading: 'Driver performance · roster analytics',
@@ -150,6 +302,10 @@ export function DriversModuleReports() {
       moduleLabel="Drivers"
       assetNames={rows.map((r) => String(r.name)).filter((n) => n !== '—')}
       assetKey="name"
+      selectedReportId={kind}
+      onSelectedReportIdChange={setKind}
+      onRun={() => void refetch()}
+      running={isFetching}
       reports={[
         { id: 'roster', title: 'Driver roster', blurb: 'Full roster with licenses and assignments.' },
         { id: 'availability', title: 'Availability', blurb: 'Status snapshot for planning.' },
@@ -161,14 +317,8 @@ export function DriversModuleReports() {
         { label: 'Driving', value: list.filter((d) => d.status === 'driving').length },
         { label: 'Off duty', value: list.filter((d) => d.status === 'off-duty').length },
       ]}
-      columns={[
-        { key: 'name', label: 'Driver' },
-        { key: 'status', label: 'Status' },
-        { key: 'license', label: 'License' },
-        { key: 'phone', label: 'Phone' },
-        { key: 'vehicle', label: 'Assigned' },
-      ]}
-      rows={rows}
+      columns={columns}
+      rows={filteredRows}
       charts={charts}
     />
   );
@@ -183,7 +333,7 @@ export function AlertsModuleReports() {
     return d.toISOString().slice(0, 10);
   });
   const [toDate, setToDate] = useState(todayStr);
-  const { data: alerts } = useAlerts(500, true, {
+  const { data: alerts, refetch, isFetching } = useAlerts(500, true, {
     from: `${fromDate}T00:00:00`,
     to: `${toDate}T23:59:59`,
   });
@@ -322,6 +472,8 @@ export function AlertsModuleReports() {
       onToChange={setToDate}
       onAssetChange={setAsset}
       todayStr={todayStr}
+      onRun={() => void refetch()}
+      running={isFetching}
       reports={[
         { id: 'executive', title: 'All alerts', blurb: 'Full inbox with severity, type and asset.' },
         { id: 'critical', title: 'Critical only', blurb: 'Critical and emergency events.' },
@@ -360,10 +512,11 @@ export function AlertsModuleReports() {
 }
 
 export function WorkshopReportsInline() {
-  const { data: kpis } = useWorkshopKpis();
-  const { data: maintenance } = useMaintenanceLogs();
-  const { data: inspections } = useInspections();
-  const { data: breakdowns } = useBreakdowns();
+  const { data: kpis, refetch: refetchKpis, isFetching: fetchingKpis } = useWorkshopKpis();
+  const { data: maintenance, refetch: refetchMaint, isFetching: fetchingMaint } = useMaintenanceLogs();
+  const { data: inspections, refetch: refetchInsp, isFetching: fetchingInsp } = useInspections();
+  const { data: breakdowns, refetch: refetchBrk, isFetching: fetchingBrk } = useBreakdowns();
+  const [kind, setKind] = useState('executive');
   const maint = safeArray<{
     vehicleName?: string;
     totalCost?: number;
@@ -403,7 +556,7 @@ export function WorkshopReportsInline() {
     byAsset.set(name, row);
   }
 
-  const rows = [...byAsset.values()]
+  const allRows = [...byAsset.values()]
     .map((r) => ({
       name: r.name,
       maintenance: r.maintenance.toLocaleString(),
@@ -417,6 +570,42 @@ export function WorkshopReportsInline() {
       _sort: r.maintenance + r.breakdown,
     }))
     .sort((a, b) => b._sort - a._sort);
+
+  const rows = useMemo(() => {
+    if (kind === 'cost') {
+      return allRows.filter((r) => r.totalN > 0);
+    }
+    if (kind === 'workload') {
+      return [...allRows].sort((a, b) => b.jobs + b.inspections - (a.jobs + a.inspections));
+    }
+    return allRows;
+  }, [allRows, kind]);
+
+  const columns = useMemo(() => {
+    if (kind === 'cost') {
+      return [
+        { key: 'name', label: 'Asset' },
+        { key: 'maintenance', label: 'Maintenance', align: 'right' as const },
+        { key: 'breakdown', label: 'Breakdowns', align: 'right' as const },
+        { key: 'total', label: 'Total', align: 'right' as const },
+      ];
+    }
+    if (kind === 'workload') {
+      return [
+        { key: 'name', label: 'Asset' },
+        { key: 'jobs', label: 'Jobs', align: 'right' as const },
+        { key: 'inspections', label: 'Inspections', align: 'right' as const },
+      ];
+    }
+    return [
+      { key: 'name', label: 'Asset' },
+      { key: 'jobs', label: 'Jobs', align: 'right' as const },
+      { key: 'inspections', label: 'Inspections', align: 'right' as const },
+      { key: 'maintenance', label: 'Maintenance', align: 'right' as const },
+      { key: 'breakdown', label: 'Breakdowns', align: 'right' as const },
+      { key: 'total', label: 'Total', align: 'right' as const },
+    ];
+  }, [kind]);
 
   const charts: DomainChartSpec = {
     heading: 'Asset performance · workshop analytics',
@@ -445,7 +634,13 @@ export function WorkshopReportsInline() {
   return (
     <ModuleReportsShell
       moduleLabel="Workshop"
-      assetNames={rows.map((r) => r.name)}
+      assetNames={allRows.map((r) => r.name)}
+      selectedReportId={kind}
+      onSelectedReportIdChange={setKind}
+      onRun={async () => {
+        await Promise.all([refetchKpis(), refetchMaint(), refetchInsp(), refetchBrk()]);
+      }}
+      running={fetchingKpis || fetchingMaint || fetchingInsp || fetchingBrk}
       reports={[
         { id: 'executive', title: 'Workshop executive', blurb: 'Jobs, costs and open risk.' },
         { id: 'cost', title: 'Cost by asset', blurb: 'Maintenance and breakdown spend.' },
@@ -457,14 +652,7 @@ export function WorkshopReportsInline() {
         { label: 'Inspections', value: insp.length },
         { label: 'Total cost', value: Number(kpis?.totalMaintenanceCost ?? 0).toLocaleString() },
       ]}
-      columns={[
-        { key: 'name', label: 'Asset' },
-        { key: 'jobs', label: 'Jobs', align: 'right' },
-        { key: 'inspections', label: 'Inspections', align: 'right' },
-        { key: 'maintenance', label: 'Maintenance', align: 'right' },
-        { key: 'breakdown', label: 'Breakdowns', align: 'right' },
-        { key: 'total', label: 'Total', align: 'right' },
-      ]}
+      columns={columns}
       rows={rows}
       charts={charts}
     />
@@ -481,6 +669,8 @@ export function GenericModuleReports({
   extraReports,
   charts,
   dateKey,
+  onRun,
+  running,
 }: {
   moduleLabel: string;
   title: string;
@@ -491,6 +681,8 @@ export function GenericModuleReports({
   extraReports?: Array<{ id: string; title: string; blurb: string }>;
   charts?: DomainChartSpec;
   dateKey?: string;
+  onRun?: () => void | Promise<void>;
+  running?: boolean;
 }) {
   const assetNames = useMemo(() => {
     return [
@@ -517,6 +709,8 @@ export function GenericModuleReports({
       assetNames={assetNames}
       assetKey={assetKey}
       dateKey={dateKey}
+      onRun={onRun}
+      running={running}
       reports={[
         { id: 'executive', title, blurb },
         { id: 'detail', title: `${moduleLabel} detail`, blurb: 'Full row breakdown with sorting and search.' },

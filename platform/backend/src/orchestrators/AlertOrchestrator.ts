@@ -284,6 +284,14 @@ export class AlertOrchestrator {
            )`,
         [this.tenantId],
       );
+
+      // 30-day retention — prefer live fetch + short DB retention over unbounded storage.
+      await query(
+        `DELETE FROM alerts
+         WHERE tenant_id = $1
+           AND occurred_at < NOW() - INTERVAL '30 days'`,
+        [this.tenantId],
+      );
     } catch {
       /* best-effort cleanup */
     }

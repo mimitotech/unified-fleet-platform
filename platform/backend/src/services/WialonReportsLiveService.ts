@@ -6,6 +6,7 @@ import { fetchTripsForUnits } from './wialonLiveReportRows.js';
 import { formatFuelRowFields, mergeUnitFuel } from './wialonReportFuelMerge.js';
 import type { WialonFuelLive } from './wialonFuel.js';
 import { withWialonClient } from './WialonSessionService.js';
+import { wialonReverseGeocode } from './wialonGeocode.js';
 import {
   scopeFromCredentials,
   WialonReportResolverService,
@@ -25,32 +26,69 @@ async function loadLiveFuelMap(tenantId: string, unitIds: number[]) {
   return liveById;
 }
 
+/** Resolve addresses for a capped set of positions (cached geocode). */
+async function loadAddressMap(
+  tenantId: string,
+  points: Array<{ id: number; lat: number; lng: number }>
+): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  if (!points.length) return out;
+  try {
+    const creds = await loadTenantWialonCreds(tenantId);
+    const capped = points.slice(0, 40);
+    await Promise.all(
+      capped.map(async (p) => {
+        const address = await wialonReverseGeocode(creds, p.lat, p.lng);
+        if (address) out.set(p.id, address);
+      })
+    );
+  } catch {
+    /* optional */
+  }
+  return out;
+}
+
 export class WialonReportsLiveService {
   static async fleetStatus(tenantId: string) {
     const snap = await WialonFleetService.getCachedLiveFleet(tenantId);
     const unitIds = snap.units.map((u) => u.id);
     const liveById = await loadLiveFuelMap(tenantId, unitIds);
+    const addressById = await loadAddressMap(
+      tenantId,
+      snap.units
+        .filter((u) => u.position?.lat != null && u.position?.lng != null)
+        .map((u) => ({ id: u.id, lat: u.position!.lat!, lng: u.position!.lng! }))
+    );
 
     const rows = snap.units.map((u) => {
       const merged = mergeUnitFuel(u, liveById.get(u.id));
       const fuel = formatFuelRowFields(u, merged);
+      const stationary =
+        u.stationary === true || u.assetCategory === 'generator' || u.assetCategory === 'machinery';
       return {
         unitId: u.id,
         unitName: u.name,
         plate: u.plate || '',
         status: u.status,
         motionState: u.motionState || '',
-        speedKmh: u.position?.speed != null ? Math.round(u.position.speed) : 0,
+        speedKmh: stationary ? null : u.position?.speed != null ? Math.round(u.position.speed) : 0,
         fuelLive: fuel.fuelLive,
         fuelPercent: fuel.fuelPercent,
         fuelLiters: fuel.fuelLiters,
-        odometerKm: u.counters?.mileage != null ? Math.round(u.counters.mileage) : null,
+        tankCapacity: u.tankCapacity ?? null,
+        odometerKm: stationary
+          ? null
+          : u.counters?.mileage != null
+            ? Math.round(u.counters.mileage)
+            : null,
         engineHours: u.counters?.engineHours ?? null,
         hardware: u.hwName || '',
         online: u.netconn === true ? 'Online' : u.netconn === false ? 'Offline' : '—',
         lastUpdate: u.position?.time ? new Date(u.position.time * 1000).toISOString() : null,
+        address: addressById.get(u.id) || '—',
         latitude: u.position?.lat ?? null,
         longitude: u.position?.lng ?? null,
+        stationary,
       };
     });
     return { rows, fetchedAt: snap.fetchedAt, count: rows.length };

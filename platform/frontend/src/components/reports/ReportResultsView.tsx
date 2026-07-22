@@ -13,6 +13,7 @@ import { notify } from '@/lib/notify';
 import { BrandedReportFooter, BrandedReportHeader, BrandedReportDocument } from '@/components/reports/BrandedReportChrome';
 import { FuelReportPerformanceCharts } from '@/components/fuel/FuelReportPerformanceCharts';
 import { discoverFuelPerformanceMetrics } from '@/lib/fuelReportPerformance';
+import { buildReportFilename } from '@/lib/reportFilename';
 
 type Props = {
   data: WialonReportResult;
@@ -187,8 +188,13 @@ export function ReportResultsView({ data, templateName, unitName, moduleLabel = 
   }, [tables, showFuelPerformance]);
 
   const exportTableCsv = (table: WialonReportTable) => {
-    const safeName = (templateName || table.name).replace(/[^\w-]+/g, '_');
-    downloadTextFile(tableToCsv(table), `${safeName}-${table.name}.csv`, 'text/csv');
+    const name = buildReportFilename({
+      clientName: branding.name,
+      reportName: templateName || table.label || table.name,
+      date: new Date().toISOString().slice(0, 10),
+      unitName,
+    });
+    downloadTextFile(tableToCsv(table), `${name}.csv`, 'text/csv');
   };
 
   const exportBranded = async (mode: 'download' | 'print') => {
@@ -202,10 +208,17 @@ export function ReportResultsView({ data, templateName, unitName, moduleLabel = 
       const node = printRef.current;
       if (!node) throw new Error('Could not prepare report sheet');
       const { printReportDocument } = await import('@/lib/printReport');
+      const filename = buildReportFilename({
+        clientName: branding.name,
+        reportName: templateName || 'Fuel report',
+        date: new Date().toISOString().slice(0, 10),
+        unitName,
+      });
       await printReportDocument({
         root: node,
         chartSourceRoot: showFuelPerformance ? chartsPreviewRef.current : null,
         title: `${branding.name || 'Client'} - ${templateName || 'Fuel report'}`,
+        filename,
         primaryColor: branding.primaryColor,
         secondaryColor: branding.secondaryColor,
         mode,

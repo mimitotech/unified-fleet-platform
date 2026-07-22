@@ -2,7 +2,7 @@ import type { WialonSearchItem } from '../adapters/wialonUtils.js';
 import { wialonObjectValues } from '../adapters/wialonUtils.js';
 import { fleetUnitIconProxyPath } from './wialonIcon.js';
 import { extractPlateFromName } from './unitPlateUtils.js';
-import { extractFuelLevel, fuelLiveFromLls, fuelFromSearchItem, mergeLlsWithSensorNames, type WialonFuelLive } from './wialonFuel.js';
+import { extractFuelLevel, fuelLiveFromLls, fuelFromSearchItem, mergeLlsWithSensorNames, extractTankCapacityFromItem, type WialonFuelLive } from './wialonFuel.js';
 import { deriveWialonHostingStatus, type WialonHostingStatus } from './wialonUnitStatus.js';
 import { deriveStatusFromWialonEvents } from './wialonTripStatus.js';
 import type { WialonUnitEventSlice } from './wialonEventsService.js';
@@ -69,6 +69,8 @@ export type WialonUnitSlice = {
     ignitionOn?: boolean;
   };
   fuelLevel?: number;
+  /** Tank capacity in litres (calibration max / custom field). */
+  tankCapacity?: number;
   fuel?: WialonFuelLive;
 };
 
@@ -186,9 +188,18 @@ export function mapWialonSearchItem(
   const prmsList = mapPrms(item);
   const lmsg = mapLmsg(item);
   const fromSearch = fuelFromSearchItem(item);
+  const tankCapacity = fromSearch?.tankCapacity ?? extractTankCapacityFromItem(item);
   const fuelLevel =
     fromSearch?.fuelLevelPercent ??
-    extractFuelLevel(prp, prmsList, lmsg?.params, calcSensors, undefined, fromSearch?.live.levelLiters);
+    extractFuelLevel(
+      prp,
+      prmsList,
+      lmsg?.params,
+      calcSensors,
+      undefined,
+      fromSearch?.live.levelLiters,
+      tankCapacity,
+    );
 
   return {
     id: item.id,
@@ -226,6 +237,7 @@ export function mapWialonSearchItem(
     assetCategory,
     stationary,
     fuelLevel,
+    tankCapacity,
     fuel: fromSearch?.live,
   };
 }

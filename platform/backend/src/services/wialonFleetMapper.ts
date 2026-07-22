@@ -80,6 +80,7 @@ export function fleetToSnapshotResponse(fleet: WialonFleetSnapshot, live = true)
       assetCategory: u.assetCategory,
       stationary: u.stationary === true || u.assetCategory === 'generator' || u.assetCategory === 'machinery',
       fuelLevel: u.fuelLevel,
+      tankCapacity: u.tankCapacity,
       fuel: u.fuel,
       trip: u.trip,
       prp: u.prp,

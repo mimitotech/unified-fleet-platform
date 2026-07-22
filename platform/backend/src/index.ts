@@ -85,6 +85,13 @@ async function main() {
       } catch (e) {
         logger.warn(`Upload schema ensure skipped: ${(e as Error).message}`);
       }
+      try {
+        const { ensureWorkshopSchema } = await import('./services/WorkshopSchema.js');
+        await ensureWorkshopSchema();
+        logger.info('Workshop schema ready (rich fields)');
+      } catch (e) {
+        logger.warn(`Workshop schema ensure skipped: ${(e as Error).message}`);
+      }
       logger.info('MySQL connected');
       startSyncScheduler();
       logger.info('Sync scheduler started');

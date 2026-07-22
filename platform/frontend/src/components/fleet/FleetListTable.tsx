@@ -110,7 +110,7 @@ export function FleetListTable({
             <tr className="text-left text-xs text-muted-foreground">
               <th className="p-3 font-medium">Asset</th>
               <th className="p-3 font-medium hidden md:table-cell">Type</th>
-              <th className="p-3 font-medium">Speed</th>
+              {!mostlyStationary && <th className="p-3 font-medium">Speed</th>}
               <th className="p-3 font-medium hidden lg:table-cell">Fuel</th>
               <th className="p-3 font-medium">Status</th>
               <th className="p-3 font-medium hidden sm:table-cell">Updated</th>
@@ -145,12 +145,18 @@ export function FleetListTable({
                 <td className="p-3 hidden md:table-cell text-muted-foreground text-xs truncate max-w-[140px]">
                   {hwDisplayLabel(u)}
                 </td>
-                <td className="p-3">
-                  <span className="inline-flex items-center gap-1 text-xs">
-                    <Gauge className="h-3 w-3 text-muted-foreground" />
-                    {u.speed != null ? `${Math.round(u.speed)} km/h` : '—'}
-                  </span>
-                </td>
+                {!mostlyStationary && (
+                  <td className="p-3">
+                    {u.stationary ? (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-xs">
+                        <Gauge className="h-3 w-3 text-muted-foreground" />
+                        {u.speed != null ? `${Math.round(u.speed)} km/h` : '—'}
+                      </span>
+                    )}
+                  </td>
+                )}
                 <td className="p-3 hidden lg:table-cell">
                   <span className="inline-flex items-center gap-1 text-xs">
                     <Fuel className="h-3 w-3 text-muted-foreground" />

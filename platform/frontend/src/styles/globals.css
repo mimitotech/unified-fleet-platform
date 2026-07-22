@@ -272,7 +272,7 @@
   }
 
   .fuel-page .fuel-kpi-grid {
-    @apply grid grid-cols-2 xl:grid-cols-4 gap-3;
+    @apply grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3;
   }
 
   .fuel-page .fuel-alert-grid {

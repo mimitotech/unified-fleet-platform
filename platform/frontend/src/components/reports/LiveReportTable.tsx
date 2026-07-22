@@ -22,6 +22,7 @@ import {
   BrandedReportFooter,
   BrandedReportHeader,
 } from '@/components/reports/BrandedReportChrome';
+import { buildReportFilename } from '@/lib/reportFilename';
 import { cn } from '@/lib/utils';
 
 type Props = {
@@ -54,6 +55,14 @@ export function LiveReportTable({
   const branding = useTenantBranding();
   const [busy, setBusy] = useState(false);
 
+  const filenameBase = () =>
+    buildReportFilename({
+      clientName: branding.name,
+      reportName: def.label,
+      date: new Date().toISOString().slice(0, 10),
+      unitName: objectLabel,
+    });
+
   const exportCsv = () => {
     downloadTextFile(
       tableToCsv({
@@ -64,7 +73,7 @@ export function LiveReportTable({
         rows,
         totalRows: rows.length,
       }),
-      `${def.id}-live.csv`,
+      `${filenameBase()}.csv`,
       'text/csv',
     );
   };
@@ -164,6 +173,7 @@ export function LiveReportTable({
       await printReportDocument({
         root: host.firstElementChild as HTMLElement,
         title: `${branding.name || 'Client'} - ${def.label}`,
+        filename: filenameBase(),
         primaryColor: branding.primaryColor,
         secondaryColor: branding.secondaryColor,
         mode,

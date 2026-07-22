@@ -165,41 +165,16 @@ export function getCombinedFuelLitersFromItem(item: WialonSearchItem): number {
   return Math.round(total * 10) / 10;
 }
 
+/** Prefer shared tankCapacityFromItem (calibration + flds/prp). */
 export function extractTankCapacityFromItem(item: WialonSearchItem): number | undefined {
-  if (item.sens) {
-    for (const sensor of Object.values(item.sens)) {
-      const typeLower = String(sensor?.t ?? '').toLowerCase();
-      const nameLower = sensor?.n?.toLowerCase() || '';
-      if (!isFuelSensor(typeLower, nameLower)) continue;
-      const tbl = parseCalibrationTable(sensor.tbl);
-      if (tbl.length) {
-        const maxCalibrated = Math.max(...tbl.map((entry) => entry.a * entry.x + entry.b));
-        if (maxCalibrated > 0) return Math.round(maxCalibrated * 10) / 10;
-      }
-    }
-  }
-
-  const fldCap = item.flds
-    ? Object.values(item.flds).find((f) => /tank|capacity|fuel/i.test(f?.n || ''))
-    : undefined;
-  if (fldCap?.v) {
-    const n = parseFloat(String(fldCap.v));
-    if (Number.isFinite(n) && n > 0) return n;
-  }
-
-  const prpCap = item.prp?.tank_capacity || item.prp?.fuel_tank_capacity;
-  if (prpCap) {
-    const n = parseFloat(prpCap);
-    if (Number.isFinite(n) && n > 0) return n;
-  }
-
-  return undefined;
+  return tankCapacityFromItem(item);
 }
 
 /** Primary live fuel — strict fuel LEVEL sensors from core/search_items. */
 export function fuelFromSearchItem(item: WialonSearchItem): {
   live: WialonFuelLive;
   fuelLevelPercent?: number;
+  tankCapacity?: number;
 } | undefined {
   const sensors = readFuelLevelSensors(item);
   if (!sensors.length) return undefined;
@@ -222,6 +197,7 @@ export function fuelFromSearchItem(item: WialonSearchItem): {
       levelFormatted: `${totalLiters} L`,
     },
     fuelLevelPercent,
+    tankCapacity: capacity,
   };
 }
 
@@ -320,7 +296,10 @@ export function fuelLiveFromLls(
   };
 }
 
-/** Legacy percent-oriented lookup — prefer fuelFromSearchItem for live fleet fuel. */
+/**
+ * Fuel level as a 0–100 percentage.
+ * Never treat raw litres as % — only litres÷capacity or explicit percent fields.
+ */
 export function extractFuelLevel(
   prp: Record<string, string> = {},
   prms: WialonPrm[] = [],
@@ -330,50 +309,39 @@ export function extractFuelLevel(
   fuelLiters?: number,
   tankCapacity?: number
 ): number | undefined {
-  if (fuelLiters != null && fuelLiters > 0 && tankCapacity && tankCapacity > 0) {
+  if (fuelLiters != null && fuelLiters >= 0 && tankCapacity && tankCapacity > 0) {
     return Math.min(100, Math.round((fuelLiters / tankCapacity) * 100));
   }
 
   if (liveLls?.length) {
-    const liters = liveLls[0].level ?? liveLls[0].value;
-    if (liters != null && liters > 0) {
-      if (tankCapacity && tankCapacity > 0) return Math.min(100, Math.round((liters / tankCapacity) * 100));
-      if (liters <= 100) return Math.round(liters);
+    const liters = liveLls.reduce((sum, r) => sum + (r.level ?? r.value ?? 0), 0);
+    if (liters > 0 && tankCapacity && tankCapacity > 0) {
+      return Math.min(100, Math.round((liters / tankCapacity) * 100));
     }
   }
 
-  const keys = [
-    'fuel_level',
-    'fuel',
-    'can_fuel',
-    'fuel_percent',
-    'lls',
-    'lls1',
-    'lls2',
-    'Fuel Level',
-    'fuel1',
-    'fuel2',
-  ];
-
-  for (const key of keys) {
+  // Explicit percent-named keys only — avoid treating LLS litre params as %.
+  const percentKeys = ['fuel_percent', 'fuel_level_percent', 'fuel_pct', 'fuel%'];
+  for (const key of percentKeys) {
     const raw = prp[key] ?? prms.find((p) => p.key === key)?.value ?? lmsgParams?.[key];
     const n = parseNumeric(raw);
-    if (n != null) return n <= 100 ? n : undefined;
+    if (n != null && n >= 0 && n <= 100) return Math.round(n);
   }
 
-  if (lmsgParams) {
-    for (const [key, val] of Object.entries(lmsgParams)) {
-      if (!FUEL_KEY.test(key)) continue;
-      const n = parseNumeric(val);
-      if (n != null && n <= 100) return n;
+  for (const key of ['fuel_level', 'can_fuel']) {
+    const raw = prp[key] ?? prms.find((p) => p.key === key)?.value ?? lmsgParams?.[key];
+    const n = parseNumeric(raw);
+    // Only accept as % when value is clearly a percentage (≤100) and no litre reading exists.
+    if (n != null && n >= 0 && n <= 100 && (fuelLiters == null || fuelLiters <= 0)) {
+      return Math.round(n);
     }
   }
 
   if (calcSensors?.length) {
     for (const s of calcSensors) {
-      if (!FUEL_KEY.test(s.n) && s.t !== 1) continue;
+      if (!/percent|%|pct/i.test(s.n) && s.t !== 1) continue;
       const n = parseNumeric(s.v);
-      if (n != null) return n <= 100 ? n : undefined;
+      if (n != null && n >= 0 && n <= 100) return Math.round(n);
     }
   }
 

@@ -18,8 +18,8 @@ const complianceColors: Record<string, string> = {
 };
 
 export default function Emissions() {
-  const { data: metrics, isLoading } = useEmissionsMetrics();
-  const { data: byVehicle } = useEmissionsByVehicle();
+  const { data: metrics, isLoading, refetch: refetchMetrics, isFetching: fetchingMetrics } = useEmissionsMetrics();
+  const { data: byVehicle, refetch: refetchByVehicle, isFetching: fetchingByVehicle } = useEmissionsByVehicle();
   const { data: violations } = useEcoViolations();
 
   return (
@@ -106,6 +106,10 @@ export default function Emissions() {
             moduleLabel="Emissions"
             title="Emissions executive"
             blurb="CO₂, fuel use, and eco violations for the fleet."
+            onRun={async () => {
+              await Promise.all([refetchMetrics(), refetchByVehicle()]);
+            }}
+            running={fetchingMetrics || fetchingByVehicle}
             kpis={[
               { label: 'CO₂ (kg)', value: metrics?.co2Kg ?? 0 },
               { label: 'CO₂ / km', value: metrics?.co2PerKm ?? 0 },

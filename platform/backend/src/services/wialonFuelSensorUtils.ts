@@ -169,17 +169,42 @@ export function splitFuelTankLevels(readings: WialonUnitSensorReading[]): {
   };
 }
 
+/**
+ * Tank capacity (litres) from Wialon calibration max, custom fields, or unit props.
+ * Sums multi-tank calibration maxima when several fuel-level sensors exist.
+ */
 export function tankCapacityFromItem(item: WialonSearchItem): number | undefined {
-  if (!item.sens) return undefined;
   let maxCap = 0;
-  for (const sensor of Object.values(item.sens)) {
-    if (!sensor?.n || !isFuelLevelSensor(sensor.n, sensor.t)) continue;
-    const tbl = parseTbl(sensor.tbl);
-    if (!tbl.length) continue;
-    const cap = Math.max(...tbl.map((e) => e.a * e.x + e.b));
-    if (cap > maxCap) maxCap = cap;
+  if (item.sens) {
+    for (const sensor of Object.values(item.sens)) {
+      if (!sensor?.n || !isFuelLevelSensor(sensor.n, sensor.t)) continue;
+      const tbl = parseTbl(sensor.tbl);
+      if (!tbl.length) continue;
+      const cap = Math.max(...tbl.map((e) => e.a * e.x + e.b));
+      if (cap > 0) maxCap += cap;
+    }
   }
-  return maxCap > 0 ? Math.round(maxCap * 10) / 10 : undefined;
+  if (maxCap > 0) return Math.round(maxCap * 10) / 10;
+
+  const fldCap = item.flds
+    ? Object.values(item.flds).find((f) =>
+        /tank[_\s-]?capacity|fuel[_\s-]?tank|capacity/i.test(f?.n || ''),
+      )
+    : undefined;
+  if (fldCap?.v) {
+    const n = parseFloat(String(fldCap.v).replace(/[^\d.-]/g, ''));
+    if (Number.isFinite(n) && n > 0) return Math.round(n * 10) / 10;
+  }
+
+  const prp = item.prp || {};
+  for (const key of ['tank_capacity', 'fuel_tank_capacity', 'tankCapacity', 'fuel_capacity']) {
+    const raw = prp[key];
+    if (!raw) continue;
+    const n = parseFloat(String(raw).replace(/[^\d.-]/g, ''));
+    if (Number.isFinite(n) && n > 0) return Math.round(n * 10) / 10;
+  }
+
+  return undefined;
 }
 
 export function formatSensorSummary(readings: WialonUnitSensorReading[]): string {

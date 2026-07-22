@@ -16,6 +16,8 @@ interface FuelKpiCardsProps {
   assetCategory?: FuelAssetCategory;
   unitLabel?: string;
   unitLabelPlural?: string;
+  /** Current total fuel litres across live assets. */
+  totalLiveFuelLiters?: number;
 }
 
 interface SuddenDropAlert {
@@ -35,9 +37,14 @@ export function FuelKpiCards({
   assetCategory = 'vehicle',
   unitLabel = 'Vehicle',
   unitLabelPlural = 'vehicles',
+  totalLiveFuelLiters,
 }: FuelKpiCardsProps) {
   const [showDropModal, setShowDropModal] = useState(false);
   const isVehicle = assetCategory === 'vehicle';
+  const liveTotal =
+    totalLiveFuelLiters ??
+    kpis.totalLiveFuelLiters ??
+    0;
 
   const suddenDropAlerts = useMemo((): SuddenDropAlert[] => {
     const seen = new Set<string>();
@@ -73,7 +80,7 @@ export function FuelKpiCards({
   if (isLoading) {
     return (
       <div className="fuel-kpi-grid">
-        {[0, 1, 2, 3].map((i) => (
+        {[0, 1, 2, 3, 4].map((i) => (
           <div key={i} className="h-14 rounded-lg bg-muted animate-pulse" />
         ))}
       </div>
@@ -83,6 +90,14 @@ export function FuelKpiCards({
   return (
     <>
       <div className="fuel-kpi-grid">
+        <MetricCard
+          title="Current fuel"
+          value={`${Math.round(liveTotal).toLocaleString()} L`}
+          subtitle={`Live tank total · ${unitLabelPlural}`}
+          icon={Droplets}
+          variant="info"
+          size="xs"
+        />
         <MetricCard
           title="Total Filled"
           value={`${kpis.totalFilled.toLocaleString()} L`}

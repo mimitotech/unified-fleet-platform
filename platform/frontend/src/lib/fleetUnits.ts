@@ -31,6 +31,7 @@ export type FleetSnapshotUnit = {
   assetCategory?: 'vehicle' | 'generator' | 'machinery';
   stationary?: boolean;
   fuelLevel?: number;
+  tankCapacity?: number;
   iconUrl?: string;
   iconUgi?: number;
   iconUri?: string;
@@ -104,6 +105,7 @@ export type FleetUnit = {
   speed?: number;
   fuelLevel?: number;
   fuelLiters?: number;
+  tankCapacity?: number;
   fuelFormatted?: string;
   lat?: number;
   lng?: number;
@@ -197,10 +199,22 @@ export function hasVideoCapability(
   return false;
 }
 
-export function formatFuelDisplay(unit: Pick<FleetUnit, 'fuelLevel' | 'fuelLiters' | 'fuelFormatted'>): string {
+export function formatFuelDisplay(
+  unit: Pick<FleetUnit, 'fuelLevel' | 'fuelLiters' | 'fuelFormatted' | 'tankCapacity'>,
+): string {
   if (unit.fuelFormatted) return unit.fuelFormatted;
-  if (unit.fuelLiters != null) return `${unit.fuelLiters} L`;
-  if (unit.fuelLevel != null) return `${Math.round(unit.fuelLevel)}%`;
+  if (unit.fuelLiters != null) {
+    const pct =
+      unit.tankCapacity != null && unit.tankCapacity > 0
+        ? Math.min(100, Math.round((unit.fuelLiters / unit.tankCapacity) * 100))
+        : unit.fuelLevel != null && unit.fuelLevel > 0 && unit.fuelLevel <= 100
+          ? Math.round(unit.fuelLevel)
+          : null;
+    return pct != null ? `${unit.fuelLiters} L (${pct}%)` : `${unit.fuelLiters} L`;
+  }
+  if (unit.fuelLevel != null && unit.fuelLevel > 0 && unit.fuelLevel <= 100) {
+    return `${Math.round(unit.fuelLevel)}%`;
+  }
   return '—';
 }
 
@@ -245,6 +259,7 @@ function snapshotUnitToFleetUnit(u: FleetSnapshotUnit): FleetUnit {
     speed: u.position?.speed,
     fuelLevel: u.fuelLevel,
     fuelLiters: u.fuel?.levelLiters,
+    tankCapacity: u.tankCapacity,
     fuelFormatted: u.fuel?.levelFormatted,
     lat: u.position?.lat,
     lng: u.position?.lng,

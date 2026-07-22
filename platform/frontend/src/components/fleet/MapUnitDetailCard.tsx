@@ -28,7 +28,20 @@ import { safeArray } from '@/lib/safeArray';
 
 type UnitSlice = Pick<
   FleetUnit,
-  'id' | 'wialonId' | 'name' | 'plate' | 'status' | 'motionState' | 'iconUgi' | 'hwName' | 'hw' | 'fuelLevel' | 'fuelLiters' | 'fuelFormatted'
+  | 'id'
+  | 'wialonId'
+  | 'name'
+  | 'plate'
+  | 'status'
+  | 'motionState'
+  | 'iconUgi'
+  | 'hwName'
+  | 'hw'
+  | 'fuelLevel'
+  | 'fuelLiters'
+  | 'fuelFormatted'
+  | 'stationary'
+  | 'assetCategory'
 >;
 
 type Props = {
@@ -71,6 +84,10 @@ export function MapUnitDetailCard({ unit, lat, lng, speed, course, live = false,
   const status = (detail?.status as VehicleStatus) || unit.status;
   const motionLabel = detail?.motionState || unit.motionState;
   const liveSpeed = speed ?? detail?.trip?.currSpeed ?? detail?.position?.speed;
+  const stationary =
+    unit.stationary === true ||
+    unit.assetCategory === 'generator' ||
+    unit.assetCategory === 'machinery';
   const liveCourse = course ?? detail?.trip?.course ?? detail?.position?.course;
   const satellites = detail?.health?.satellites ?? detail?.position?.satellites;
   const altitude = detail?.health?.altitude ?? detail?.position?.altitude;
@@ -125,8 +142,14 @@ export function MapUnitDetailCard({ unit, lat, lng, speed, course, live = false,
           <p className="text-xs text-muted-foreground mt-1">{hwDisplayLabel(detail || unit)}</p>
         </div>
         <div className="flex flex-col items-end gap-1.5 shrink-0">
-          <StatusBadge status={status} label={motionLabel} size="md" />
-          {status === 'moving' && liveSpeed != null && liveSpeed > 0 && (
+          <StatusBadge
+            status={status}
+            label={motionLabel}
+            size="md"
+            stationary={stationary}
+            assetCategory={unit.assetCategory}
+          />
+          {!stationary && status === 'moving' && liveSpeed != null && liveSpeed > 0 && (
             <span className="text-xs font-bold text-status-moving tabular-nums">
               {Math.round(liveSpeed)} km/h
             </span>
@@ -176,17 +199,21 @@ export function MapUnitDetailCard({ unit, lat, lng, speed, course, live = false,
 
         {/* Key metrics */}
         <div className="p-4 grid grid-cols-2 gap-2 border-b border-border/50">
-          <Metric
-            label="Speed"
-            value={liveSpeed != null ? `${Math.round(liveSpeed)} km/h` : '0 km/h'}
-            icon={Gauge}
-          />
+          {!stationary && (
+            <Metric
+              label="Speed"
+              value={liveSpeed != null ? `${Math.round(liveSpeed)} km/h` : '0 km/h'}
+              icon={Gauge}
+            />
+          )}
           <Metric label="Fuel" value={fuelDisplay} icon={Fuel} />
-          <Metric
-            label="Odometer"
-            value={detail?.counters?.mileage != null ? `${Math.round(detail.counters.mileage)} km` : '—'}
-            icon={Navigation}
-          />
+          {!stationary && (
+            <Metric
+              label="Odometer"
+              value={detail?.counters?.mileage != null ? `${Math.round(detail.counters.mileage)} km` : '—'}
+              icon={Navigation}
+            />
+          )}
           <Metric
             label="Engine hours"
             value={detail?.counters?.engineHours != null ? `${detail.counters.engineHours.toFixed(1)} h` : '—'}

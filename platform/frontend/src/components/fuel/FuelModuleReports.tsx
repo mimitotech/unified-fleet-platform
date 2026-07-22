@@ -230,6 +230,10 @@ export function FuelModuleReports({
       onFromChange={setFromDate}
       onToChange={setToDate}
       onAssetChange={setAsset}
+      onRun={() => {
+        // Filters are applied reactively; Run confirms the current selection.
+        setKind((k) => k);
+      }}
       kpis={[
         { label: 'Total filled', value: `${kpis.totalFilled.toLocaleString()} L` },
         { label: 'Total consumed', value: `${kpis.totalConsumed.toLocaleString()} L` },

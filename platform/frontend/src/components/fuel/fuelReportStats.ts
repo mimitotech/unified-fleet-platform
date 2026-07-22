@@ -13,6 +13,8 @@ export type FuelReportKpis = {
   vehiclesTracked: number;
   fillingCount: number;
   consumptionCount: number;
+  /** Sum of live tank levels across assets (litres). */
+  totalLiveFuelLiters?: number;
 };
 
 export type VehicleFuelReportRow = {

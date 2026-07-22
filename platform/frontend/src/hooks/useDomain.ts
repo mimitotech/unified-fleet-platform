@@ -51,12 +51,17 @@ export function useFuelTransactions(enabled = true) {
   });
 }
 
-export function useFuelKpis(enabled = true) {
-  const from = useMemo(() => {
+export function useFuelKpis(
+  enabled = true,
+  opts?: { from?: string; to?: string },
+) {
+  const fallbackFrom = useMemo(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
   }, []);
-  const to = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const fallbackTo = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const from = opts?.from || fallbackFrom;
+  const to = opts?.to || fallbackTo;
 
   return useQuery({
     queryKey: ['fuelKpis', from, to],
@@ -67,10 +72,31 @@ export function useFuelKpis(enabled = true) {
   });
 }
 
-export function useFuelTrend(enabled = true) {
+export function useFuelTrend(
+  enabled = true,
+  opts?: { from?: string; to?: string },
+) {
+  const from = opts?.from;
+  const to = opts?.to;
+
   return useQuery({
-    queryKey: ['fuelTrend'],
-    queryFn: () => clientApi.getFuelTrend(),
+    queryKey: ['fuelTrend', from || 'all', to || 'all'],
+    queryFn: async () => {
+      const rows = await clientApi.getFuelTrend();
+      const list = safeArray<{ month?: string; filled?: number; consumed?: number }>(rows);
+      if (!from && !to) return list;
+      return list.filter((r) => {
+        const m = String(r.month || '');
+        if (!/^\d{4}-\d{2}$/.test(m)) return true;
+        const monthStart = `${m}-01`;
+        const [y, mo] = m.split('-').map(Number);
+        const lastDay = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+        const monthEnd = `${m}-${String(lastDay).padStart(2, '0')}`;
+        if (from && monthEnd < from) return false;
+        if (to && monthStart > to) return false;
+        return true;
+      });
+    },
     enabled,
   });
 }
@@ -106,6 +132,29 @@ export function useCreateInspection() {
   });
 }
 
+export function useUpdateInspection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
+      clientApi.updateInspection(id, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['inspections'] });
+      qc.invalidateQueries({ queryKey: ['workshopKpis'] });
+    },
+  });
+}
+
+export function useDeleteInspection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => clientApi.deleteInspection(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['inspections'] });
+      qc.invalidateQueries({ queryKey: ['workshopKpis'] });
+    },
+  });
+}
+
 export function useCreateMaintenance() {
   const qc = useQueryClient();
   return useMutation({
@@ -117,10 +166,56 @@ export function useCreateMaintenance() {
   });
 }
 
+export function useUpdateMaintenance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
+      clientApi.updateMaintenance(id, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['maintenanceLogs'] });
+      qc.invalidateQueries({ queryKey: ['workshopKpis'] });
+    },
+  });
+}
+
+export function useDeleteMaintenance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => clientApi.deleteMaintenance(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['maintenanceLogs'] });
+      qc.invalidateQueries({ queryKey: ['workshopKpis'] });
+    },
+  });
+}
+
 export function useCreateBreakdown() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: clientApi.createBreakdown,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['breakdowns'] });
+      qc.invalidateQueries({ queryKey: ['workshopKpis'] });
+    },
+  });
+}
+
+export function useUpdateBreakdown() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
+      clientApi.updateBreakdown(id, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['breakdowns'] });
+      qc.invalidateQueries({ queryKey: ['workshopKpis'] });
+    },
+  });
+}
+
+export function useDeleteBreakdown() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => clientApi.deleteBreakdown(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['breakdowns'] });
       qc.invalidateQueries({ queryKey: ['workshopKpis'] });

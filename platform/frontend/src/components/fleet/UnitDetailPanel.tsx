@@ -125,6 +125,10 @@ export function UnitDetailPanel({
   const speed = detail?.position?.speed ?? unit.speed;
   const course = detail?.position?.course ?? unit.course;
   const mileage = detail?.counters?.mileage ?? unit.mileage;
+  const stationary =
+    unit.stationary === true ||
+    unit.assetCategory === 'generator' ||
+    unit.assetCategory === 'machinery';
   const engineHours = detail?.counters?.engineHours ?? unit.engineHours;
   const lastAge = detail?.lastUpdateAge;
   const sensors = detail?.sensors || [];
@@ -227,15 +231,17 @@ export function UnitDetailPanel({
 
       {/* Stats */}
       <div className={cn('grid grid-cols-2 gap-1.5 shrink-0', compact ? 'p-3 pt-2' : 'p-4 pt-3')}>
-        <Stat icon={Gauge} label="Speed" value={speed != null ? `${Math.round(speed)} km/h` : '0 km/h'} />
-        <Stat icon={Navigation} label="Odometer" value={formatCounter(mileage, 'km')} />
+        {!stationary && (
+          <Stat icon={Gauge} label="Speed" value={speed != null ? `${Math.round(speed)} km/h` : '0 km/h'} />
+        )}
+        {!stationary && <Stat icon={Navigation} label="Odometer" value={formatCounter(mileage, 'km')} />}
         <Stat icon={Fuel} label="Fuel" value={fuelDisplay} />
         {engineAsset ? (
           <Stat icon={Clock} label="Engine hrs" value={formatCounter(engineHours, 'h')} />
         ) : (
           <Stat icon={Cpu} label="Device" value={hwDisplayLabel(detail || unit)} />
         )}
-        {course != null && status === 'moving' && (
+        {!stationary && course != null && status === 'moving' && (
           <Stat icon={Compass} label="Heading" value={`${Math.round(course)}°`} />
         )}
         {detail?.netconn != null && (

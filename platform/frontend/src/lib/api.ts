@@ -272,6 +272,12 @@ export interface WorkshopKpis {
   openBreakdowns: number;
   inspectionsDue: number;
   totalMaintenanceCost: number;
+  totalBreakdownCost?: number;
+  vehiclesNeedingService?: number;
+  activeMaintenanceJobs?: number;
+  avgRepairTime?: number;
+  inspectionPassRate?: number;
+  fleetHealthScore?: number;
 }
 
 export interface EmissionsMetrics {
@@ -641,10 +647,22 @@ export const clientApi = {
   getBreakdowns: () => api<unknown[]>('/api/client/workshop/breakdowns'),
   createInspection: (data: Record<string, unknown>) =>
     api('/api/client/workshop/inspections', { method: 'POST', body: JSON.stringify(data) }),
+  updateInspection: (id: string, data: Record<string, unknown>) =>
+    api(`/api/client/workshop/inspections/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteInspection: (id: string) =>
+    api(`/api/client/workshop/inspections/${id}`, { method: 'DELETE' }),
   createMaintenance: (data: Record<string, unknown>) =>
     api('/api/client/workshop/maintenance', { method: 'POST', body: JSON.stringify(data) }),
+  updateMaintenance: (id: string, data: Record<string, unknown>) =>
+    api(`/api/client/workshop/maintenance/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteMaintenance: (id: string) =>
+    api(`/api/client/workshop/maintenance/${id}`, { method: 'DELETE' }),
   createBreakdown: (data: Record<string, unknown>) =>
     api('/api/client/workshop/breakdowns', { method: 'POST', body: JSON.stringify(data) }),
+  updateBreakdown: (id: string, data: Record<string, unknown>) =>
+    api(`/api/client/workshop/breakdowns/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteBreakdown: (id: string) =>
+    api(`/api/client/workshop/breakdowns/${id}`, { method: 'DELETE' }),
 
   // Emissions
   getEmissionsMetrics: () => api<EmissionsMetrics>('/api/client/emissions/metrics'),

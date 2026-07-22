@@ -1,39 +1,59 @@
-import { useState } from 'react';
+/**
+ * Workshop / Maintenance Tracking Page
+ *
+ * Fleet-centric view of vehicle maintenance, inspections, and breakdowns.
+ * Costing & Reports tabs preserved from UFP integrations.
+ */
+
+import { useState, useCallback, useMemo } from 'react';
 import { AppLayout } from '@/components/app/AppLayout';
-import { MetricCard } from '@/components/app/MetricCard';
-import {
-  useWorkshopKpis,
-  useInspections,
-  useMaintenanceLogs,
-  useBreakdowns,
-  useCreateInspection,
-  useCreateMaintenance,
-  useCreateBreakdown,
-} from '@/hooks/useDomain';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Button } from '@/components/ui/button';
+import { ClipboardCheck, Wrench, AlertTriangle, FileText } from 'lucide-react';
 import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
-} from '@/components/ui/dialog';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
-import { FleetUnitSelect } from '@/components/fleet/FleetUnitSelect';
-import { LoadingButton } from '@/components/shared/LoadingButton';
-import { notify } from '@/lib/notify';
-import { Wrench, ClipboardCheck, AlertOctagon, DollarSign, Plus, FileText } from 'lucide-react';
-import { format } from 'date-fns';
-import type { FleetUnit } from '@/lib/fleetUnits';
-import {
+  WorkshopKpiCards,
+  FleetMaintenanceTable,
+  InspectionTimeline,
+  MaintenanceLogList,
+  BreakdownAlerts,
+  MaintenanceCostChart,
+  PreDeliveryInspectionModal,
+  MaintenanceLogModal,
+  BreakdownReportModal,
+  InspectionDetailModal,
   WorkshopCostingPanel,
-} from '@/components/workshop/WorkshopCostingPanel';
+} from '@/components/workshop';
 import { WorkshopReportsInline } from '@/components/reports/moduleReportPanels';
+import {
+  useInspections,
+  useCreateInspection,
+  useUpdateInspection,
+  useDeleteInspection,
+  useMaintenanceLogs,
+  useCreateMaintenance,
+  useUpdateMaintenance,
+  useDeleteMaintenance,
+  useBreakdowns,
+  useCreateBreakdown,
+  useUpdateBreakdown,
+  useDeleteBreakdown,
+  useWorkshopKpis,
+  useDrivers,
+} from '@/hooks/useDomain';
+import { useFleetUnits } from '@/hooks/useFleetUnits';
+import { notify } from '@/lib/notify';
+import { workshopUnitFields } from '@/lib/workshopUnit';
+import { safeArray } from '@/lib/safeArray';
+import type {
+  VehicleInspection,
+  MaintenanceLog,
+  BreakdownReport,
+  InspectionStatus,
+  VehicleMaintenanceSummary,
+} from '@/types/workshop';
+import type { InspectionFormData } from '@/components/workshop/PreDeliveryInspectionModal';
+import type { MaintenanceLogFormData } from '@/components/workshop/MaintenanceLogModal';
+import type { BreakdownReportFormData } from '@/components/workshop/BreakdownReportModal';
 
 type MaintLike = {
   vehicleName?: string;
@@ -48,135 +68,548 @@ type BreakLike = {
   status?: string;
 };
 
-function unitFields(unit: FleetUnit | null) {
-  if (!unit) return {};
+function asInspection(row: Record<string, unknown>): VehicleInspection {
   return {
-    vehicleId: unit.wialonId ? String(unit.wialonId) : unit.id,
-    vehicleName: unit.name,
-    vehiclePlate: unit.plate || '',
-    assetId: unit.id,
+    id: String(row.id ?? ''),
+    vehicleId: String(row.vehicleId ?? ''),
+    vehicleName: String(row.vehicleName ?? ''),
+    vehiclePlate: String(row.vehiclePlate ?? ''),
+    driverId: (row.driverId as string | null) ?? null,
+    driverName: (row.driverName as string | null) ?? null,
+    inspectionType: (row.inspectionType as VehicleInspection['inspectionType']) || 'scheduled',
+    inspectionDate: String(row.inspectionDate ?? new Date().toISOString()),
+    odometerReading: Number(row.odometerReading ?? 0),
+    nextServiceMileage: row.nextServiceMileage != null ? Number(row.nextServiceMileage) : undefined,
+    truckHeadChecklist: Array.isArray(row.truckHeadChecklist) ? (row.truckHeadChecklist as VehicleInspection['truckHeadChecklist']) : [],
+    trailerChecklist: Array.isArray(row.trailerChecklist) ? (row.trailerChecklist as VehicleInspection['trailerChecklist']) : [],
+    overallStatus: (row.overallStatus as InspectionStatus) || 'pass',
+    notes: row.notes as string | undefined,
+    inspectorName: row.inspectorName as string | undefined,
+    createdAt: String(row.createdAt ?? ''),
+  };
+}
+
+function asMaintenanceLog(row: Record<string, unknown>): MaintenanceLog {
+  return {
+    id: String(row.id ?? ''),
+    vehicleId: String(row.vehicleId ?? ''),
+    vehicleName: String(row.vehicleName ?? ''),
+    vehiclePlate: String(row.vehiclePlate ?? ''),
+    driverId: (row.driverId as string | null) ?? null,
+    driverName: row.driverName as string | undefined,
+    inspectionId: row.inspectionId as string | undefined,
+    breakdownId: row.breakdownId as string | undefined,
+    maintenanceType: (row.maintenanceType as MaintenanceLog['maintenanceType']) || 'repair',
+    priority: (row.priority as MaintenanceLog['priority']) || 'medium',
+    description: String(row.description ?? ''),
+    mechanicName: String(row.mechanicName ?? ''),
+    startDate: String(row.startDate ?? new Date().toISOString()),
+    endDate: row.endDate as string | undefined,
+    laborHours: Number(row.laborHours ?? 0),
+    laborCost: Number(row.laborCost ?? 0),
+    partsCost: Number(row.partsCost ?? 0),
+    totalCost: Number(row.totalCost ?? 0),
+    partsUsed: Array.isArray(row.partsUsed) ? (row.partsUsed as MaintenanceLog['partsUsed']) : [],
+    status: (row.status as MaintenanceLog['status']) || 'pending',
+    notes: row.notes as string | undefined,
+    odometerReading: row.odometerReading != null ? Number(row.odometerReading) : undefined,
+    nextServiceKm: row.nextServiceKm != null ? Number(row.nextServiceKm) : undefined,
+    nextServiceHours: row.nextServiceHours != null ? Number(row.nextServiceHours) : undefined,
+    nextServiceDays: row.nextServiceDays != null ? Number(row.nextServiceDays) : undefined,
+    createdAt: String(row.createdAt ?? ''),
+    updatedAt: String(row.updatedAt ?? ''),
+  };
+}
+
+function asBreakdown(row: Record<string, unknown>): BreakdownReport {
+  const location = (row.location as BreakdownReport['location']) || { lat: 0, lng: 0, address: '' };
+  return {
+    id: String(row.id ?? ''),
+    vehicleId: String(row.vehicleId ?? ''),
+    vehicleName: String(row.vehicleName ?? ''),
+    vehiclePlate: String(row.vehiclePlate ?? ''),
+    driverId: (row.driverId as string | null) ?? null,
+    driverName: (row.driverName as string | null) ?? null,
+    tripId: row.tripId as string | undefined,
+    location: {
+      lat: Number(location.lat ?? 0),
+      lng: Number(location.lng ?? 0),
+      address: location.address || '',
+    },
+    breakdownTime: String(row.breakdownTime ?? new Date().toISOString()),
+    resolutionTime: row.resolutionTime as string | undefined,
+    severity: (row.severity as BreakdownReport['severity']) || 'minor',
+    description: String(row.description ?? ''),
+    cause: row.cause as string | undefined,
+    resolution: row.resolution as string | undefined,
+    downtimeHours: Number(row.downtimeHours ?? 0),
+    towingCost: Number(row.towingCost ?? 0),
+    repairCost: Number(row.repairCost ?? 0),
+    totalCost: Number(row.totalCost ?? 0),
+    createdAt: String(row.createdAt ?? ''),
+  };
+}
+
+const maintenanceLogToFormData = (log: MaintenanceLog): MaintenanceLogFormData => ({
+  vehicleId: log.vehicleId,
+  vehicleName: log.vehicleName,
+  vehiclePlate: log.vehiclePlate,
+  driverId: log.driverId || null,
+  driverName: log.driverName || '',
+  inspectionId: log.inspectionId,
+  breakdownId: log.breakdownId,
+  maintenanceType: log.maintenanceType,
+  priority: log.priority,
+  description: log.description,
+  mechanicName: log.mechanicName,
+  startDate: log.startDate?.slice(0, 10) || new Date().toISOString().slice(0, 10),
+  endDate: log.endDate,
+  laborHours: log.laborHours,
+  laborCost: log.laborCost,
+  partsCost: log.partsCost,
+  totalCost: log.totalCost,
+  partsUsed: log.partsUsed ?? [],
+  status: log.status,
+  notes: log.notes || '',
+  odometerReading: log.odometerReading,
+  nextServiceKm: log.nextServiceKm,
+  nextServiceHours: log.nextServiceHours,
+  nextServiceDays: log.nextServiceDays,
+});
+
+const breakdownToFormData = (brk: BreakdownReport): BreakdownReportFormData => ({
+  vehicleId: brk.vehicleId,
+  vehicleName: brk.vehicleName,
+  vehiclePlate: brk.vehiclePlate,
+  driverId: brk.driverId,
+  driverName: brk.driverName || '',
+  tripId: brk.tripId,
+  location: {
+    lat: brk.location.lat,
+    lng: brk.location.lng,
+    address: brk.location.address || '',
+  },
+  breakdownTime: brk.breakdownTime?.slice(0, 16) || new Date().toISOString().slice(0, 16),
+  resolutionTime: brk.resolutionTime,
+  severity: brk.severity,
+  description: brk.description,
+  cause: brk.cause || '',
+  resolution: brk.resolution || '',
+  downtimeHours: brk.downtimeHours,
+  towingCost: brk.towingCost,
+  repairCost: brk.repairCost,
+  totalCost: brk.totalCost,
+});
+
+function resolveUnitPayload(data: {
+  unit?: Parameters<typeof workshopUnitFields>[0];
+  vehicleId: string;
+  vehicleName: string;
+  vehiclePlate: string;
+}) {
+  if (data.unit) return workshopUnitFields(data.unit);
+  return {
+    vehicleId: data.vehicleId,
+    vehicleName: data.vehicleName,
+    vehiclePlate: data.vehiclePlate,
   };
 }
 
 export default function Workshop() {
-  const { data: kpis, isLoading } = useWorkshopKpis();
-  const { data: inspections } = useInspections();
-  const { data: maintenance } = useMaintenanceLogs();
-  const { data: breakdowns } = useBreakdowns();
-  const createInspection = useCreateInspection();
-  const createMaintenance = useCreateMaintenance();
-  const createBreakdown = useCreateBreakdown();
+  const [activeTab, setActiveTab] = useState('overview');
 
-  const [maintOpen, setMaintOpen] = useState(false);
-  const [inspOpen, setInspOpen] = useState(false);
-  const [breakOpen, setBreakOpen] = useState(false);
-  const [selectedUnit, setSelectedUnit] = useState<FleetUnit | null>(null);
+  const [inspectionModalOpen, setInspectionModalOpen] = useState(false);
+  const [maintenanceModalOpen, setMaintenanceModalOpen] = useState(false);
+  const [breakdownModalOpen, setBreakdownModalOpen] = useState(false);
+  const [inspectionDetailModalOpen, setInspectionDetailModalOpen] = useState(false);
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string | undefined>();
 
-  const [maintForm, setMaintForm] = useState({
-    maintenanceType: 'scheduled',
-    priority: 'medium',
-    description: '',
-    mechanicName: '',
-    totalCost: '',
-  });
-  const [inspForm, setInspForm] = useState({
-    inspectionType: 'scheduled',
-    overallStatus: 'pass',
-    odometerReading: '',
-    inspectorName: '',
-    notes: '',
-  });
-  const [breakForm, setBreakForm] = useState({
-    severity: 'minor',
-    description: '',
-    cause: '',
-    totalCost: '',
-  });
+  const [editingInspection, setEditingInspection] = useState<VehicleInspection | null>(null);
+  const [editingMaintenanceLog, setEditingMaintenanceLog] = useState<MaintenanceLog | null>(null);
+  const [editingBreakdown, setEditingBreakdown] = useState<BreakdownReport | null>(null);
+  const [selectedInspection, setSelectedInspection] = useState<VehicleInspection | null>(null);
 
-  const submitMaintenance = () => {
-    if (!selectedUnit || !maintForm.description || !maintForm.mechanicName) {
-      notify.error('Select vehicle and fill required fields');
-      return;
-    }
-    createMaintenance.mutate(
-      {
-        ...unitFields(selectedUnit),
-        ...maintForm,
-        totalCost: Number(maintForm.totalCost) || 0,
-      },
-      {
-        onSuccess: () => {
-          notify.success('Maintenance job created');
-          setMaintOpen(false);
-          setMaintForm({ maintenanceType: 'scheduled', priority: 'medium', description: '', mechanicName: '', totalCost: '' });
-        },
-        onError: (e) => notify.error('Failed', e.message),
+  const { data: kpisData, isLoading: kpisLoading } = useWorkshopKpis();
+  const { data: inspectionsRaw, isLoading: inspectionsLoading } = useInspections();
+  const { data: maintenanceRaw, isLoading: maintenanceLoading } = useMaintenanceLogs();
+  const { data: breakdownsRaw, isLoading: breakdownsLoading } = useBreakdowns();
+  const { data: driversRaw } = useDrivers();
+  const { units } = useFleetUnits();
+
+  const inspections = useMemo(
+    () => safeArray(inspectionsRaw).map((r) => asInspection(r as Record<string, unknown>)),
+    [inspectionsRaw]
+  );
+  const maintenanceLogs = useMemo(
+    () => safeArray(maintenanceRaw).map((r) => asMaintenanceLog(r as Record<string, unknown>)),
+    [maintenanceRaw]
+  );
+  const breakdowns = useMemo(
+    () => safeArray(breakdownsRaw).map((r) => asBreakdown(r as Record<string, unknown>)),
+    [breakdownsRaw]
+  );
+
+  const driverOptions = useMemo(
+    () =>
+      safeArray<{ id: string; name: string }>(driversRaw).map((d) => ({
+        id: String(d.id),
+        name: String(d.name),
+      })),
+    [driversRaw]
+  );
+
+  const isLoading = inspectionsLoading || maintenanceLoading || breakdownsLoading || kpisLoading;
+
+  const fleetSummary: VehicleMaintenanceSummary[] = useMemo(() => {
+    const byKey = new Map<string, VehicleMaintenanceSummary>();
+
+    const ensure = (key: string, name: string, plate: string, mileage = 0, type = 'truck') => {
+      if (!byKey.has(key)) {
+        byKey.set(key, {
+          vehicleId: key,
+          vehicleName: name,
+          vehiclePlate: plate,
+          vehicleType: type,
+          lastInspectionDate: null,
+          lastInspectionStatus: null,
+          nextServiceDue: null,
+          currentMileage: mileage,
+          totalMaintenanceCost: 0,
+          pendingMaintenanceCount: 0,
+          breakdownCount: 0,
+          avgRepairTime: 0,
+          healthScore: 100,
+        });
       }
-    );
-  };
+      return byKey.get(key)!;
+    };
 
-  const submitInspection = () => {
-    if (!selectedUnit) {
-      notify.error('Select a vehicle');
-      return;
+    for (const unit of units) {
+      const key = unit.wialonId ? String(unit.wialonId) : unit.id;
+      ensure(
+        key,
+        unit.name,
+        unit.plate || '',
+        unit.mileage || 0,
+        unit.assetCategory || 'vehicle'
+      );
     }
-    createInspection.mutate(
-      {
-        ...unitFields(selectedUnit),
-        ...inspForm,
-        odometerReading: Number(inspForm.odometerReading) || 0,
-      },
-      {
-        onSuccess: () => {
-          notify.success('Inspection recorded');
-          setInspOpen(false);
-        },
-        onError: (e) => notify.error('Failed', e.message),
-      }
-    );
-  };
 
-  const submitBreakdown = () => {
-    if (!selectedUnit || !breakForm.description) {
-      notify.error('Select vehicle and describe the breakdown');
-      return;
-    }
-    createBreakdown.mutate(
-      {
-        ...unitFields(selectedUnit),
-        ...breakForm,
-        totalCost: Number(breakForm.totalCost) || 0,
-      },
-      {
-        onSuccess: () => {
-          notify.success('Breakdown reported');
-          setBreakOpen(false);
-        },
-        onError: (e) => notify.error('Failed', e.message),
+    for (const insp of inspections) {
+      const row = ensure(insp.vehicleId, insp.vehicleName, insp.vehiclePlate, insp.odometerReading);
+      if (
+        !row.lastInspectionDate ||
+        new Date(insp.inspectionDate).getTime() > new Date(row.lastInspectionDate).getTime()
+      ) {
+        row.lastInspectionDate = insp.inspectionDate;
+        row.lastInspectionStatus = insp.overallStatus;
+        row.nextServiceDue = insp.nextServiceMileage ?? row.nextServiceDue;
+        if (insp.odometerReading > 0) row.currentMileage = insp.odometerReading;
       }
-    );
-  };
+    }
+
+    for (const log of maintenanceLogs) {
+      const row = ensure(log.vehicleId, log.vehicleName, log.vehiclePlate);
+      row.totalMaintenanceCost += log.totalCost || 0;
+      if (log.status === 'pending' || log.status === 'in-progress') row.pendingMaintenanceCount += 1;
+    }
+
+    for (const brk of breakdowns) {
+      const row = ensure(brk.vehicleId, brk.vehicleName, brk.vehiclePlate);
+      row.breakdownCount += 1;
+    }
+
+    for (const row of byKey.values()) {
+      const completed = maintenanceLogs.filter(
+        (m) => m.vehicleId === row.vehicleId && m.status === 'completed'
+      );
+      row.avgRepairTime =
+        completed.length > 0
+          ? Math.round(
+              (completed.reduce((sum, m) => {
+                const start = new Date(m.startDate).getTime();
+                const end = m.endDate ? new Date(m.endDate).getTime() : start;
+                return sum + (end - start) / (1000 * 60 * 60);
+              }, 0) /
+                completed.length) *
+                10
+            ) / 10
+          : 0;
+
+      let health = 100;
+      if (row.lastInspectionStatus === 'fail') health -= 30;
+      if (row.lastInspectionStatus === 'needs-attention') health -= 15;
+      health -= row.pendingMaintenanceCount * 5;
+      health -= row.breakdownCount * 10;
+      row.healthScore = Math.max(0, Math.min(100, health));
+    }
+
+    return Array.from(byKey.values());
+  }, [units, inspections, maintenanceLogs, breakdowns]);
+
+  const createInspectionMutation = useCreateInspection();
+  const updateInspectionMutation = useUpdateInspection();
+  const deleteInspectionMutation = useDeleteInspection();
+  const createMaintenanceMutation = useCreateMaintenance();
+  const updateMaintenanceMutation = useUpdateMaintenance();
+  const deleteMaintenanceMutation = useDeleteMaintenance();
+  const createBreakdownMutation = useCreateBreakdown();
+  const updateBreakdownMutation = useUpdateBreakdown();
+  const deleteBreakdownMutation = useDeleteBreakdown();
+
+  const handleVehicleClick = useCallback((vehicleId: string) => {
+    setSelectedVehicleId(vehicleId);
+    const vehicle = fleetSummary.find((v) => v.vehicleId === vehicleId);
+    notify.info(`Selected: ${vehicle?.vehicleName || vehicleId}`);
+  }, [fleetSummary]);
+
+  const handleViewInspection = useCallback((inspection: VehicleInspection) => {
+    setSelectedInspection(inspection);
+    setInspectionDetailModalOpen(true);
+  }, []);
+
+  const handleEditInspection = useCallback((inspection: VehicleInspection) => {
+    setEditingInspection(inspection);
+    setInspectionModalOpen(true);
+  }, []);
+
+  const handleDeleteInspection = useCallback(async (inspectionId: string) => {
+    try {
+      await deleteInspectionMutation.mutateAsync(inspectionId);
+      notify.success('Inspection deleted');
+      setInspectionDetailModalOpen(false);
+    } catch (e) {
+      notify.error('Failed to delete inspection', e instanceof Error ? e.message : undefined);
+    }
+  }, [deleteInspectionMutation]);
+
+  const handleSaveInspection = useCallback(async (data: InspectionFormData) => {
+    const allItems = [...data.truckHeadChecklist, ...data.trailerChecklist];
+    const hasIssues = allItems.some((item) => item.status === 'issue');
+    const hasFails = allItems.filter((i) => i.status === 'issue').length > 3;
+    const overallStatus: InspectionStatus = hasFails ? 'fail' : hasIssues ? 'needs-attention' : 'pass';
+    const unitPayload = resolveUnitPayload(data);
+
+    try {
+      if (editingInspection) {
+        await updateInspectionMutation.mutateAsync({
+          id: editingInspection.id,
+          data: {
+            ...unitPayload,
+            driverId: data.driverId,
+            driverName: data.driverName,
+            inspectionType: data.inspectionType,
+            odometerReading: data.odometerReading,
+            nextServiceMileage: data.nextServiceMileage || null,
+            truckHeadChecklist: data.truckHeadChecklist,
+            trailerChecklist: data.trailerChecklist,
+            overallStatus,
+            notes: data.notes,
+            inspectorName: data.inspectorName,
+          },
+        });
+        notify.success('Inspection updated');
+      } else {
+        await createInspectionMutation.mutateAsync({
+          ...unitPayload,
+          driverId: data.driverId,
+          driverName: data.driverName,
+          inspectionType: data.inspectionType,
+          inspectionDate: new Date().toISOString(),
+          odometerReading: data.odometerReading,
+          nextServiceMileage: data.nextServiceMileage || null,
+          truckHeadChecklist: data.truckHeadChecklist,
+          trailerChecklist: data.trailerChecklist,
+          overallStatus,
+          notes: data.notes,
+          inspectorName: data.inspectorName,
+        });
+        notify.success('Inspection created');
+      }
+      setEditingInspection(null);
+    } catch (e) {
+      notify.error('Failed to save inspection', e instanceof Error ? e.message : undefined);
+      throw e;
+    }
+  }, [editingInspection, createInspectionMutation, updateInspectionMutation]);
+
+  const handleEditMaintenanceLog = useCallback((log: MaintenanceLog) => {
+    setEditingMaintenanceLog(log);
+    setMaintenanceModalOpen(true);
+  }, []);
+
+  const handleCompleteMaintenanceLog = useCallback(async (logId: string) => {
+    try {
+      await updateMaintenanceMutation.mutateAsync({
+        id: logId,
+        data: { status: 'completed', endDate: new Date().toISOString() },
+      });
+      notify.success('Maintenance job marked as complete');
+    } catch (e) {
+      notify.error('Failed to complete maintenance job', e instanceof Error ? e.message : undefined);
+    }
+  }, [updateMaintenanceMutation]);
+
+  const handleDeleteMaintenanceLog = useCallback(async (logId: string) => {
+    try {
+      await deleteMaintenanceMutation.mutateAsync(logId);
+      notify.success('Maintenance log deleted');
+    } catch (e) {
+      notify.error('Failed to delete maintenance log', e instanceof Error ? e.message : undefined);
+    }
+  }, [deleteMaintenanceMutation]);
+
+  const handleSaveMaintenanceLog = useCallback(async (data: MaintenanceLogFormData) => {
+    const unitPayload = resolveUnitPayload(data);
+    const payload = {
+      ...unitPayload,
+      driverId: data.driverId,
+      driverName: data.driverName,
+      inspectionId: data.inspectionId,
+      breakdownId: data.breakdownId,
+      maintenanceType: data.maintenanceType,
+      priority: data.priority,
+      description: data.description,
+      mechanicName: data.mechanicName,
+      startDate: data.startDate,
+      endDate: data.endDate,
+      laborHours: data.laborHours,
+      laborCost: data.laborCost,
+      partsCost: data.partsCost,
+      totalCost: data.totalCost,
+      partsUsed: data.partsUsed,
+      status: data.status,
+      notes: data.notes,
+      odometerReading: data.odometerReading,
+      nextServiceKm: data.nextServiceKm,
+      nextServiceHours: data.nextServiceHours,
+      nextServiceDays: data.nextServiceDays,
+    };
+
+    try {
+      if (editingMaintenanceLog) {
+        await updateMaintenanceMutation.mutateAsync({ id: editingMaintenanceLog.id, data: payload });
+        notify.success('Maintenance log updated');
+      } else {
+        await createMaintenanceMutation.mutateAsync(payload);
+        notify.success('Maintenance log created');
+      }
+      setEditingMaintenanceLog(null);
+    } catch (e) {
+      notify.error('Failed to save maintenance log', e instanceof Error ? e.message : undefined);
+      throw e;
+    }
+  }, [editingMaintenanceLog, createMaintenanceMutation, updateMaintenanceMutation]);
+
+  const handleEditBreakdown = useCallback((breakdown: BreakdownReport) => {
+    setEditingBreakdown(breakdown);
+    setBreakdownModalOpen(true);
+  }, []);
+
+  const handleResolveBreakdown = useCallback(async (breakdownId: string, resolution: string) => {
+    try {
+      await updateBreakdownMutation.mutateAsync({
+        id: breakdownId,
+        data: { resolution, resolutionTime: new Date().toISOString() },
+      });
+      notify.success('Breakdown marked as resolved');
+    } catch (e) {
+      notify.error('Failed to resolve breakdown', e instanceof Error ? e.message : undefined);
+    }
+  }, [updateBreakdownMutation]);
+
+  const handleDeleteBreakdown = useCallback(async (breakdownId: string) => {
+    try {
+      await deleteBreakdownMutation.mutateAsync(breakdownId);
+      notify.success('Breakdown report deleted');
+    } catch (e) {
+      notify.error('Failed to delete breakdown report', e instanceof Error ? e.message : undefined);
+    }
+  }, [deleteBreakdownMutation]);
+
+  const handleViewBreakdownOnMap = useCallback((breakdown: BreakdownReport) => {
+    const addr = breakdown.location?.address || 'location';
+    notify.info(`Map view for ${addr}`);
+  }, []);
+
+  const handleSaveBreakdownReport = useCallback(async (data: BreakdownReportFormData) => {
+    const unitPayload = resolveUnitPayload(data);
+    const payload = {
+      ...unitPayload,
+      driverId: data.driverId,
+      driverName: data.driverName,
+      tripId: data.tripId,
+      location: data.location,
+      breakdownTime: data.breakdownTime,
+      resolutionTime: data.resolutionTime,
+      severity: data.severity,
+      description: data.description,
+      cause: data.cause,
+      resolution: data.resolution,
+      downtimeHours: data.downtimeHours,
+      towingCost: data.towingCost,
+      repairCost: data.repairCost,
+      totalCost: data.totalCost,
+    };
+
+    try {
+      if (editingBreakdown) {
+        await updateBreakdownMutation.mutateAsync({ id: editingBreakdown.id, data: payload });
+        notify.success('Breakdown report updated');
+      } else {
+        await createBreakdownMutation.mutateAsync(payload);
+        notify.success('Breakdown report created');
+      }
+      setEditingBreakdown(null);
+    } catch (e) {
+      notify.error('Failed to save breakdown report', e instanceof Error ? e.message : undefined);
+      throw e;
+    }
+  }, [editingBreakdown, createBreakdownMutation, updateBreakdownMutation]);
+
+  const handleInspectionModalChange = useCallback((open: boolean) => {
+    setInspectionModalOpen(open);
+    if (!open) setEditingInspection(null);
+  }, []);
+
+  const handleMaintenanceModalChange = useCallback((open: boolean) => {
+    setMaintenanceModalOpen(open);
+    if (!open) setEditingMaintenanceLog(null);
+  }, []);
+
+  const handleBreakdownModalChange = useCallback((open: boolean) => {
+    setBreakdownModalOpen(open);
+    if (!open) setEditingBreakdown(null);
+  }, []);
 
   return (
-    <AppLayout title="Workshop" subtitle="Maintenance, inspections and breakdowns">
+    <AppLayout
+      title="Workshop"
+      subtitle="Vehicle maintenance, inspections, and breakdown tracking"
+    >
       <div className="space-y-6">
-        <div className="stat-strip-4">
-          {isLoading ? (
-            [1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-14 rounded-lg" />)
-          ) : (
-            <>
-              <MetricCard title="Pending Jobs" value={kpis?.pendingMaintenance ?? 0} icon={Wrench} variant="primary" size="xxs" />
-              <MetricCard title="Completed (Month)" value={kpis?.completedThisMonth ?? 0} icon={ClipboardCheck} variant="success" size="xxs" />
-              <MetricCard title="Open Breakdowns" value={kpis?.openBreakdowns ?? 0} icon={AlertOctagon} variant="destructive" size="xxs" />
-              <MetricCard title="Total Cost" value={`${((kpis?.totalMaintenanceCost ?? 0) / 1000).toFixed(0)}k`} icon={DollarSign} variant="info" size="xxs" />
-            </>
-          )}
+        <div className="flex flex-wrap gap-3">
+          <Button onClick={() => setInspectionModalOpen(true)}>
+            <ClipboardCheck className="h-4 w-4 mr-2" />
+            New Inspection
+          </Button>
+          <Button variant="outline" onClick={() => setMaintenanceModalOpen(true)}>
+            <Wrench className="h-4 w-4 mr-2" />
+            Add Maintenance
+          </Button>
+          <Button variant="outline" onClick={() => setBreakdownModalOpen(true)}>
+            <AlertTriangle className="h-4 w-4 mr-2" />
+            Report Breakdown
+          </Button>
         </div>
 
-        <Tabs defaultValue="maintenance">
+        <WorkshopKpiCards kpis={kpisData ?? {}} isLoading={isLoading} />
+
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList>
-            <TabsTrigger value="maintenance">Maintenance</TabsTrigger>
+            <TabsTrigger value="overview">Fleet Overview</TabsTrigger>
             <TabsTrigger value="inspections">Inspections</TabsTrigger>
+            <TabsTrigger value="maintenance">Maintenance Jobs</TabsTrigger>
             <TabsTrigger value="breakdowns">Breakdowns</TabsTrigger>
             <TabsTrigger value="costing">Costing</TabsTrigger>
             <TabsTrigger value="reports" className="gap-1">
@@ -185,253 +618,53 @@ export default function Workshop() {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="maintenance" className="fleet-card mt-4">
-            <div className="flex justify-end mb-3">
-              <Dialog open={maintOpen} onOpenChange={setMaintOpen}>
-                <DialogTrigger asChild>
-                  <Button size="sm" onClick={() => setSelectedUnit(null)}>
-                    <Plus className="h-4 w-4 mr-1" /> New job
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader><DialogTitle>Create maintenance job</DialogTitle></DialogHeader>
-                  <div className="space-y-3">
-                    <div>
-                      <Label>Vehicle</Label>
-                      <FleetUnitSelect
-                        value={selectedUnit?.id}
-                        onValueChange={(_, u) => setSelectedUnit(u)}
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <Label>Type</Label>
-                        <Select value={maintForm.maintenanceType} onValueChange={(v) => setMaintForm((f) => ({ ...f, maintenanceType: v }))}>
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {['scheduled', 'repair', 'breakdown', 'preventive'].map((t) => (
-                              <SelectItem key={t} value={t}>{t}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <Label>Priority</Label>
-                        <Select value={maintForm.priority} onValueChange={(v) => setMaintForm((f) => ({ ...f, priority: v }))}>
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {['low', 'medium', 'high', 'critical'].map((t) => (
-                              <SelectItem key={t} value={t}>{t}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    <div>
-                      <Label>Description</Label>
-                      <Textarea value={maintForm.description} onChange={(e) => setMaintForm((f) => ({ ...f, description: e.target.value }))} />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <Label>Mechanic</Label>
-                        <Input value={maintForm.mechanicName} onChange={(e) => setMaintForm((f) => ({ ...f, mechanicName: e.target.value }))} />
-                      </div>
-                      <div>
-                        <Label>Est. cost</Label>
-                        <Input type="number" value={maintForm.totalCost} onChange={(e) => setMaintForm((f) => ({ ...f, totalCost: e.target.value }))} />
-                      </div>
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <LoadingButton loading={createMaintenance.isPending} onClick={submitMaintenance}>Create</LoadingButton>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+          <TabsContent value="overview" className="space-y-6 mt-6">
+            <FleetMaintenanceTable
+              vehicles={fleetSummary}
+              onVehicleClick={handleVehicleClick}
+              isLoading={isLoading}
+            />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <MaintenanceCostChart logs={maintenanceLogs} vehicleSummaries={fleetSummary} />
+              <InspectionTimeline
+                inspections={inspections}
+                onViewDetails={handleViewInspection}
+                maxItems={3}
+              />
             </div>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Vehicle</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead>Mechanic</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Cost</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(maintenance as Array<Record<string, unknown>>)?.map((m) => (
-                  <TableRow key={m.id as string}>
-                    <TableCell className="font-medium">{m.vehicleName as string}</TableCell>
-                    <TableCell><Badge variant="outline">{m.maintenanceType as string}</Badge></TableCell>
-                    <TableCell className="max-w-xs truncate">{m.description as string}</TableCell>
-                    <TableCell>{m.mechanicName as string}</TableCell>
-                    <TableCell><Badge>{m.status as string}</Badge></TableCell>
-                    <TableCell>{Number(m.totalCost).toLocaleString()}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
           </TabsContent>
 
-          <TabsContent value="inspections" className="fleet-card mt-4">
-            <div className="flex justify-end mb-3">
-              <Dialog open={inspOpen} onOpenChange={setInspOpen}>
-                <DialogTrigger asChild>
-                  <Button size="sm" onClick={() => setSelectedUnit(null)}>
-                    <Plus className="h-4 w-4 mr-1" /> New inspection
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader><DialogTitle>Record inspection</DialogTitle></DialogHeader>
-                  <div className="space-y-3">
-                    <div>
-                      <Label>Vehicle</Label>
-                      <FleetUnitSelect value={selectedUnit?.id} onValueChange={(_, u) => setSelectedUnit(u)} />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <Label>Type</Label>
-                        <Select value={inspForm.inspectionType} onValueChange={(v) => setInspForm((f) => ({ ...f, inspectionType: v }))}>
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {['pre-trip', 'post-trip', 'pre-delivery', 'scheduled'].map((t) => (
-                              <SelectItem key={t} value={t}>{t}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <Label>Result</Label>
-                        <Select value={inspForm.overallStatus} onValueChange={(v) => setInspForm((f) => ({ ...f, overallStatus: v }))}>
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {['pass', 'fail', 'needs-attention'].map((t) => (
-                              <SelectItem key={t} value={t}>{t}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <Label>Odometer</Label>
-                        <Input type="number" value={inspForm.odometerReading} onChange={(e) => setInspForm((f) => ({ ...f, odometerReading: e.target.value }))} />
-                      </div>
-                      <div>
-                        <Label>Inspector</Label>
-                        <Input value={inspForm.inspectorName} onChange={(e) => setInspForm((f) => ({ ...f, inspectorName: e.target.value }))} />
-                      </div>
-                    </div>
-                    <div>
-                      <Label>Notes</Label>
-                      <Textarea value={inspForm.notes} onChange={(e) => setInspForm((f) => ({ ...f, notes: e.target.value }))} />
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <LoadingButton loading={createInspection.isPending} onClick={submitInspection}>Save</LoadingButton>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </div>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Vehicle</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Inspector</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(inspections as Array<Record<string, unknown>>)?.map((i) => (
-                  <TableRow key={i.id as string}>
-                    <TableCell>{i.vehicleName as string}</TableCell>
-                    <TableCell>{i.inspectionType as string}</TableCell>
-                    <TableCell>{format(new Date(i.inspectionDate as string), 'dd MMM yyyy')}</TableCell>
-                    <TableCell><Badge variant={i.overallStatus === 'pass' ? 'default' : 'destructive'}>{i.overallStatus as string}</Badge></TableCell>
-                    <TableCell>{(i.inspectorName as string) || '—'}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          <TabsContent value="inspections" className="mt-6">
+            <InspectionTimeline
+              inspections={inspections}
+              onViewDetails={handleViewInspection}
+              maxItems={20}
+              showViewAll={false}
+            />
           </TabsContent>
 
-          <TabsContent value="breakdowns" className="fleet-card mt-4">
-            <div className="flex justify-end mb-3">
-              <Dialog open={breakOpen} onOpenChange={setBreakOpen}>
-                <DialogTrigger asChild>
-                  <Button size="sm" onClick={() => setSelectedUnit(null)}>
-                    <Plus className="h-4 w-4 mr-1" /> Report breakdown
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader><DialogTitle>Report breakdown</DialogTitle></DialogHeader>
-                  <div className="space-y-3">
-                    <div>
-                      <Label>Vehicle</Label>
-                      <FleetUnitSelect value={selectedUnit?.id} onValueChange={(_, u) => setSelectedUnit(u)} />
-                    </div>
-                    <div>
-                      <Label>Severity</Label>
-                      <Select value={breakForm.severity} onValueChange={(v) => setBreakForm((f) => ({ ...f, severity: v }))}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {['minor', 'major', 'critical'].map((t) => (
-                            <SelectItem key={t} value={t}>{t}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label>Description</Label>
-                      <Textarea value={breakForm.description} onChange={(e) => setBreakForm((f) => ({ ...f, description: e.target.value }))} />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <Label>Cause</Label>
-                        <Input value={breakForm.cause} onChange={(e) => setBreakForm((f) => ({ ...f, cause: e.target.value }))} />
-                      </div>
-                      <div>
-                        <Label>Est. cost</Label>
-                        <Input type="number" value={breakForm.totalCost} onChange={(e) => setBreakForm((f) => ({ ...f, totalCost: e.target.value }))} />
-                      </div>
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <LoadingButton loading={createBreakdown.isPending} onClick={submitBreakdown}>Report</LoadingButton>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </div>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Vehicle</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead>Severity</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Cost</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(breakdowns as Array<Record<string, unknown>>)?.map((b) => (
-                  <TableRow key={b.id as string}>
-                    <TableCell>{b.vehicleName as string}</TableCell>
-                    <TableCell className="max-w-sm truncate">{b.description as string}</TableCell>
-                    <TableCell><Badge variant={b.severity === 'critical' ? 'destructive' : 'outline'}>{b.severity as string}</Badge></TableCell>
-                    <TableCell>{format(new Date(b.breakdownTime as string), 'dd MMM yyyy')}</TableCell>
-                    <TableCell>{Number(b.totalCost).toLocaleString()}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          <TabsContent value="maintenance" className="mt-6">
+            <MaintenanceLogList
+              logs={maintenanceLogs}
+              onEditLog={handleEditMaintenanceLog}
+              onCompleteLog={handleCompleteMaintenanceLog}
+              onDeleteLog={handleDeleteMaintenanceLog}
+            />
+          </TabsContent>
+
+          <TabsContent value="breakdowns" className="mt-6">
+            <BreakdownAlerts
+              breakdowns={breakdowns}
+              onViewOnMap={handleViewBreakdownOnMap}
+              onEditBreakdown={handleEditBreakdown}
+              onResolveBreakdown={(id) => handleResolveBreakdown(id, 'Resolved via quick action')}
+              onDeleteBreakdown={handleDeleteBreakdown}
+            />
           </TabsContent>
 
           <TabsContent value="costing" className="mt-4 space-y-4">
             <WorkshopCostingPanel
-              maintenance={maintenance as MaintLike[]}
+              maintenance={maintenanceLogs as MaintLike[]}
               breakdowns={breakdowns as BreakLike[]}
             />
           </TabsContent>
@@ -441,6 +674,41 @@ export default function Workshop() {
           </TabsContent>
         </Tabs>
       </div>
+
+      <PreDeliveryInspectionModal
+        open={inspectionModalOpen}
+        onOpenChange={handleInspectionModalChange}
+        onSave={handleSaveInspection}
+        drivers={driverOptions}
+        defaultVehicleId={editingInspection?.vehicleId || selectedVehicleId}
+        editData={editingInspection}
+      />
+
+      <MaintenanceLogModal
+        open={maintenanceModalOpen}
+        onOpenChange={handleMaintenanceModalChange}
+        onSave={handleSaveMaintenanceLog}
+        drivers={driverOptions}
+        defaultVehicleId={editingMaintenanceLog?.vehicleId || selectedVehicleId}
+        editData={editingMaintenanceLog ? maintenanceLogToFormData(editingMaintenanceLog) : null}
+      />
+
+      <BreakdownReportModal
+        open={breakdownModalOpen}
+        onOpenChange={handleBreakdownModalChange}
+        onSave={handleSaveBreakdownReport}
+        drivers={driverOptions}
+        defaultVehicleId={editingBreakdown?.vehicleId || selectedVehicleId}
+        editData={editingBreakdown ? breakdownToFormData(editingBreakdown) : null}
+      />
+
+      <InspectionDetailModal
+        open={inspectionDetailModalOpen}
+        onOpenChange={setInspectionDetailModalOpen}
+        inspection={selectedInspection}
+        onEdit={handleEditInspection}
+        onDelete={handleDeleteInspection}
+      />
     </AppLayout>
   );
 }

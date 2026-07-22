@@ -2,7 +2,7 @@ import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FileText, Printer, ArrowUpDown, Search, Download } from 'lucide-react';
+import { FileText, Printer, ArrowUpDown, Search, Download, Play } from 'lucide-react';
 import { useTenantBranding } from '@/hooks/useTenantBranding';
 import { cn } from '@/lib/utils';
 import { PeriodAssetControls } from '@/components/shared/PeriodAssetControls';
@@ -10,6 +10,8 @@ import { notify } from '@/lib/notify';
 import { BrandedReportFooter, BrandedReportHeader, BrandedReportDocument } from '@/components/reports/BrandedReportChrome';
 import { DomainReportCharts } from '@/components/reports/DomainReportCharts';
 import type { DomainChartSpec } from '@/lib/domainReportCharts';
+import { buildReportFilename } from '@/lib/reportFilename';
+import { downloadTextFile } from '@/lib/reportUtils';
 
 export type ModuleReportDef = {
   id: string;
@@ -60,6 +62,9 @@ type Props = {
   onFromChange?: (v: string) => void;
   onToChange?: (v: string) => void;
   onAssetChange?: (v: string) => void;
+  /** Fetch / refresh data for the selected filters and report. */
+  onRun?: () => void | Promise<void>;
+  running?: boolean;
 };
 
 function todayIso() {
@@ -83,6 +88,12 @@ function rowDayIso(value: unknown): string | null {
   const parsed = Date.parse(raw);
   if (!Number.isNaN(parsed)) return new Date(parsed).toISOString().slice(0, 10);
   return null;
+}
+
+function escapeCsv(value: unknown): string {
+  const s = value == null ? '' : String(value);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
 }
 
 export function ModuleReportsShell({
@@ -109,6 +120,8 @@ export function ModuleReportsShell({
   onFromChange,
   onToChange,
   onAssetChange,
+  onRun,
+  running = false,
 }: Props) {
   const branding = useTenantBranding();
   const [localKind, setLocalKind] = useState(reports[0]?.id ?? 'executive');
@@ -120,6 +133,7 @@ export function ModuleReportsShell({
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [q, setQ] = useState('');
+  const [runBusy, setRunBusy] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
 
   const fromDate = controlledFrom ?? localFrom;
@@ -178,6 +192,38 @@ export function ModuleReportsShell({
 
   const [printing, setPrinting] = useState(false);
 
+  const reportFilenameBase = () =>
+    buildReportFilename({
+      clientName: branding.name,
+      reportName: active?.title || moduleLabel,
+      date: toDate || todayIso(),
+      unitName: asset !== 'all' ? asset : undefined,
+    });
+
+  const handleRun = async () => {
+    if (!onRun) {
+      notify.info('Report ready', 'Filters already applied to the preview.');
+      return;
+    }
+    setRunBusy(true);
+    try {
+      await onRun();
+      notify.success('Report updated', 'Data refreshed for the selected filters.');
+    } catch (e) {
+      notify.error('Run failed', e instanceof Error ? e.message : 'Could not refresh report');
+    } finally {
+      setRunBusy(false);
+    }
+  };
+
+  const exportCsv = () => {
+    const header = columns.map((c) => escapeCsv(c.label)).join(',');
+    const body = filteredRows
+      .map((row) => columns.map((c) => escapeCsv(row[c.key] ?? '')).join(','))
+      .join('\n');
+    downloadTextFile(`${header}\n${body}\n`, `${reportFilenameBase()}.csv`, 'text/csv');
+  };
+
   const exportPreview = async (mode: 'download' | 'print') => {
     const node = previewRef.current;
     if (!node) return;
@@ -187,6 +233,7 @@ export function ModuleReportsShell({
       await printReportDocument({
         root: node,
         title: `${branding.name || 'Client'} - ${active?.title ?? moduleLabel}`,
+        filename: reportFilenameBase(),
         primaryColor: branding.primaryColor,
         secondaryColor: branding.secondaryColor,
         mode,
@@ -201,22 +248,36 @@ export function ModuleReportsShell({
     }
   };
 
+  const busy = runBusy || running;
+
   return (
     <div className="space-y-3">
       <Card className="border-primary/20">
         <CardContent className="pt-3 pb-3 px-4 space-y-2.5">
-          <PeriodAssetControls
-            fromDate={fromDate}
-            toDate={toDate}
-            todayStr={today}
-            asset={asset}
-            assetNames={assetNames}
-            assetLabel="Asset"
-            onFromChange={setFrom}
-            onToChange={setTo}
-            onAssetChange={setAsset}
-            compact
-          />
+          <div className="flex flex-wrap items-end gap-2 justify-between">
+            <PeriodAssetControls
+              fromDate={fromDate}
+              toDate={toDate}
+              todayStr={today}
+              asset={asset}
+              assetNames={assetNames}
+              assetLabel="Asset"
+              onFromChange={setFrom}
+              onToChange={setTo}
+              onAssetChange={setAsset}
+              compact
+            />
+            <Button
+              type="button"
+              size="sm"
+              disabled={busy}
+              onClick={() => void handleRun()}
+              className="h-8 gap-1.5 shrink-0"
+            >
+              <Play className="h-3.5 w-3.5" />
+              {busy ? 'Running…' : 'Run report'}
+            </Button>
+          </div>
           <div className="relative max-w-sm">
             <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
             <Input
@@ -266,6 +327,17 @@ export function ModuleReportsShell({
               type="button"
               size="sm"
               variant="outline"
+              disabled={!filteredRows.length}
+              onClick={exportCsv}
+              className="h-8"
+            >
+              <Download className="h-3.5 w-3.5 mr-1" />
+              CSV
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
               disabled={printing}
               onClick={() => void exportPreview('download')}
               className="h-8 border-primary/40 text-primary"
@@ -309,7 +381,7 @@ export function ModuleReportsShell({
                     gap: '10px',
                   }}
                 >
-                  {kpis.map((k) => (
+                  {kpis.slice(0, 4).map((k) => (
                     <div
                       key={k.label}
                       data-report-kpi-card

@@ -16,7 +16,7 @@ export function canAccessAdminPanel(role?: string | null): boolean {
 export const ROLE_LABELS: Record<string, string> = {
   super_admin: 'Super Admin',
   platform_admin: 'Platform Admin',
-  tenant_admin: 'Tenant Admin',
+  tenant_admin: 'Client Admin',
   manager: 'Manager',
   operator: 'Operator',
   viewer: 'Viewer',

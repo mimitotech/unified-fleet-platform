@@ -307,7 +307,7 @@ export function discoverFuelPerformanceMetrics(
         coverage,
       };
     })
-    .filter((item) => item.coverage >= 0.2 && item.score > 0)
+    .filter((item) => item.coverage >= 0.08 && item.score > 0)
     .sort((a, b) => b.score - a.score)
     .map(({ sourceKey, label, mode, score }) => ({ sourceKey, label, mode, score }));
 

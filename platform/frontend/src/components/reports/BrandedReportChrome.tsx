@@ -207,6 +207,26 @@ export function BrandedReportFooter({
           {reportRef} · {issued}
         </p>
       </div>
+      <div
+        data-report-footer-powered
+        className="mt-2.5 pt-2.5 border-t border-slate-200 flex flex-wrap items-center gap-2"
+      >
+        <span data-report-footer-powered-label className="text-[10px] text-slate-500">
+          Powered by
+        </span>
+        <img
+          data-report-footer-powered-logo
+          src={BRAND.logo}
+          alt={BRAND.name}
+          className="h-5 w-auto max-w-[72px] object-contain"
+          onError={(e) => {
+            e.currentTarget.src = BRAND.logoFallback;
+          }}
+        />
+        <span data-report-footer-powered-name className="text-[10px] font-semibold text-[#004225]">
+          {BRAND.fullName}
+        </span>
+      </div>
     </footer>
   );
 }

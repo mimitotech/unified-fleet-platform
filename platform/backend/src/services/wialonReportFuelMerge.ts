@@ -34,7 +34,17 @@ export function fuelMethodLabel(unit: WialonFleetUnit, merged?: WialonFuelLive):
 export function formatFuelRowFields(unit: WialonFleetUnit, merged?: WialonFuelLive) {
   const fuel = merged ?? unit.fuel;
   const fuelLiters = fuel?.levelLiters ?? null;
-  const fuelPercent = unit.fuelLevel != null ? Math.round(unit.fuelLevel) : null;
+  const capacity = unit.tankCapacity;
+  const fromCapacity =
+    fuelLiters != null && capacity != null && capacity > 0
+      ? Math.min(100, Math.round((fuelLiters / capacity) * 100))
+      : null;
+  // Prefer capacity-derived %; only use unit.fuelLevel when it is a real 0–100 percent.
+  const fuelPercent =
+    fromCapacity ??
+    (unit.fuelLevel != null && unit.fuelLevel >= 0 && unit.fuelLevel <= 100
+      ? Math.round(unit.fuelLevel)
+      : null);
 
   const fuelLive =
     fuel?.levelFormatted ||
@@ -45,6 +55,7 @@ export function formatFuelRowFields(unit: WialonFleetUnit, merged?: WialonFuelLi
     fuelFiltered: '',
     fuelLiters,
     fuelPercent,
+    tankCapacity: capacity ?? null,
     filledLiters: fuel?.filled != null && fuel.filled > 0 ? Math.round(fuel.filled * 10) / 10 : null,
     filledFormatted:
       fuel?.filled != null && fuel.filled > 0

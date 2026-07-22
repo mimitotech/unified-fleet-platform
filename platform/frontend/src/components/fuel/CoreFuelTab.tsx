@@ -141,6 +141,15 @@ export function CoreFuelTab({
     categoryFleet.units,
   ]);
 
+  const totalLiveFuelLiters = useMemo(
+    () =>
+      Math.round(
+        liveUnits.reduce((sum, u) => sum + (typeof u.fuelLiters === 'number' ? u.fuelLiters : 0), 0) *
+          10,
+      ) / 10,
+    [liveUnits],
+  );
+
   const assetNames = useMemo(
     () => (isVehicle ? fleet.vehicles.map((v) => v.name) : categoryFleet.units.map((u) => u.name)),
     [isVehicle, fleet.vehicles, categoryFleet.units],
@@ -252,6 +261,7 @@ export function CoreFuelTab({
         assetCategory={assetCategory}
         unitLabel={labels.unit}
         unitLabelPlural={labels.plural}
+        totalLiveFuelLiters={totalLiveFuelLiters}
       />
 
       <FuelLevelAlerts

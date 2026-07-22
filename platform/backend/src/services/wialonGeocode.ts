@@ -9,6 +9,14 @@ export type WialonGeocodeResult = {
   parts: string[];
 };
 
+/** ~11 m bucket + 30 min TTL — shared across report/map requests. */
+const geocodeCache = new Map<string, { result: WialonGeocodeResult; expires: number }>();
+const GEOCODE_TTL_MS = 30 * 60_000;
+
+function cacheKey(lat: number, lng: number): string {
+  return `${Math.round(lat * 10_000) / 10_000},${Math.round(lng * 10_000) / 10_000}`;
+}
+
 function pickText(item: GeocodeItem): string | undefined {
   const v = item.value || item.text || item.name;
   if (!v || !String(v).trim()) return undefined;
@@ -33,7 +41,11 @@ export async function wialonReverseGeocodeFull(
   lat: number,
   lng: number
 ): Promise<WialonGeocodeResult | undefined> {
-  return withWialonClient(credentials, async (client) => {
+  const key = cacheKey(lat, lng);
+  const hit = geocodeCache.get(key);
+  if (hit && hit.expires > Date.now()) return hit.result;
+
+  const result = await withWialonClient(credentials, async (client) => {
     const sid = client.getSessionId();
     if (!sid) return undefined;
 
@@ -70,6 +82,16 @@ export async function wialonReverseGeocodeFull(
       return nominatimReverseGeocode(lat, lng);
     }
   });
+
+  if (result) {
+    geocodeCache.set(key, { result, expires: Date.now() + GEOCODE_TTL_MS });
+    // Soft bound cache size
+    if (geocodeCache.size > 2000) {
+      const first = geocodeCache.keys().next().value;
+      if (first) geocodeCache.delete(first);
+    }
+  }
+  return result;
 }
 
 async function nominatimReverseGeocode(lat: number, lng: number): Promise<WialonGeocodeResult | undefined> {

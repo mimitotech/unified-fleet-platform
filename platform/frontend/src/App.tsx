@@ -4,6 +4,7 @@ import { AppShell, AdminShell } from '@/components/app/AppShell';
 import Landing from '@/pages/public/Landing';
 import Login from '@/pages/auth/Login';
 import TermsOfUse from '@/pages/auth/TermsOfUse';
+import { PublicTermsOfUse, PublicPrivacyPolicy } from '@/pages/public/LegalDocuments';
 import Dashboard from '@/pages/app/Dashboard';
 import Monitoring from '@/pages/app/Monitoring';
 import AlertsPage from '@/pages/app/Alerts';
@@ -40,6 +41,10 @@ export default function App() {
         <Route path="/" element={<Landing />} />
         <Route path="/auth/login" element={<Login />} />
         <Route path="/auth/terms" element={<TermsOfUse />} />
+        <Route path="/terms-of-use" element={<PublicTermsOfUse />} />
+        <Route path="/privacy-policy" element={<PublicPrivacyPolicy />} />
+        <Route path="/terms" element={<PublicTermsOfUse />} />
+        <Route path="/privacy" element={<PublicPrivacyPolicy />} />
 
         <Route path="/app" element={<AppShell />}>
           <Route index element={<Navigate to="dashboard" replace />} />

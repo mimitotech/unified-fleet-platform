@@ -75,7 +75,7 @@ export default function AdminUsersPage() {
             <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Roles</SelectItem>
-              <SelectItem value="tenant_admin">Admin</SelectItem>
+              <SelectItem value="tenant_admin">Client Admin</SelectItem>
               <SelectItem value="manager">Manager</SelectItem>
               <SelectItem value="operator">Operator</SelectItem>
               <SelectItem value="viewer">Viewer</SelectItem>
@@ -97,7 +97,7 @@ export default function AdminUsersPage() {
                   <TableRow>
                     <TableHead className="w-8" />
                     <TableHead>User</TableHead>
-                    <TableHead>Tenant</TableHead>
+                    <TableHead>Client</TableHead>
                     <TableHead>Role</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Last Login</TableHead>
