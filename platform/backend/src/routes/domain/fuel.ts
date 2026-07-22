@@ -46,10 +46,11 @@ router.get('/kpis', requireTenant, async (req: TenantRequest, res) => {
   const from = req.query.from ? String(req.query.from) : monthStartIso();
   const to = req.query.to ? String(req.query.to) : todayIso();
 
+  // Same path as /transactions — allow live Wialon fallback when DB is empty for the range.
+  // Previously queueSync:false left dashboard fleet KPIs at 0 while per-asset charts had data.
   const report = await FuelDbReadService.getTransactions(req.tenantId!, {
     from,
     to,
-    queueSync: false,
   });
   return success(res, report.kpis);
 });

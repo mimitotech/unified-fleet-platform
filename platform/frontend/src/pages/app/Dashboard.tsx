@@ -34,8 +34,8 @@ import {
   alertSeveritySlices,
   fleetStatusSlices,
 } from '@/components/dashboard/DashboardCharts';
-import { aggregateUnitFuelColumns } from '@/components/fuel/fuelColumnMetrics';
-import { filterFuelTransactionsByDate } from '@/components/fuel/fuelTransactionFilters';
+import { aggregateUnitFuelColumns, computePeriodFuelKpis } from '@/components/fuel/fuelColumnMetrics';
+import { filterFuelTransactionsByDate, isSyntheticFuelRow, isWialonGroupSummary } from '@/components/fuel/fuelTransactionFilters';
 import {
   DashboardQuickAccess,
   moduleEnabledSet,
@@ -519,15 +519,35 @@ export default function Dashboard() {
   }, [alertList, accent, brand]);
 
   /* —— Fuel —— */
-
-  const fuelFilled = num((fuelKpis as Record<string, number> | undefined)?.totalFilled);
-  const fuelUsed = num((fuelKpis as Record<string, number> | undefined)?.totalConsumed);
-  const fuelTheftLiters = num(
-    (fuelKpis as Record<string, number> | undefined)?.totalTheftLiters
-      ?? (fuelKpis as Record<string, number> | undefined)?.theftLiters,
+  // Prefer period KPIs computed from the same transactions as per-asset charts
+  // so fleet totals cannot show 0 L while asset bars have real litres.
+  const periodFuelKpis = useMemo(
+    () => computePeriodFuelKpis(fuelTransactions, applied.from, applied.to),
+    [fuelTransactions, applied.from, applied.to],
   );
-  const fuelTracked = num((fuelKpis as Record<string, number> | undefined)?.vehiclesTracked);
-  const avgConsumption = num((fuelKpis as Record<string, number> | undefined)?.avgConsumption);
+
+  const fuelFilled = Math.max(
+    num(periodFuelKpis.totalFilled),
+    num((fuelKpis as Record<string, number> | undefined)?.totalFilled),
+  );
+  const fuelUsed = Math.max(
+    num(periodFuelKpis.totalConsumed),
+    num((fuelKpis as Record<string, number> | undefined)?.totalConsumed),
+  );
+  const fuelTheftLiters = Math.max(
+    num(periodFuelKpis.theftVolume),
+    num(
+      (fuelKpis as Record<string, number> | undefined)?.totalTheftLiters
+        ?? (fuelKpis as Record<string, number> | undefined)?.theftLiters,
+    ),
+  );
+  const fuelTracked = Math.max(
+    num(periodFuelKpis.vehiclesTracked),
+    num((fuelKpis as Record<string, number> | undefined)?.vehiclesTracked),
+  );
+  const avgConsumption = num(
+    periodFuelKpis.avgConsumption || (fuelKpis as Record<string, number> | undefined)?.avgConsumption,
+  );
   const fuelCost = Math.round(fuelUsed * fuelPrice);
 
   const fuelKpiBars = useMemo(
@@ -560,13 +580,40 @@ export default function Dashboard() {
   );
 
   const fuelTrendRows = useMemo(() => {
-    const rows = safeArray<{ month?: string; filled?: number; consumed?: number }>(fuelTrend);
-    return rows.slice(-8).map((r) => ({
-      name: String(r.month || '—').slice(2),
-      filled: num(r.filled),
-      consumed: num(r.consumed),
-    }));
-  }, [fuelTrend]);
+    const apiRows = safeArray<{ month?: string; filled?: number; consumed?: number }>(fuelTrend);
+    const fromApi = apiRows
+      .slice(-8)
+      .map((r) => ({
+        name: String(r.month || '—').slice(2),
+        month: String(r.month || ''),
+        filled: num(r.filled),
+        consumed: num(r.consumed),
+      }))
+      .filter((r) => r.filled > 0 || r.consumed > 0);
+
+    if (fromApi.length) return fromApi;
+
+    // Fallback: bucket the same period transactions by month (leaf events only)
+    const ranged = filterFuelTransactionsByDate(fuelTransactions, applied.from, applied.to);
+    const byMonth = new Map<string, { filled: number; consumed: number }>();
+    for (const t of ranged) {
+      if (isWialonGroupSummary(t) || isSyntheticFuelRow(t) || !t.timestamp) continue;
+      const month = new Date(t.timestamp * 1000).toISOString().slice(0, 7);
+      const row = byMonth.get(month) ?? { filled: 0, consumed: 0 };
+      if (t.section === 'filling') row.filled += Number(t.filled) || 0;
+      if (t.section === 'consumption') row.consumed += Number(t.fuelUsed) || 0;
+      byMonth.set(month, row);
+    }
+    return [...byMonth.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .slice(-8)
+      .map(([month, v]) => ({
+        name: month.slice(2),
+        month,
+        filled: Math.round(v.filled * 10) / 10,
+        consumed: Math.round(v.consumed * 10) / 10,
+      }));
+  }, [fuelTrend, fuelTransactions, applied.from, applied.to]);
 
   const tankRiskBars = useMemo(() => {
     const withPct = (units ?? [])
@@ -1518,9 +1565,11 @@ export default function Dashboard() {
                   brandColor={accent}
                   tone="accent"
                   insight={
-                    fuelTrendRows.length
+                    fuelTrendRows.some((r) => r.filled > 0 || r.consumed > 0)
                       ? `Showing ${fuelTrendRows.length} months of fill and burn`
-                      : 'Trend appears after fuel reports sync into the database'
+                      : fuelUsed > 0 || fuelFilled > 0
+                        ? 'Period totals available · monthly leaf trend still syncing'
+                        : 'Trend appears after fuel reports sync into the database'
                   }
                 >
                   {fuelTrendRows.some((r) => r.filled > 0 || r.consumed > 0) ? (
@@ -1538,8 +1587,15 @@ export default function Dashboard() {
                         ]}
                       />
                     </>
-                  ) : (
+                  ) : fuelUsed > 0 || fuelFilled > 0 ? (
                     <CompactBars data={fuelKpiBars} includeZeros color={accent} height={180} />
+                  ) : (
+                    <CompactBars
+                      data={[{ name: 'No data', value: 0, fill: '#e2e8f0' }]}
+                      includeZeros
+                      color="#e2e8f0"
+                      height={180}
+                    />
                   )}
                 </DashboardWidget>
               )}
