@@ -11,7 +11,7 @@ import {
   Video,
   Wrench,
 } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AppLayout } from '@/components/app/AppLayout';
 import { MetricCard } from '@/components/app/MetricCard';
 import { WialonContextBanner } from '@/components/app/WialonContextBanner';
@@ -162,6 +162,7 @@ export default function Dashboard() {
   const hasSurveillance = enabled.has('surveillance');
   const hasGeofencing = enabled.has('geofencing');
 
+  const queryClient = useQueryClient();
   const todayStr = useMemo(() => todayIso(), []);
   const [draftPreset, setDraftPreset] = useState<PeriodPreset | 'custom'>('7d');
   const [draftFrom, setDraftFrom] = useState(() => shiftDays(todayIso(), -6));
@@ -170,6 +171,8 @@ export default function Dashboard() {
     from: shiftDays(todayIso(), -6),
     to: todayIso(),
   }));
+  const [executing, setExecuting] = useState(false);
+  const [executeFlash, setExecuteFlash] = useState(0);
 
   const [visibility, setVisibility] = useState<DashboardWidgetVisibility>(() =>
     loadWidgetVisibility(getTenantSlug()),
@@ -188,11 +191,32 @@ export default function Dashboard() {
     });
   }, []);
 
-  const onExecute = useCallback(() => {
+  const onExecute = useCallback(async () => {
     const from = draftFrom <= draftTo ? draftFrom : draftTo;
     const to = draftFrom <= draftTo ? draftTo : draftFrom;
+    setExecuting(true);
     setApplied({ from, to });
-  }, [draftFrom, draftTo]);
+    setExecuteFlash((n) => n + 1);
+    try {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['fuelKpis'] }),
+        queryClient.invalidateQueries({ queryKey: ['fuelTrend'] }),
+        queryClient.invalidateQueries({ queryKey: ['fuelTransactions'] }),
+        queryClient.invalidateQueries({ queryKey: ['alerts'] }),
+        queryClient.invalidateQueries({ queryKey: ['trips', 'dashboard'] }),
+      ]);
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['fuelKpis', from, to], type: 'active' }),
+        queryClient.refetchQueries({ queryKey: ['fuelTrend', from, to], type: 'active' }),
+        queryClient.refetchQueries({ queryKey: ['fuelTransactions', from, to], type: 'active' }),
+        hasAlerts
+          ? queryClient.refetchQueries({ queryKey: ['alerts'], type: 'active' })
+          : Promise.resolve(),
+      ]);
+    } finally {
+      window.setTimeout(() => setExecuting(false), 300);
+    }
+  }, [draftFrom, draftTo, queryClient, hasAlerts]);
 
   const alertFromIso = useMemo(() => `${applied.from}T00:00:00.000Z`, [applied.from]);
   const alertToIso = useMemo(() => `${applied.to}T23:59:59.999Z`, [applied.to]);
@@ -217,7 +241,10 @@ export default function Dashboard() {
     isError: fuelKpisError,
     refetch: refetchFuelKpis,
   } = useFuelKpis(hasFuel, { from: applied.from, to: applied.to });
-  const { data: fuelTrend } = useFuelTrend(hasFuel, { from: applied.from, to: applied.to });
+  const { data: fuelTrend } = useFuelTrend(hasFuel, {
+    from: applied.from,
+    to: applied.to,
+  });
   const { data: fuelTransactions = [] } = useFuelTransactions(hasFuel, {
     from: applied.from,
     to: applied.to,
@@ -742,6 +769,8 @@ export default function Dashboard() {
   const showLoader = fleetLoading && !(units?.length);
   const periodLabel = `${applied.from} → ${applied.to}`;
 
+  const chartsUpdating = executing;
+
   const toolbar = (
     <DashboardToolbar
       todayStr={todayStr}
@@ -751,7 +780,8 @@ export default function Dashboard() {
       onDraftFrom={setDraftFrom}
       onDraftTo={setDraftTo}
       onDraftPreset={setDraftPreset}
-      onExecute={onExecute}
+      onExecute={() => void onExecute()}
+      executing={executing}
       visibility={visibility}
       onToggleWidget={toggleWidget}
       enabledModules={enabled}
@@ -816,8 +846,14 @@ export default function Dashboard() {
       subtitle="Live operational picture across your enabled modules"
     >
       <div className="mb-1">{toolbar}</div>
-      <p className="text-[11px] text-muted-foreground -mt-1 mb-3 tabular-nums">
-        Showing {periodLabel}
+      <p className="text-[11px] text-muted-foreground -mt-1 mb-3 tabular-nums flex flex-wrap items-center gap-2">
+        <span>Showing {periodLabel}</span>
+        {chartsUpdating && (
+          <span className="inline-flex items-center gap-1.5 text-primary font-medium">
+            <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+            Updating charts…
+          </span>
+        )}
       </p>
       {(fuelKpisError || alertsError) && (
         <QueryErrorBanner
@@ -830,7 +866,13 @@ export default function Dashboard() {
         />
       )}
 
-      <AnimatedPage className="space-y-6">
+      <AnimatedPage
+        key={`dash-period-${applied.from}-${applied.to}-${executeFlash}`}
+        className={cn(
+          'space-y-6 transition-opacity duration-300',
+          chartsUpdating && 'opacity-60 pointer-events-none',
+        )}
+      >
         <WialonContextBanner />
 
         <div

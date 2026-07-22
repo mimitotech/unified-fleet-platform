@@ -1,4 +1,4 @@
-import { MoreVertical, Play } from 'lucide-react';
+import { Loader2, MoreVertical, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -25,6 +25,7 @@ export function DashboardToolbar({
   onDraftTo,
   onDraftPreset,
   onExecute,
+  executing = false,
   visibility,
   onToggleWidget,
   enabledModules,
@@ -38,6 +39,7 @@ export function DashboardToolbar({
   onDraftTo: (v: string) => void;
   onDraftPreset: (p: PeriodPreset | 'custom') => void;
   onExecute: () => void;
+  executing?: boolean;
   visibility: DashboardWidgetVisibility;
   onToggleWidget: (id: DashboardWidgetId, next: boolean) => void;
   enabledModules: Set<string>;
@@ -114,9 +116,24 @@ export function DashboardToolbar({
           onDraftTo(todayStr);
         }}
         trailing={
-          <Button type="button" size="sm" className="h-8 gap-1.5 text-xs" onClick={onExecute}>
-            <Play className="h-3.5 w-3.5" />
-            Execute
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 gap-1.5 text-xs min-w-[96px]"
+            onClick={onExecute}
+            disabled={executing}
+          >
+            {executing ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Updating
+              </>
+            ) : (
+              <>
+                <Play className="h-3.5 w-3.5" />
+                Execute
+              </>
+            )}
           </Button>
         }
         className="w-full"

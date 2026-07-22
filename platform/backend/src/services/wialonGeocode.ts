@@ -13,16 +13,47 @@ export type WialonGeocodeResult = {
 const geocodeCache = new Map<string, { result: WialonGeocodeResult; expires: number }>();
 const GEOCODE_TTL_MS = 30 * 60_000;
 
+/**
+ * Ethiopic / other non-Latin scripts occasionally appear in OSM POI names
+ * (e.g. "URSB መዛገጃቤት" at Baskerville Ave, Kampala). Strip those glyphs so
+ * client reports stay readable in Latin script.
+ */
+const NON_LATIN_SCRIPT =
+  /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F\u0A80-\u0AFF\u0B00-\u0B7F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\u0D80-\u0DFF\u0E00-\u0E7F\u0E80-\u0EFF\u0F00-\u0FFF\u1000-\u109F\u10A0-\u10FF\u1200-\u137F\u1380-\u139F\u13A0-\u13FF\u1400-\u167F\u1680-\u169F\u16A0-\u16FF\u1700-\u171F\u1720-\u173F\u1740-\u175F\u1760-\u177F\u1780-\u17FF\u1800-\u18AF\u1900-\u194F\u1950-\u197F\u1980-\u19DF\u19E0-\u19FF\u1A00-\u1A1F\u1A20-\u1AAF\u1B00-\u1B7F\u1B80-\u1BBF\u1BC0-\u1BFF\u1C00-\u1C4F\u1C50-\u1C7F\u2D30-\u2D7F\u2D80-\u2DDF\uA000-\uA48F\uA490-\uA4CF\uA980-\uA9DF\uAA00-\uAA5F\uAA60-\uAA7F\uAA80-\uAADF\uABC0-\uABFF\uAC00-\uD7AF]/gu;
+
+function stripNonLatinScripts(raw: string): string {
+  return raw
+    .replace(NON_LATIN_SCRIPT, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*,\s*/g, ', ')
+    .replace(/(^,\s*)|(,\s*$)/g, '')
+    .trim();
+}
+
+function sanitizePart(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const s = stripNonLatinScripts(String(raw).trim());
+  if (!s) return undefined;
+  if (/^-?\d+\.\d+\s*,\s*-?\d+\.\d+$/.test(s)) return undefined;
+  return s;
+}
+
+function normalizeResult(partsIn: string[]): WialonGeocodeResult | undefined {
+  const parts: string[] = [];
+  for (const p of partsIn) {
+    const text = sanitizePart(p);
+    if (text && !parts.includes(text)) parts.push(text);
+  }
+  if (!parts.length) return undefined;
+  return { address: parts.join(', '), parts };
+}
+
 function cacheKey(lat: number, lng: number): string {
   return `${Math.round(lat * 10_000) / 10_000},${Math.round(lng * 10_000) / 10_000}`;
 }
 
 function pickText(item: GeocodeItem): string | undefined {
-  const v = item.value || item.text || item.name;
-  if (!v || !String(v).trim()) return undefined;
-  const s = String(v).trim();
-  if (/^-?\d+\.\d+\s*,\s*-?\d+\.\d+$/.test(s)) return undefined;
-  return s;
+  return sanitizePart(item.value || item.text || item.name);
 }
 
 /** Reverse geocode via Wialon GIS — same source as Hosting unit card address. */
@@ -43,7 +74,10 @@ export async function wialonReverseGeocodeFull(
 ): Promise<WialonGeocodeResult | undefined> {
   const key = cacheKey(lat, lng);
   const hit = geocodeCache.get(key);
-  if (hit && hit.expires > Date.now()) return hit.result;
+  if (hit && hit.expires > Date.now()) {
+    // Re-sanitize cached entries so older Ethiopic POI names are cleaned after deploy.
+    return normalizeResult(hit.result.parts.length ? hit.result.parts : [hit.result.address]) ?? hit.result;
+  }
 
   const result = await withWialonClient(credentials, async (client) => {
     const sid = client.getSessionId();
@@ -72,12 +106,13 @@ export async function wialonReverseGeocodeFull(
         const text = pickText(item);
         if (text && !parts.includes(text)) parts.push(text);
       }
-      if (!parts.length) {
+      const cleaned = normalizeResult(parts);
+      if (!cleaned) {
         const fallback = await nominatimReverseGeocode(lat, lng);
         if (fallback) return fallback;
         return undefined;
       }
-      return { address: parts.join(', '), parts };
+      return cleaned;
     } catch {
       return nominatimReverseGeocode(lat, lng);
     }
@@ -85,7 +120,6 @@ export async function wialonReverseGeocodeFull(
 
   if (result) {
     geocodeCache.set(key, { result, expires: Date.now() + GEOCODE_TTL_MS });
-    // Soft bound cache size
     if (geocodeCache.size > 2000) {
       const first = geocodeCache.keys().next().value;
       if (first) geocodeCache.delete(first);
@@ -97,15 +131,43 @@ export async function wialonReverseGeocodeFull(
 async function nominatimReverseGeocode(lat: number, lng: number): Promise<WialonGeocodeResult | undefined> {
   try {
     const res = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=18&addressdetails=1`,
-      { headers: { Accept: 'application/json', 'User-Agent': 'MAMS-Fleet-Platform/1.0 (fleet map)' } }
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=18&addressdetails=1&accept-language=en`,
+      {
+        headers: {
+          Accept: 'application/json',
+          'Accept-Language': 'en',
+          'User-Agent': 'MAMS-Fleet-Platform/1.0 (fleet map)',
+        },
+      }
     );
     if (!res.ok) return undefined;
-    const data = (await res.json()) as { display_name?: string };
-    const address = data.display_name?.trim();
-    if (!address) return undefined;
-    const parts = address.split(',').map((s) => s.trim()).filter(Boolean);
-    return { address, parts: parts.length ? parts : [address] };
+    const data = (await res.json()) as { display_name?: string; name?: string; address?: Record<string, string> };
+    const rawParts: string[] = [];
+    if (data.name) rawParts.push(data.name);
+    if (data.address) {
+      const prefer = [
+        'amenity',
+        'building',
+        'office',
+        'road',
+        'suburb',
+        'neighbourhood',
+        'city_district',
+        'city',
+        'town',
+        'county',
+        'state',
+        'country',
+      ];
+      for (const k of prefer) {
+        const v = data.address[k];
+        if (v && !rawParts.includes(v)) rawParts.push(v);
+      }
+    }
+    if (!rawParts.length && data.display_name) {
+      rawParts.push(...data.display_name.split(',').map((s) => s.trim()).filter(Boolean));
+    }
+    return normalizeResult(rawParts);
   } catch {
     return undefined;
   }
