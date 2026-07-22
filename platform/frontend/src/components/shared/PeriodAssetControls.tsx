@@ -1,3 +1,4 @@
+import { useId, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -11,6 +12,13 @@ export function shiftDays(isoDate: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+const PRESETS: Array<{ id: Exclude<PeriodPreset, 'custom'>; label: string }> = [
+  { id: 'today', label: 'Today' },
+  { id: '7d', label: '7d' },
+  { id: '14d', label: '14d' },
+  { id: '30d', label: '30d' },
+];
+
 export function PeriodAssetControls({
   fromDate,
   toDate,
@@ -21,22 +29,43 @@ export function PeriodAssetControls({
   onFromChange,
   onToChange,
   onAssetChange,
+  onPreset,
+  activePreset,
   className,
   compact,
+  trailing,
+  hideAsset,
 }: {
   fromDate: string;
   toDate: string;
   todayStr: string;
-  asset: string;
-  assetNames: string[];
+  asset?: string;
+  assetNames?: string[];
   assetLabel?: string;
   onFromChange: (v: string) => void;
   onToChange: (v: string) => void;
-  onAssetChange: (v: string) => void;
+  onAssetChange?: (v: string) => void;
+  /** When set, called instead of applying dates locally (for draft/execute flows). */
+  onPreset?: (p: Exclude<PeriodPreset, 'custom'>) => void;
+  activePreset?: PeriodPreset | 'custom' | null;
   className?: string;
   compact?: boolean;
+  /** Optional Execute / Run / extra controls on the same row. */
+  trailing?: ReactNode;
+  hideAsset?: boolean;
 }) {
-  const applyPreset = (p: PeriodPreset) => {
+  const uid = useId();
+  const fromId = `${uid}-from`;
+  const toId = `${uid}-to`;
+  const assetId = `${uid}-asset`;
+  const showAsset =
+    !hideAsset && Boolean(onAssetChange) && asset != null && Array.isArray(assetNames);
+
+  const applyPreset = (p: Exclude<PeriodPreset, 'custom'>) => {
+    if (onPreset) {
+      onPreset(p);
+      return;
+    }
     if (p === 'today') {
       onFromChange(todayStr);
       onToChange(todayStr);
@@ -47,68 +76,94 @@ export function PeriodAssetControls({
     onToChange(todayStr);
   };
 
+  const controlH = compact ? 'h-6' : 'h-7';
+  const dateW = compact ? 'w-[120px]' : 'w-[132px]';
+
   return (
-    <div className={cn('flex flex-wrap items-end gap-2', className)}>
-      <div className="flex flex-wrap gap-1">
-        {(
-          [
-            ['today', 'Today'],
-            ['7d', '7d'],
-            ['14d', '14d'],
-            ['30d', '30d'],
-          ] as const
-        ).map(([id, label]) => (
+    <div className={cn('flex flex-wrap items-center gap-2', className)}>
+      <div className="flex flex-wrap items-center gap-1">
+        {PRESETS.map(({ id, label }) => (
           <Button
             key={id}
             type="button"
             size="sm"
-            variant="outline"
-            className={cn('h-7 px-2 text-[11px]', compact && 'h-6 px-1.5')}
+            variant={activePreset === id ? 'default' : 'outline'}
+            className={cn('px-2 text-[11px]', controlH, compact && 'px-1.5')}
             onClick={() => applyPreset(id)}
           >
             {label}
           </Button>
         ))}
       </div>
-      <div className="space-y-0.5">
-        <Label className="text-[10px] text-muted-foreground">From</Label>
+
+      <div className="flex items-center gap-1.5">
+        <Label
+          htmlFor={fromId}
+          className="text-[10px] font-medium text-muted-foreground whitespace-nowrap shrink-0"
+        >
+          From
+        </Label>
         <Input
+          id={fromId}
           type="date"
           value={fromDate}
           max={toDate}
-          className={cn('h-7 w-[132px] text-xs', compact && 'h-6 w-[120px]')}
+          className={cn(controlH, dateW, 'text-xs')}
           onChange={(e) => onFromChange(e.target.value)}
         />
       </div>
-      <div className="space-y-0.5">
-        <Label className="text-[10px] text-muted-foreground">To</Label>
+
+      <div className="flex items-center gap-1.5">
+        <Label
+          htmlFor={toId}
+          className="text-[10px] font-medium text-muted-foreground whitespace-nowrap shrink-0"
+        >
+          To
+        </Label>
         <Input
+          id={toId}
           type="date"
           value={toDate}
           min={fromDate}
           max={todayStr}
-          className={cn('h-7 w-[132px] text-xs', compact && 'h-6 w-[120px]')}
+          className={cn(controlH, dateW, 'text-xs')}
           onChange={(e) => onToChange(e.target.value)}
         />
       </div>
-      <div className="space-y-0.5 min-w-[140px]">
-        <Label className="text-[10px] text-muted-foreground">{assetLabel}</Label>
-        <select
-          className={cn(
-            'h-7 w-full rounded-md border border-input bg-background px-2 text-xs',
-            compact && 'h-6',
-          )}
-          value={asset}
-          onChange={(e) => onAssetChange(e.target.value)}
-        >
-          <option value="all">All {assetLabel.toLowerCase()}s</option>
-          {assetNames.map((n) => (
-            <option key={n} value={n}>
-              {n}
-            </option>
-          ))}
-        </select>
-      </div>
+
+      {showAsset && (
+        <div className="flex items-center gap-1.5 min-w-[140px] max-w-[200px]">
+          <Label
+            htmlFor={assetId}
+            className="text-[10px] font-medium text-muted-foreground whitespace-nowrap shrink-0"
+          >
+            {assetLabel}
+          </Label>
+          <select
+            id={assetId}
+            className={cn(
+              'w-full rounded-md border border-input bg-background px-2 text-xs',
+              controlH,
+            )}
+            value={asset}
+            onChange={(e) => onAssetChange?.(e.target.value)}
+          >
+            <option value="all">All {assetLabel.toLowerCase()}s</option>
+            {assetNames!.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {trailing ? (
+        <>
+          <div className="grow basis-2 min-w-0" aria-hidden />
+          <div className="flex items-center gap-2 shrink-0">{trailing}</div>
+        </>
+      ) : null}
     </div>
   );
 }

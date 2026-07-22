@@ -64,12 +64,14 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
   const minutes = trackPeriodToMinutes(period, amount);
   const wialonId = selected?.wialonId ?? (selected && Number.isFinite(Number(selected.id)) ? Number(selected.id) : null);
   const liveRecent = minutes <= 24 * 60;
-  const { stops, summary, isLoading, isFetching, pointCount } = useWialonTrackHistory(
+  const history = useWialonTrackHistory(
     wialonId,
     connected && wialonId != null,
     minutes,
     liveRecent
   );
+
+  const { stops, summary, isLoading, isFetching, pointCount } = history;
 
   const rangeLabel = useMemo(() => {
     const mins = minutes;
@@ -182,7 +184,9 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
               </div>
             )}
             {!trackLoading && selected && pointCount === 0 && (
-              <p className="text-xs text-muted-foreground py-4 text-center">No GPS data for this period.</p>
+              <p className="text-xs text-muted-foreground py-4 text-center">
+                No GPS data for this period. Try a longer range.
+              </p>
             )}
             {!trackLoading &&
               stops.map((stop, i) => (
@@ -206,7 +210,7 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
         </div>
 
         <div className="lg:col-span-6 h-full min-h-0 relative border-r border-border/60">
-          <FleetTrackMap unit={selected} period={period} amount={amount} height="100%" />
+          <FleetTrackMap unit={selected} history={history} liveRecent={liveRecent} height="100%" />
         </div>
 
         <div className="hidden lg:flex lg:col-span-3 flex-col h-full min-h-0 overflow-hidden">

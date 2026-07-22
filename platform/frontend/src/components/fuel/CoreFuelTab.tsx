@@ -81,6 +81,7 @@ export function CoreFuelTab({
   const units = isVehicle ? fleet.vehicles : categoryFleet.tableUnits;
   const fuelTransactions = isVehicle ? fleet.fuelTransactions : categoryFleet.fuelTransactions;
   const unitFuelMapByName = isVehicle ? fleet.vehicleFuelMapByName : categoryFleet.unitFuelMapByName;
+  const isUnitsLoading = isVehicle ? fleet.isVehiclesLoading : categoryFleet.isUnitsLoading;
   const isFuelLoading = isVehicle ? fleet.isFuelLoading : categoryFleet.isFuelLoading;
   const isFuelWarming = isVehicle ? fleet.isFuelWarming : categoryFleet.isFuelWarming;
   const isFuelBackgroundRefreshing = isVehicle
@@ -251,7 +252,7 @@ export function CoreFuelTab({
       <FuelLiveStrip
         units={liveUnits}
         unitLabel={labels.unit.toLowerCase()}
-        isLoading={isFuelLoading}
+        isLoading={isUnitsLoading && liveUnits.length === 0}
       />
 
       <FuelKpiCards

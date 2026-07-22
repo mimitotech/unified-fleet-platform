@@ -650,6 +650,8 @@ function fuelTransactionsQueryOptions(
     gcTime: 30 * 60_000,
     retry: 1,
     refetchOnWindowFocus: false,
+    // Keep prior rows visible while a background poll/refresh replaces them
+    placeholderData: (prev: FuelTransactionsQueryData | undefined) => prev,
     refetchInterval: (query: { state: { data?: FuelTransactionsQueryData; status: string } }) => {
       const d = query.state.data;
       if (query.state.status === 'error') return false;
@@ -698,10 +700,32 @@ export function useRefreshFuelTransactions() {
             assetCategory: variables.assetCategory,
           }
         : undefined;
-      queryClient.setQueryData(fleetQueryKeys.fuelTransactionsList(filters), data);
-      queryClient.invalidateQueries({ queryKey: fleetQueryKeys.fuel() });
-      queryClient.invalidateQueries({ queryKey: fleetQueryKeys.generatorFuelTransactions() });
-      queryClient.invalidateQueries({ queryKey: fleetQueryKeys.machineryFuelTransactions() });
+      const listKey = fleetQueryKeys.fuelTransactionsList(filters);
+      queryClient.setQueryData(listKey, data);
+      // Mark related fuel caches stale without immediately refetching the list we just wrote
+      void queryClient.invalidateQueries({
+        queryKey: fleetQueryKeys.fuel(),
+        predicate: (q) => {
+          const tail = q.queryKey[q.queryKey.length - 1];
+          if (
+            q.queryKey.includes('transactions') &&
+            tail &&
+            typeof tail === 'object' &&
+            'filters' in (tail as object)
+          ) {
+            const f = (tail as { filters?: typeof filters }).filters;
+            return !(
+              f?.startDate === filters?.startDate &&
+              f?.endDate === filters?.endDate &&
+              f?.assetCategory === filters?.assetCategory
+            );
+          }
+          return true;
+        },
+        refetchType: 'active',
+      });
+      void queryClient.invalidateQueries({ queryKey: fleetQueryKeys.generatorFuelTransactions() });
+      void queryClient.invalidateQueries({ queryKey: fleetQueryKeys.machineryFuelTransactions() });
       if (data?.warming || data?.needsRefresh) {
         notify.info('Fuel sync started', 'Large fleets sync in the background. Totals update automatically.');
       }

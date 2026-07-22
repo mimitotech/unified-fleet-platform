@@ -202,19 +202,25 @@ export function hasVideoCapability(
 export function formatFuelDisplay(
   unit: Pick<FleetUnit, 'fuelLevel' | 'fuelLiters' | 'fuelFormatted' | 'tankCapacity'>,
 ): string {
+  const litres = unit.fuelLiters;
+  const capacity = unit.tankCapacity;
+  const pctFromCapacity =
+    litres != null && capacity != null && capacity > 0
+      ? Math.min(100, Math.max(0, Math.round((litres / capacity) * 100)))
+      : null;
+  // Never treat raw litres ≤100 as % when capacity is known.
+  const pct =
+    pctFromCapacity ??
+    (capacity == null && unit.fuelLevel != null && unit.fuelLevel > 0 && unit.fuelLevel <= 100
+      ? Math.round(unit.fuelLevel)
+      : null);
+
+  if (unit.fuelFormatted && pctFromCapacity == null) return unit.fuelFormatted;
+  if (litres != null) {
+    return pct != null ? `${litres} L (${pct}%)` : `${litres} L`;
+  }
+  if (pct != null) return `${pct}%`;
   if (unit.fuelFormatted) return unit.fuelFormatted;
-  if (unit.fuelLiters != null) {
-    const pct =
-      unit.tankCapacity != null && unit.tankCapacity > 0
-        ? Math.min(100, Math.round((unit.fuelLiters / unit.tankCapacity) * 100))
-        : unit.fuelLevel != null && unit.fuelLevel > 0 && unit.fuelLevel <= 100
-          ? Math.round(unit.fuelLevel)
-          : null;
-    return pct != null ? `${unit.fuelLiters} L (${pct}%)` : `${unit.fuelLiters} L`;
-  }
-  if (unit.fuelLevel != null && unit.fuelLevel > 0 && unit.fuelLevel <= 100) {
-    return `${Math.round(unit.fuelLevel)}%`;
-  }
   return '—';
 }
 
@@ -229,6 +235,12 @@ function normalizeStatus(raw?: string): FleetUnit['status'] {
 
 function snapshotUnitToFleetUnit(u: FleetSnapshotUnit): FleetUnit {
   const plate = u.plate || extractPlateFromName(u.name);
+  const fuelLiters = u.fuel?.levelLiters;
+  const tankCapacity = u.tankCapacity;
+  const fuelLevel =
+    fuelLiters != null && tankCapacity != null && tankCapacity > 0
+      ? Math.min(100, Math.max(0, Math.round((fuelLiters / tankCapacity) * 100)))
+      : u.fuelLevel;
   return {
     id: u.id,
     wialonId: u.wialonId ?? (Number.isFinite(Number(u.id)) ? Number(u.id) : undefined),
@@ -257,9 +269,9 @@ function snapshotUnitToFleetUnit(u: FleetSnapshotUnit): FleetUnit {
         hwName: u.hwName,
       }),
     speed: u.position?.speed,
-    fuelLevel: u.fuelLevel,
-    fuelLiters: u.fuel?.levelLiters,
-    tankCapacity: u.tankCapacity,
+    fuelLevel,
+    fuelLiters,
+    tankCapacity,
     fuelFormatted: u.fuel?.levelFormatted,
     lat: u.position?.lat,
     lng: u.position?.lng,

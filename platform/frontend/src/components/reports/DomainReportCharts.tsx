@@ -92,12 +92,12 @@ function ChartShell({
   return (
     <div
       data-report-chart-card
-      className="rounded-lg border border-slate-200 bg-white p-3 flex flex-col min-h-[240px] min-w-0"
+      className="rounded-lg border border-slate-200/80 bg-slate-50/50 p-3.5 flex flex-col min-h-[240px] min-w-0"
       style={{
         border: '1px solid #e2e8f0',
         borderRadius: '8px',
-        background: '#ffffff',
-        padding: '12px',
+        background: 'rgba(248, 250, 252, 0.55)',
+        padding: '14px',
         display: 'flex',
         flexDirection: 'column',
         minHeight: '240px',
@@ -220,7 +220,7 @@ export function DomainReportCharts({ rows, spec, primaryColor, className }: Prop
   const hasBar = barRows.length > 0 && barValues.some((v) => v > 0 || Number.isFinite(v));
 
   return (
-    <div className={cn('space-y-2', className)}>
+    <div className={cn('space-y-2', className)} style={{ marginTop: 24, marginBottom: 24 }}>
       {spec.heading && (
         <p
           className="text-[11px] font-semibold uppercase tracking-wide text-slate-600"
@@ -237,6 +237,8 @@ export function DomainReportCharts({ rows, spec, primaryColor, className }: Prop
           gridTemplateColumns: '1fr 1fr',
           gap: '12px',
           width: '100%',
+          marginTop: '8px',
+          marginBottom: '4px',
         }}
       >
         <ChartShell

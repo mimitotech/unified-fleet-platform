@@ -2,10 +2,19 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { format } from 'date-fns';
 import { Download, BarChart3, Table2, Printer } from 'lucide-react';
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import type { WialonReportResult, WialonReportTable } from '@/lib/reportUtils';
+import type { WialonReportChart, WialonReportResult, WialonReportTable } from '@/lib/reportUtils';
 import { formatReportCell, numericColumns, tableToCsv, downloadTextFile } from '@/lib/reportUtils';
 import { cn } from '@/lib/utils';
 import { useTenantBranding } from '@/hooks/useTenantBranding';
@@ -22,6 +31,185 @@ type Props = {
   moduleLabel?: string;
   className?: string;
 };
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/** Extract a renderable image src from Wialon chart payloads. */
+function chartImageSrc(data: unknown): string | null {
+  if (typeof data === 'string') {
+    const s = data.trim();
+    if (/^https?:\/\//i.test(s) || s.startsWith('data:image/')) return s;
+    if (/^[A-Za-z0-9+/=]+$/.test(s) && s.length > 80) return `data:image/png;base64,${s}`;
+    return null;
+  }
+  const obj = asRecord(data);
+  if (!obj) return null;
+
+  for (const key of ['url', 'imageUrl', 'img', 'src', 'href']) {
+    const v = obj[key];
+    if (typeof v === 'string' && (/^https?:\/\//i.test(v) || v.startsWith('data:image/'))) return v;
+  }
+  for (const key of ['base64', 'png', 'image', 'data', 'content']) {
+    const v = obj[key];
+    if (typeof v !== 'string') continue;
+    if (v.startsWith('data:image/')) return v;
+    if (/^https?:\/\//i.test(v)) return v;
+    if (/^[A-Za-z0-9+/=]+$/.test(v) && v.length > 80) return `data:image/png;base64,${v}`;
+  }
+  if (Array.isArray(obj.urls) && typeof obj.urls[0] === 'string') return obj.urls[0];
+  if (Array.isArray(obj.images)) {
+    const first = obj.images[0];
+    if (typeof first === 'string') {
+      if (first.startsWith('data:image/') || /^https?:\/\//i.test(first)) return first;
+      if (first.length > 80) return `data:image/png;base64,${first}`;
+    }
+  }
+  return null;
+}
+
+type ChartSeriesPoint = { label: string; value: number; [key: string]: string | number };
+
+/** Best-effort series extraction for simple Wialon chart JSON. */
+function chartSeries(data: unknown): { points: ChartSeriesPoint[]; keys: string[] } | null {
+  const obj = asRecord(data);
+  if (!obj) return null;
+
+  const datasets = (obj.datasets ?? obj.series ?? obj.lines ?? obj.y) as unknown;
+  const labelsRaw = (obj.labels ?? obj.x ?? obj.categories ?? obj.abscissa) as unknown;
+
+  if (Array.isArray(datasets) && datasets.length) {
+    const labels = Array.isArray(labelsRaw)
+      ? labelsRaw.map((l, i) => String(l ?? i + 1))
+      : null;
+    const keys: string[] = [];
+    const points: ChartSeriesPoint[] = [];
+    const first = datasets[0];
+    if (Array.isArray(first) || (asRecord(first) && Array.isArray(asRecord(first)?.data))) {
+      const seriesList = datasets.map((ds, di) => {
+        const rec = asRecord(ds);
+        const values = Array.isArray(ds)
+          ? ds.map(Number)
+          : Array.isArray(rec?.data)
+            ? (rec!.data as unknown[]).map(Number)
+            : [];
+        const key = String(rec?.name ?? rec?.label ?? `series_${di + 1}`);
+        keys.push(key);
+        return { key, values };
+      });
+      const len = Math.max(...seriesList.map((s) => s.values.length), labels?.length ?? 0);
+      if (len < 2) return null;
+      for (let i = 0; i < len; i++) {
+        const point: ChartSeriesPoint = { label: labels?.[i] ?? String(i + 1), value: 0 };
+        for (const s of seriesList) {
+          const v = Number(s.values[i]);
+          point[s.key] = Number.isFinite(v) ? v : 0;
+        }
+        point.value = Number(point[seriesList[0].key] ?? 0);
+        points.push(point);
+      }
+      return { points, keys };
+    }
+  }
+
+  if (Array.isArray(labelsRaw) && Array.isArray(obj.y)) {
+    const y = obj.y as unknown[];
+    const points = labelsRaw.map((l, i) => ({
+      label: String(l),
+      value: Number(y[i]) || 0,
+    }));
+    if (points.length >= 2) return { points, keys: ['value'] };
+  }
+
+  if (Array.isArray(obj.points)) {
+    const points = (obj.points as unknown[])
+      .map((p, i) => {
+        const rec = asRecord(p);
+        if (!rec) return null;
+        const value = Number(rec.y ?? rec.v ?? rec.value ?? rec[1]);
+        if (!Number.isFinite(value)) return null;
+        return {
+          label: String(rec.x ?? rec.t ?? rec.label ?? i + 1),
+          value,
+        };
+      })
+      .filter((p): p is ChartSeriesPoint => p != null);
+    if (points.length >= 2) return { points, keys: ['value'] };
+  }
+
+  return null;
+}
+
+function WialonReportChartView({ chart, primaryColor }: { chart: WialonReportChart; primaryColor: string }) {
+  const imageSrc = useMemo(() => chartImageSrc(chart.data), [chart.data]);
+  const series = useMemo(() => chartSeries(chart.data), [chart.data]);
+
+  if (imageSrc) {
+    return (
+      <div
+        data-report-chart-card
+        className="rounded-lg border border-slate-200/80 bg-slate-50/40 p-4"
+        style={{ marginTop: 8, marginBottom: 8 }}
+      >
+        <p className="text-xs font-semibold text-slate-700 mb-2" data-report-chart-title>
+          {chart.name}
+        </p>
+        <div data-report-chart-body className="overflow-visible flex justify-center">
+          <img
+            src={imageSrc}
+            alt={chart.name}
+            data-report-chart-img
+            className="max-w-full h-auto rounded-md border border-slate-100 bg-white"
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (series?.points.length) {
+    return (
+      <div
+        data-report-chart-card
+        className="rounded-lg border border-slate-200/80 bg-slate-50/40 p-4"
+        style={{ marginTop: 8, marginBottom: 8 }}
+      >
+        <p className="text-xs font-semibold text-slate-700 mb-2" data-report-chart-title>
+          {chart.name}
+        </p>
+        <div data-report-chart-body className="overflow-visible h-[240px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={series.points} margin={{ top: 8, right: 12, left: 4, bottom: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+              <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} />
+              <YAxis tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} width={40} />
+              <Tooltip contentStyle={{ fontSize: 11 }} />
+              {series.keys.map((key, i) => (
+                <Line
+                  key={key}
+                  type="monotone"
+                  dataKey={key}
+                  stroke={i === 0 ? primaryColor : ['#2563eb', '#ea580c', '#7c3aed', '#0891b2'][i % 4]}
+                  strokeWidth={2}
+                  dot={series.points.length <= 24}
+                  isAnimationActive={false}
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/50 p-4 text-xs text-muted-foreground">
+      Chart data for {chart.name} is not in a supported image or series format.
+    </div>
+  );
+}
 
 function ReportTableView({
   table,
@@ -42,7 +230,7 @@ function ReportTableView({
   const previewRows = branded ? table.rows : table.rows.slice(0, 400);
 
   return (
-    <div className="space-y-3 min-w-0">
+    <div className="space-y-3 min-w-0" style={{ marginTop: 8 }}>
       {trends.length > 0 && (
         <div className="flex flex-wrap gap-2" data-no-print={branded ? undefined : true}>
           {trends.slice(0, 6).map((t) => (
@@ -123,8 +311,15 @@ function PrintChartPlaceholders() {
   return (
     <div
       data-report-chart-grid
-      className="grid grid-cols-2 gap-3 mb-3"
-      style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', width: '100%' }}
+      className="grid grid-cols-2 gap-3"
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        gap: '12px',
+        width: '100%',
+        marginTop: '24px',
+        marginBottom: '24px',
+      }}
     >
       {[0, 1].map((i) => (
         <div
@@ -133,8 +328,8 @@ function PrintChartPlaceholders() {
           style={{
             border: '1px solid #e2e8f0',
             borderRadius: '8px',
-            background: '#ffffff',
-            padding: '8px',
+            background: 'rgba(248,250,252,0.6)',
+            padding: '14px',
             minHeight: '250px',
           }}
         />
@@ -146,7 +341,7 @@ function PrintChartPlaceholders() {
 export function ReportResultsView({ data, templateName, unitName, moduleLabel = 'Reports', className }: Props) {
   const branding = useTenantBranding();
   const { tables, charts, summary } = data;
-  const defaultTab = tables[0] ? String(tables[0].index) : '0';
+  const defaultTab = tables[0] ? String(tables[0].index) : charts[0] ? `chart-${charts[0].index}` : '0';
   const [activeTab, setActiveTab] = useState(defaultTab);
   const [busy, setBusy] = useState(false);
   const [mountPrint, setMountPrint] = useState(false);
@@ -166,10 +361,13 @@ export function ReportResultsView({ data, templateName, unitName, moduleLabel = 
   )}`;
 
   useEffect(() => {
-    if (!tables.some((table) => String(table.index) === activeTab)) {
-      setActiveTab(tables[0] ? String(tables[0].index) : '0');
+    const valid =
+      tables.some((table) => String(table.index) === activeTab) ||
+      charts.some((c) => `chart-${c.index}` === activeTab);
+    if (!valid) {
+      setActiveTab(tables[0] ? String(tables[0].index) : charts[0] ? `chart-${charts[0].index}` : '0');
     }
-  }, [tables, activeTab]);
+  }, [tables, charts, activeTab]);
 
   useEffect(() => {
     if (!showFuelPerformance) return;
@@ -234,8 +432,21 @@ export function ReportResultsView({ data, templateName, unitName, moduleLabel = 
     }
   };
 
+  const wialonChartsBlock =
+    charts.length > 0 ? (
+      <div
+        className="space-y-3"
+        style={{ marginTop: 24, marginBottom: 24 }}
+        data-report-chart-grid
+      >
+        {charts.map((c) => (
+          <WialonReportChartView key={c.index} chart={c} primaryColor={branding.primaryColor} />
+        ))}
+      </div>
+    ) : null;
+
   return (
-    <div className={cn('flex flex-col gap-3', className)}>
+    <div className={cn('flex flex-col gap-4', className)}>
       <div className="flex flex-wrap items-center justify-between gap-2" data-no-print>
         <div className="min-w-0">
           <h3 className="font-semibold text-sm truncate">{templateName || 'Report results'}</h3>
@@ -320,8 +531,10 @@ export function ReportResultsView({ data, templateName, unitName, moduleLabel = 
         </div>
       )}
 
-      {tables.length === 0 ? (
+      {tables.length === 0 && charts.length === 0 ? (
         <p className="text-sm text-muted-foreground py-12 text-center">Report completed with no tabular data.</p>
+      ) : tables.length === 0 ? (
+        <div>{wialonChartsBlock}</div>
       ) : (
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="h-9 flex-wrap justify-start" data-no-print>
@@ -343,8 +556,9 @@ export function ReportResultsView({ data, templateName, unitName, moduleLabel = 
             const tableKey = String(t.index);
             const isActive = activeTab === tableKey;
             return (
-              <TabsContent key={t.index} value={tableKey} className="mt-3">
-                <div className="space-y-3">
+              <TabsContent key={t.index} value={tableKey} className="mt-4">
+                <div className="flex flex-col">
+                  {isActive && wialonChartsBlock}
                   {showFuelPerformance && (
                     <div ref={isActive ? chartsPreviewRef : undefined}>
                       <FuelReportPerformanceCharts
@@ -365,10 +579,8 @@ export function ReportResultsView({ data, templateName, unitName, moduleLabel = 
             );
           })}
           {charts.map((c) => (
-            <TabsContent key={`chart-${c.index}`} value={`chart-${c.index}`} className="mt-3">
-              <pre className="text-[11px] max-h-[50vh] overflow-auto rounded-lg border p-3 bg-muted/20">
-                {JSON.stringify(c.data, null, 2)}
-              </pre>
+            <TabsContent key={`chart-${c.index}`} value={`chart-${c.index}`} className="mt-4">
+              <WialonReportChartView chart={c} primaryColor={branding.primaryColor} />
             </TabsContent>
           ))}
         </Tabs>

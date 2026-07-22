@@ -75,8 +75,22 @@ export interface WialonSearchItem {
   ph?: string;
   uid?: string;
   hw?: number;
-  sens?: Record<string, { n?: string; t?: string | number; p?: string; u?: string; tbl?: unknown[] }>;
+  sens?: Record<
+    string,
+    {
+      n?: string;
+      t?: string | number;
+      p?: string;
+      u?: string;
+      tbl?: unknown[];
+      /** Optional sensor constant / max (vendor-specific). */
+      c?: number | string;
+      max?: number | string;
+    }
+  >;
   prms?: Record<string, { v?: number | string; ct?: number; at?: number }>;
+  /** Profile fields (PROFILE flag). */
+  pflds?: Record<string, { id?: number; n?: string; v?: string }>;
   si?: Record<string, { n?: string; nmt?: number; cnm?: number }>;
   lmsg?: { t?: number; p?: Record<string, unknown> };
   netconn?: boolean;

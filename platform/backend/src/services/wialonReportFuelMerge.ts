@@ -1,6 +1,6 @@
 import type { WialonFuelLive } from './wialonFuel.js';
 import type { WialonFleetUnit } from './WialonFleetService.js';
-import { unitHasFuelLevelSensors } from './wialonFuelSensorUtils.js';
+import { fuelPercentFromLitres, unitHasFuelLevelSensors } from './wialonFuelSensorUtils.js';
 
 /** Merge live LLS readings with fleet snapshot fuel (same path as Fuel module). */
 export function mergeUnitFuel(
@@ -35,20 +35,26 @@ export function formatFuelRowFields(unit: WialonFleetUnit, merged?: WialonFuelLi
   const fuel = merged ?? unit.fuel;
   const fuelLiters = fuel?.levelLiters ?? null;
   const capacity = unit.tankCapacity;
+  // Always compute % from litres÷capacity when both known — never treat litres ≤100 as %.
   const fromCapacity =
     fuelLiters != null && capacity != null && capacity > 0
-      ? Math.min(100, Math.round((fuelLiters / capacity) * 100))
+      ? fuelPercentFromLitres(fuelLiters, capacity)
       : null;
-  // Prefer capacity-derived %; only use unit.fuelLevel when it is a real 0–100 percent.
   const fuelPercent =
     fromCapacity ??
-    (unit.fuelLevel != null && unit.fuelLevel >= 0 && unit.fuelLevel <= 100
+    (capacity == null && unit.fuelLevel != null && unit.fuelLevel >= 0 && unit.fuelLevel <= 100
       ? Math.round(unit.fuelLevel)
       : null);
 
   const fuelLive =
     fuel?.levelFormatted ||
-    (fuelLiters != null && fuelLiters >= 0 ? `${fuelLiters} L` : fuelPercent != null ? `${fuelPercent}%` : '');
+    (fuelLiters != null && fuelLiters >= 0
+      ? fuelPercent != null
+        ? `${fuelLiters} L (${fuelPercent}%)`
+        : `${fuelLiters} L`
+      : fuelPercent != null
+        ? `${fuelPercent}%`
+        : '');
 
   return {
     fuelLive,

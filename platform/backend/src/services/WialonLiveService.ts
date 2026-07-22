@@ -459,21 +459,20 @@ export class WialonLiveService {
           });
         }
 
-        if (tablesOut.length === 0) {
-          for (let chartIndex = 0; chartIndex < 4; chartIndex++) {
-            try {
-              const chart = await client.request<unknown>('report/get_result_chart', { chartIndex });
-              if (chart == null || (typeof chart === 'object' && !Object.keys(chart as object).length)) {
-                break;
-              }
-              chartsOut.push({
-                index: chartIndex,
-                name: `Chart ${chartIndex + 1}`,
-                data: chart,
-              });
-            } catch {
+        // Fuel and other Wialon reports often include charts alongside tables — fetch both.
+        for (let chartIndex = 0; chartIndex < 4; chartIndex++) {
+          try {
+            const chart = await client.request<unknown>('report/get_result_chart', { chartIndex });
+            if (chart == null || (typeof chart === 'object' && !Object.keys(chart as object).length)) {
               break;
             }
+            chartsOut.push({
+              index: chartIndex,
+              name: `Chart ${chartIndex + 1}`,
+              data: chart,
+            });
+          } catch {
+            break;
           }
         }
       } catch (e) {
@@ -714,7 +713,7 @@ export class WialonLiveService {
     from: Date,
     to: Date,
     batchSize = 1000,
-    maxPoints = 12_000
+    maxPoints = 50_000
   ) {
     return withWialonClient(credentials, async (client) => {
       const timeFrom = Math.floor(from.getTime() / 1000);
@@ -729,18 +728,63 @@ export class WialonLiveService {
         loadCount: batchSize,
       });
 
-      const total = Math.min(load.count ?? 0, maxPoints);
-      if (!total) return [];
+      const count = load.count ?? 0;
+      if (!count) return [];
 
-      const allMessages: Array<{ pos?: { x: number; y: number; s: number; c?: number }; t: number }> = [];
-      let indexFrom = 0;
-      while (indexFrom < total) {
-        const indexTo = Math.min(indexFrom + batchSize - 1, total - 1);
-        const batch = await client.request<{
-          messages?: Array<{ pos?: { x: number; y: number; s: number; c?: number }; t: number }>;
-        }>('messages/get_messages', { indexFrom, indexTo });
-        if (batch.messages?.length) allMessages.push(...batch.messages);
-        indexFrom = indexTo + 1;
+      type Msg = { pos?: { x: number; y: number; s: number; c?: number }; t: number };
+      const fetchRange = async (indexFrom: number, indexTo: number): Promise<Msg[]> => {
+        const batch = await client.request<{ messages?: Msg[] }>('messages/get_messages', {
+          indexFrom,
+          indexTo,
+        });
+        return batch.messages ?? [];
+      };
+
+      const allMessages: Msg[] = [];
+
+      if (count <= maxPoints) {
+        let indexFrom = 0;
+        while (indexFrom < count) {
+          const indexTo = Math.min(indexFrom + batchSize - 1, count - 1);
+          const batch = await fetchRange(indexFrom, indexTo);
+          if (batch.length) allMessages.push(...batch);
+          indexFrom = indexTo + 1;
+        }
+      } else {
+        // Evenly downsample indices across the interval, then fetch contiguous ranges.
+        const picked = new Set<number>();
+        for (let i = 0; i < maxPoints; i++) {
+          picked.add(Math.min(count - 1, Math.round((i * (count - 1)) / (maxPoints - 1))));
+        }
+        picked.add(0);
+        picked.add(count - 1);
+        const indices = [...picked].sort((a, b) => a - b);
+
+        const ranges: Array<{ from: number; to: number }> = [];
+        for (const idx of indices) {
+          const last = ranges[ranges.length - 1];
+          if (last && idx <= last.to + 1) {
+            last.to = idx;
+          } else {
+            ranges.push({ from: idx, to: idx });
+          }
+        }
+
+        for (const range of ranges) {
+          let indexFrom = range.from;
+          while (indexFrom <= range.to) {
+            const indexTo = Math.min(indexFrom + batchSize - 1, range.to);
+            const batch = await fetchRange(indexFrom, indexTo);
+            if (batch.length) {
+              // Keep only sampled indices within this batch window.
+              for (let i = 0; i < batch.length; i++) {
+                const absIdx = indexFrom + i;
+                if (picked.has(absIdx)) allMessages.push(batch[i]);
+              }
+            }
+            indexFrom = indexTo + 1;
+          }
+        }
       }
 
       await client.request('messages/unload', {}).catch(() => undefined);

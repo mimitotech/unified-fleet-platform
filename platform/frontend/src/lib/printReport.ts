@@ -264,7 +264,7 @@ function applyChartSnapshots(clone: HTMLElement, snapshots: string[]): void {
     if (!src) return;
     card.innerHTML = '';
     card.style.minHeight = '250px';
-    card.style.overflow = 'hidden';
+    card.style.overflow = 'visible';
     card.style.padding = '10px';
     const img = document.createElement('img');
     img.src = src;
@@ -376,7 +376,7 @@ function reportStyles(opts: {
     .report-sheet { max-width: 1100px; margin: 0 auto; padding: 8px 4px 16px; }
     [data-report-document] { position: relative; background: #fff; }
     [data-report-watermark] {
-      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
       pointer-events: none; z-index: 0; overflow: hidden;
     }
     [data-report-watermark-img] {
@@ -506,21 +506,21 @@ function reportStyles(opts: {
       margin: 2px 0 0 !important;
     }
 
-    /* Charts — 2 per row; bodies are preview snapshots (images) */
+    /* Charts — 2 per row; clear spacing from title / table */
     [data-report-chart-grid] {
       display: grid !important;
       grid-template-columns: 1fr 1fr !important;
       gap: 14px !important;
       width: 100% !important;
-      margin: 0 0 12px !important;
+      margin: 24px 0 !important;
     }
     [data-report-chart-card] {
       display: flex !important;
       flex-direction: column !important;
       border: 1px solid #e2e8f0 !important;
       border-radius: 8px !important;
-      background: #ffffff !important;
-      padding: 10px !important;
+      background: rgba(248, 250, 252, 0.55) !important;
+      padding: 14px !important;
       min-height: 250px !important;
       page-break-inside: avoid;
       break-inside: avoid;
@@ -548,7 +548,7 @@ function reportStyles(opts: {
       flex: 0 0 auto !important;
       min-height: 0 !important;
       width: 100% !important;
-      overflow: hidden !important;
+      overflow: visible !important;
     }
     [data-report-chart-img] {
       display: block !important;
@@ -787,13 +787,15 @@ function preparePrintRoot(root: HTMLElement): { maxColumns: number; landscape: b
     node.style.padding = '12px';
   });
 
-  // Force chart cards two-per-row.
+  // Force chart cards two-per-row with clear vertical spacing.
   root.querySelectorAll('[data-report-chart-grid]').forEach((el) => {
     const node = el as HTMLElement;
     node.style.display = 'grid';
     node.style.gridTemplateColumns = '1fr 1fr';
     node.style.gap = '14px';
     node.style.width = '100%';
+    node.style.marginTop = '24px';
+    node.style.marginBottom = '24px';
   });
   root.querySelectorAll('[data-report-chart-card]').forEach((el) => {
     const node = el as HTMLElement;
@@ -802,13 +804,17 @@ function preparePrintRoot(root: HTMLElement): { maxColumns: number; landscape: b
     node.style.minHeight = '250px';
     node.style.border = '1px solid #e2e8f0';
     node.style.borderRadius = '8px';
-    node.style.background = '#ffffff';
-    node.style.padding = '10px';
+    node.style.background = 'rgba(248, 250, 252, 0.55)';
+    node.style.padding = '14px';
     node.style.pageBreakInside = 'avoid';
     node.style.breakInside = 'avoid';
     if (node.getAttribute('data-report-chart-span') === '2') {
       node.style.gridColumn = '1 / -1';
     }
+  });
+  root.querySelectorAll('[data-report-chart-body]').forEach((el) => {
+    const node = el as HTMLElement;
+    node.style.overflow = 'visible';
   });
 
   // Chart bodies are already preview images — strip any leftover live chart chrome.

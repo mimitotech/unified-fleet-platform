@@ -6,21 +6,21 @@ import 'leaflet/dist/leaflet.css';
 import { MAP_REGION_DEFAULT, getFleetMapTiles } from '@/lib/mapConfig';
 import { FleetMapTileLayer } from '@/components/map/FleetMapTileLayer';
 import { useMapStyle } from '@/hooks/useMapStyle';
-import { useWialonTrackHistory } from '@/hooks/useWialonTrackHistory';
-import { useWialonContext } from '@/hooks/useWialon';
+import type { WialonTrackHistory } from '@/hooks/useWialonTrackHistory';
 import { useFleetUnitIcon } from '@/hooks/useFleetUnitIcon';
 import { buildFleetMapIcon } from '@/lib/fleetMapIcons';
 import type { FleetUnit } from '@/lib/fleetUnits';
 import { formatFuelDisplay } from '@/lib/fleetUnits';
 import {
   formatTrackDuration,
-  ROUTE_LINE_COLOR,
   TRACK_STATUS_COLORS,
+  TRIP_LINE_COLORS,
   type TrackStopEvent,
   type TrackStateMarker,
   type TrackDirectionMarker,
+  type TrackColoredSegment,
 } from '@/lib/trackAnalysis';
-import { Loader2 } from 'lucide-react';
+import { Loader2, MapPinOff } from 'lucide-react';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 
 export type TrackPeriod = 'hour' | 'day' | 'week' | 'month';
@@ -126,7 +126,6 @@ function StateMarker({ marker }: { marker: TrackStateMarker }) {
         fillOpacity: 1,
         weight: 2,
       }}
-      zIndexOffset={300}
     >
       <Popup>
         <div className="text-xs space-y-0.5">
@@ -140,7 +139,7 @@ function StateMarker({ marker }: { marker: TrackStateMarker }) {
 }
 
 function DirectionMarker({ marker }: { marker: TrackDirectionMarker }) {
-  const html = `<div style="transform:rotate(${marker.course}deg);width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:10px solid ${ROUTE_LINE_COLOR};opacity:0.85;filter:drop-shadow(0 1px 1px rgba(0,0,0,.25))"></div>`;
+  const html = `<div style="transform:rotate(${marker.course}deg);width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:10px solid ${TRIP_LINE_COLORS[0]};opacity:0.85;filter:drop-shadow(0 1px 1px rgba(0,0,0,.25))"></div>`;
   const icon = L.divIcon({
     html,
     className: 'track-direction-marker',
@@ -150,24 +149,40 @@ function DirectionMarker({ marker }: { marker: TrackDirectionMarker }) {
   return <Marker position={[marker.lat, marker.lng]} icon={icon} interactive={false} zIndexOffset={200} />;
 }
 
+type TrackHistorySlice = Pick<
+  WialonTrackHistory,
+  | 'route'
+  | 'coloredSegments'
+  | 'useTripColors'
+  | 'stops'
+  | 'stateMarkers'
+  | 'directionMarkers'
+  | 'summary'
+  | 'start'
+  | 'end'
+  | 'isLoading'
+  | 'isFetching'
+  | 'pointCount'
+  | 'stopCount'
+>;
+
 type Props = {
   unit: FleetUnit | null;
-  period: TrackPeriod;
-  amount: number;
+  /** Shared history from workspace — avoids a second React Query fetch. */
+  history: TrackHistorySlice;
   height?: string;
+  liveRecent?: boolean;
   onTrackStats?: (stats: { pointCount: number; stopCount: number; loading: boolean }) => void;
 };
 
-export function FleetTrackMap({ unit, period, amount, height = '60vh', onTrackStats }: Props) {
+export function FleetTrackMap({ unit, history, height = '60vh', liveRecent = false, onTrackStats }: Props) {
   const { provider, view } = useMapStyle();
   const tiles = getFleetMapTiles(provider, view);
-  const { connected } = useWialonContext();
-  const minutes = trackPeriodToMinutes(period, amount);
-  const wialonId = unit?.wialonId ?? (unit && Number.isFinite(Number(unit.id)) ? Number(unit.id) : null);
-  const liveRecent = minutes <= 24 * 60;
 
   const {
     route,
+    coloredSegments,
+    useTripColors,
     stops,
     stateMarkers,
     directionMarkers,
@@ -178,7 +193,7 @@ export function FleetTrackMap({ unit, period, amount, height = '60vh', onTrackSt
     isFetching,
     pointCount,
     stopCount,
-  } = useWialonTrackHistory(wialonId, connected && wialonId != null, minutes, liveRecent);
+  } = history;
 
   const loading = isLoading || isFetching;
 
@@ -201,18 +216,49 @@ export function FleetTrackMap({ unit, period, amount, height = '60vh', onTrackSt
 
   const fitTrack = useMemo(() => (route.length > 1 ? route : []), [route]);
 
+  const segments: TrackColoredSegment[] = useMemo(
+    () => coloredSegments.filter((s) => s.positions.length > 1),
+    [coloredSegments],
+  );
+
   if (!unit) {
     return (
-      <div className="flex items-center justify-center text-muted-foreground text-sm" style={{ height }}>
-        Select a vehicle to view its route history.
+      <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground text-sm px-6 text-center" style={{ height }}>
+        <MapPinOff className="h-8 w-8 opacity-40" />
+        <p>Select a vehicle to view its route history.</p>
       </div>
     );
   }
 
-  if (!loading && pointCount === 0 && unit.lat == null && unit.lng == null) {
+  if (!loading && pointCount === 0) {
     return (
-      <div className="flex items-center justify-center text-muted-foreground text-sm px-6 text-center" style={{ height }}>
-        No GPS track for {unit.name} in this period.
+      <div className="relative h-full w-full" style={{ height }}>
+        {(unit.lat != null && unit.lng != null) ? (
+          <MapContainer
+            center={[unit.lat, unit.lng]}
+            zoom={14}
+            style={{ height: '100%', width: '100%' }}
+            preferCanvas
+            zoomControl
+            maxZoom={tiles.maxZoom}
+          >
+            <FleetMapTileLayer key={`${provider}-${view}`} provider={provider} view={view} />
+            <TrackUnitMarker unit={unit} lat={unit.lat} lng={unit.lng} />
+          </MapContainer>
+        ) : (
+          <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground text-sm px-6 text-center h-full">
+            <MapPinOff className="h-8 w-8 opacity-40" />
+            <p className="font-medium text-foreground">No GPS track</p>
+            <p>
+              No points for <span className="font-medium text-foreground">{unit.name}</span> in this period.
+              Try a longer range or another asset.
+            </p>
+          </div>
+        )}
+        <div className="absolute top-2 left-2 z-[500] bg-card/95 border border-border rounded-lg px-2.5 py-2 shadow-md max-w-[260px]">
+          <p className="font-semibold text-xs truncate">{unit.name}</p>
+          <p className="text-[10px] text-muted-foreground mt-1">No GPS points in this period.</p>
+        </div>
       </div>
     );
   }
@@ -223,7 +269,9 @@ export function FleetTrackMap({ unit, period, amount, height = '60vh', onTrackSt
         <div className="absolute inset-0 z-[500] bg-card/70 backdrop-blur-[1px] flex flex-col items-center justify-center gap-2">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <p className="text-sm font-medium">Loading route history…</p>
-          <p className="text-xs text-muted-foreground">Fetching GPS track</p>
+          <p className="text-xs text-muted-foreground">
+            {pointCount > 0 ? `Updating track · ${pointCount} points` : 'Fetching GPS track & trips'}
+          </p>
         </div>
       )}
 
@@ -237,7 +285,9 @@ export function FleetTrackMap({ unit, period, amount, height = '60vh', onTrackSt
         <p className="text-[10px] text-muted-foreground mt-1 tabular-nums">
           {pointCount > 0
             ? `${pointCount} GPS points · ${stopCount} stops · ${formatTrackDuration(summary.movingSec)} moving`
-            : 'Building route…'}
+            : loading
+              ? 'Building route…'
+              : 'No points yet'}
         </p>
         {unit.lat == null && pointCount > 0 && (
           <p className="text-[10px] text-amber-700 mt-0.5">Historical track (no live position)</p>
@@ -251,18 +301,28 @@ export function FleetTrackMap({ unit, period, amount, height = '60vh', onTrackSt
       </div>
 
       <div className="absolute bottom-2 left-2 z-[500] bg-card/95 border border-border rounded-lg px-2 py-1.5 shadow-sm flex flex-wrap gap-x-3 gap-y-1 text-[10px]">
-        <span className="flex items-center gap-1">
-          <span className="w-4 h-1 rounded" style={{ background: ROUTE_LINE_COLOR }} /> Route
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-2.5 h-2.5 rounded-full" style={{ background: TRACK_STATUS_COLORS.moving }} /> Moving
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-2.5 h-2.5 rounded-full" style={{ background: TRACK_STATUS_COLORS.idle }} /> Idle
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-2.5 h-2.5 rounded-full" style={{ background: TRACK_STATUS_COLORS.stopped }} /> Stopped
-        </span>
+        {useTripColors ? (
+          <>
+            <span className="text-muted-foreground font-medium">Trips</span>
+            {TRIP_LINE_COLORS.slice(0, Math.min(4, Math.max(1, segments.length))).map((color, i) => (
+              <span key={color} className="flex items-center gap-1">
+                <span className="w-4 h-1 rounded" style={{ background: color }} /> Trip {i + 1}
+              </span>
+            ))}
+          </>
+        ) : (
+          <>
+            <span className="flex items-center gap-1">
+              <span className="w-2.5 h-2.5 rounded-full" style={{ background: TRACK_STATUS_COLORS.moving }} /> Moving
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-2.5 h-2.5 rounded-full" style={{ background: TRACK_STATUS_COLORS.idle }} /> Idle
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-2.5 h-2.5 rounded-full" style={{ background: TRACK_STATUS_COLORS.stopped }} /> Stopped
+            </span>
+          </>
+        )}
         <span className="flex items-center gap-1">
           <span className="w-2.5 h-2.5 rounded-full border-2 border-violet-600 bg-white" /> Parked
         </span>
@@ -280,9 +340,10 @@ export function FleetTrackMap({ unit, period, amount, height = '60vh', onTrackSt
         <FitTrackBounds track={fitTrack} point={unitMarkerPos ?? undefined} />
 
         {/* White outline for contrast on any basemap */}
-        {fitTrack.length > 1 && (
+        {segments.map((seg, i) => (
           <Polyline
-            positions={fitTrack}
+            key={`outline-${seg.tripIndex}-${i}`}
+            positions={seg.positions}
             pathOptions={{
               color: '#ffffff',
               weight: 8,
@@ -291,21 +352,22 @@ export function FleetTrackMap({ unit, period, amount, height = '60vh', onTrackSt
               lineJoin: 'round',
             }}
           />
-        )}
+        ))}
 
-        {/* Primary blue route line */}
-        {fitTrack.length > 1 && (
+        {/* Trip- or status-colored track segments */}
+        {segments.map((seg, i) => (
           <Polyline
-            positions={fitTrack}
+            key={`seg-${seg.tripIndex}-${i}`}
+            positions={seg.positions}
             pathOptions={{
-              color: ROUTE_LINE_COLOR,
+              color: seg.color,
               weight: 5,
               opacity: 0.95,
               lineCap: 'round',
               lineJoin: 'round',
             }}
           />
-        )}
+        ))}
 
         {directionMarkers.map((m, i) => (
           <DirectionMarker key={`dir-${i}`} marker={m} />
@@ -320,7 +382,6 @@ export function FleetTrackMap({ unit, period, amount, height = '60vh', onTrackSt
             center={[start.lat, start.lng]}
             radius={9}
             pathOptions={{ color: '#fff', fillColor: '#16a34a', fillOpacity: 1, weight: 2 }}
-            zIndexOffset={500}
           >
             <Popup>
               <span className="text-xs font-medium">Route start</span>
@@ -335,7 +396,6 @@ export function FleetTrackMap({ unit, period, amount, height = '60vh', onTrackSt
             center={[end.lat, end.lng]}
             radius={9}
             pathOptions={{ color: '#fff', fillColor: '#dc2626', fillOpacity: 1, weight: 2 }}
-            zIndexOffset={500}
           >
             <Popup>
               <span className="text-xs font-medium">Route end</span>

@@ -253,8 +253,33 @@ export function ModuleReportsShell({
   return (
     <div className="space-y-3">
       <Card className="border-primary/20">
-        <CardContent className="pt-3 pb-3 px-4 space-y-2.5">
-          <div className="flex flex-wrap items-end gap-2 justify-between">
+        <CardContent className="pt-3 pb-3 px-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1">
+              {reports.map((r) => {
+                const activeCard = kind === r.id;
+                return (
+                  <button
+                    key={r.id}
+                    type="button"
+                    title={r.blurb}
+                    onClick={() => setKind(r.id)}
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors h-7',
+                      activeCard
+                        ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                        : 'bg-background text-muted-foreground hover:text-primary hover:border-primary/40',
+                    )}
+                  >
+                    <FileText className="h-3 w-3 shrink-0 opacity-80" />
+                    {r.title}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="hidden sm:block h-5 w-px bg-border shrink-0" aria-hidden />
+
             <PeriodAssetControls
               fromDate={fromDate}
               toDate={toDate}
@@ -266,52 +291,34 @@ export function ModuleReportsShell({
               onToChange={setTo}
               onAssetChange={setAsset}
               compact
-            />
-            <Button
-              type="button"
-              size="sm"
-              disabled={busy}
-              onClick={() => void handleRun()}
-              className="h-8 gap-1.5 shrink-0"
-            >
-              <Play className="h-3.5 w-3.5" />
-              {busy ? 'Running…' : 'Run report'}
-            </Button>
-          </div>
-          <div className="relative max-w-sm">
-            <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search report rows…"
-              className="h-8 pl-8 text-xs"
+              className="min-w-0 grow"
+              trailing={
+                <>
+                  <div className="relative">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                    <Input
+                      value={q}
+                      onChange={(e) => setQ(e.target.value)}
+                      placeholder="Search rows…"
+                      className="h-7 w-[148px] pl-7 text-xs"
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void handleRun()}
+                    className="h-7 gap-1.5 shrink-0"
+                  >
+                    <Play className="h-3.5 w-3.5" />
+                    {busy ? 'Running…' : 'Run report'}
+                  </Button>
+                </>
+              }
             />
           </div>
         </CardContent>
       </Card>
-
-      <div className="flex flex-wrap gap-1.5">
-        {reports.map((r) => {
-          const activeCard = kind === r.id;
-          return (
-            <button
-              key={r.id}
-              type="button"
-              title={r.blurb}
-              onClick={() => setKind(r.id)}
-              className={cn(
-                'inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors',
-                activeCard
-                  ? 'bg-primary text-primary-foreground border-primary shadow-sm'
-                  : 'bg-background text-muted-foreground hover:text-primary hover:border-primary/40',
-              )}
-            >
-              <FileText className="h-3 w-3 shrink-0 opacity-80" />
-              {r.title}
-            </button>
-          );
-        })}
-      </div>
 
       <Card className="overflow-hidden" style={{ borderColor: `${branding.primaryColor}40` }}>
         <CardHeader className="py-2.5 px-4 flex-row items-center justify-between space-y-0 gap-2" style={{ background: `${branding.primaryColor}0F` }}>
@@ -359,9 +366,9 @@ export function ModuleReportsShell({
           </div>
         </CardHeader>
         <CardContent className="pt-4">
-          <div ref={previewRef} className="rounded-lg border bg-white text-slate-900 overflow-hidden">
+          <div ref={previewRef} className="rounded-lg border bg-white text-slate-900 overflow-visible">
             <BrandedReportDocument branding={branding}>
-              <div className="px-5 pt-5 pb-4 space-y-4">
+              <div className="px-5 pt-5 pb-4 space-y-6">
                 <BrandedReportHeader
                   branding={branding}
                   reportTitle={active?.title || moduleLabel}
@@ -423,11 +430,13 @@ export function ModuleReportsShell({
               )}
 
               {charts && (
-                <DomainReportCharts
-                  rows={filteredRows}
-                  spec={charts}
-                  primaryColor={branding.primaryColor}
-                />
+                <div style={{ marginTop: 8, marginBottom: 8 }}>
+                  <DomainReportCharts
+                    rows={filteredRows}
+                    spec={charts}
+                    primaryColor={branding.primaryColor}
+                  />
+                </div>
               )}
               {extraPreview}
             </div>
@@ -435,7 +444,7 @@ export function ModuleReportsShell({
             {filteredRows.length === 0 ? (
               <p className="text-sm text-slate-500 py-10 text-center px-5">{emptyMessage}</p>
             ) : (
-              <div className="overflow-x-auto px-5 pb-3">
+              <div className="overflow-x-auto px-5 pb-3" style={{ marginTop: 16 }}>
                 <table className="w-full text-[13px] border-collapse min-w-[640px]">
                   <thead>
                     <tr>

@@ -35,6 +35,23 @@ export type TrackDirectionMarker = {
 /** Primary route line — Wialon-style blue track. */
 export const ROUTE_LINE_COLOR = '#2563eb';
 
+/** Alternating trip colors (Wialon-style multi-trip tracks). */
+export const TRIP_LINE_COLORS = [
+  ROUTE_LINE_COLOR,
+  '#16a34a',
+  '#dc2626',
+  '#9333ea',
+  '#ea580c',
+  '#0891b2',
+  '#ca8a04',
+] as const;
+
+export type TrackColoredSegment = {
+  tripIndex: number;
+  color: string;
+  positions: [number, number][];
+};
+
 const COLORS: Record<TrackMotionStatus, string> = {
   moving: '#16a34a',
   idle: '#f59e0b',
@@ -210,8 +227,7 @@ export function buildStatusSegments(points: TrackPoint[]): TrackStatusSegment[] 
 export function buildTripColoredSegments(
   points: TrackPoint[],
   trips: Array<Record<string, unknown>>
-): { tripIndex: number; color: string; positions: [number, number][] }[] {
-  const TRIP_COLORS = [ROUTE_LINE_COLOR, '#16a34a', '#dc2626', '#9333ea', '#ea580c', '#0891b2', '#ca8a04'];
+): TrackColoredSegment[] {
   const windows = trips
     .map((t, i) => {
       const w = tripWindow(t);
@@ -227,19 +243,52 @@ export function buildTripColoredSegments(
     }));
   }
 
-  const segments: { tripIndex: number; color: string; positions: [number, number][] }[] = [];
+  const segments: TrackColoredSegment[] = [];
   for (const w of windows) {
     const seg = points
       .filter((p) => p.time >= w.from && p.time <= w.to)
       .map((p) => [p.lat, p.lng] as [number, number]);
     if (seg.length > 1) {
-      segments.push({ tripIndex: w.i, color: TRIP_COLORS[w.i % TRIP_COLORS.length], positions: seg });
+      segments.push({
+        tripIndex: w.i,
+        color: TRIP_LINE_COLORS[w.i % TRIP_LINE_COLORS.length],
+        positions: seg,
+      });
     }
   }
   if (!segments.length && points.length > 1) {
-    return [{ tripIndex: 0, color: TRIP_COLORS[0], positions: points.map((p) => [p.lat, p.lng]) }];
+    return [{ tripIndex: 0, color: TRIP_LINE_COLORS[0], positions: points.map((p) => [p.lat, p.lng]) }];
   }
   return segments;
+}
+
+/** Prefer trip-colored segments when trips exist; otherwise motion-status colors. */
+export function preferTrackSegments(
+  points: TrackPoint[],
+  trips: Array<Record<string, unknown>>,
+  tripSegments: TrackColoredSegment[],
+  statusSegments: TrackStatusSegment[],
+): TrackColoredSegment[] {
+  if (trips.length > 0 && tripSegments.some((s) => s.positions.length > 1)) {
+    return tripSegments;
+  }
+  if (statusSegments.length) {
+    return statusSegments.map((s, i) => ({
+      tripIndex: i,
+      color: s.color,
+      positions: s.positions,
+    }));
+  }
+  if (points.length > 1) {
+    return [
+      {
+        tripIndex: 0,
+        color: ROUTE_LINE_COLOR,
+        positions: points.map((p) => [p.lat, p.lng] as [number, number]),
+      },
+    ];
+  }
+  return [];
 }
 
 export const TRACK_STATUS_COLORS = COLORS;

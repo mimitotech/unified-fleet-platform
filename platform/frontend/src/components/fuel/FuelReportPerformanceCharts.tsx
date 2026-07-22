@@ -104,18 +104,18 @@ function PerformanceChartShell({
   return (
     <div
       data-report-chart-card
-      className="rounded-lg border border-slate-200 bg-white p-3 min-w-0"
+      className="rounded-lg border border-slate-200/80 bg-slate-50/50 p-3.5 min-w-0"
       style={{
         border: '1px solid #e2e8f0',
         borderRadius: '8px',
-        background: '#ffffff',
-        padding: '12px',
+        background: 'rgba(248, 250, 252, 0.55)',
+        padding: '14px',
         minWidth: 0,
         pageBreakInside: 'avoid',
         breakInside: 'avoid',
       }}
     >
-      <div className="mb-1.5" data-report-chart-title>
+      <div className="mb-2" data-report-chart-title>
         <p
           className="text-[12px] font-semibold text-slate-800"
           style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: '#0f172a' }}
@@ -247,7 +247,7 @@ export function FuelReportPerformanceCharts({
   const compareOptions = available.filter((metric) => metric.sourceKey !== primaryKey);
 
   return (
-    <section className="space-y-2.5 min-w-0">
+    <section className="space-y-2.5 min-w-0" style={{ marginTop: 24, marginBottom: 24 }}>
       {!hideControls && (
       <div
         data-no-print
@@ -307,6 +307,8 @@ export function FuelReportPerformanceCharts({
           gridTemplateColumns: '1fr 1fr',
           gap: '12px',
           width: '100%',
+          marginTop: '8px',
+          marginBottom: '4px',
         }}
       >
         <PerformanceChartShell

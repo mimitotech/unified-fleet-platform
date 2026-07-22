@@ -77,10 +77,22 @@ export function FuelKpiCards({
   const dropEventCount = Math.max(kpis.theftEvents, suddenDropAlerts.length);
   const uniqueVehiclesWithDrops = new Set(suddenDropAlerts.map((a) => a.unitName)).size;
 
+  const liveCard = (
+    <MetricCard
+      title="Current fuel"
+      value={`${Math.round(liveTotal).toLocaleString()} L`}
+      subtitle={`Live tank total · ${unitLabelPlural}`}
+      icon={Droplets}
+      variant="info"
+      size="xs"
+    />
+  );
+
   if (isLoading) {
     return (
       <div className="fuel-kpi-grid">
-        {[0, 1, 2, 3, 4].map((i) => (
+        {liveCard}
+        {[0, 1, 2, 3].map((i) => (
           <div key={i} className="h-14 rounded-lg bg-muted animate-pulse" />
         ))}
       </div>
@@ -90,14 +102,7 @@ export function FuelKpiCards({
   return (
     <>
       <div className="fuel-kpi-grid">
-        <MetricCard
-          title="Current fuel"
-          value={`${Math.round(liveTotal).toLocaleString()} L`}
-          subtitle={`Live tank total · ${unitLabelPlural}`}
-          icon={Droplets}
-          variant="info"
-          size="xs"
-        />
+        {liveCard}
         <MetricCard
           title="Total Filled"
           value={`${kpis.totalFilled.toLocaleString()} L`}

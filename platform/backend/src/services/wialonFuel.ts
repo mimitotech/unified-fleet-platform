@@ -4,6 +4,7 @@ import {
   readFuelLevelSensors,
   totalLitersFromReadings,
   tankCapacityFromItem,
+  fuelPercentFromLitres,
 } from './wialonFuelSensorUtils.js';
 
 export type SensorCalibrationPoint = { x: number; a: number; b: number };
@@ -182,7 +183,7 @@ export function fuelFromSearchItem(item: WialonSearchItem): {
   const totalLiters = totalLitersFromReadings(sensors);
   const capacity = tankCapacityFromItem(item);
   const fuelLevelPercent =
-    capacity && capacity > 0 ? Math.min(100, Math.round((totalLiters / capacity) * 100)) : undefined;
+    capacity && capacity > 0 ? fuelPercentFromLitres(totalLiters, capacity) : undefined;
 
   return {
     live: {
@@ -299,26 +300,34 @@ export function fuelLiveFromLls(
 /**
  * Fuel level as a 0–100 percentage.
  * Never treat raw litres as % — only litres÷capacity or explicit percent fields.
+ * When capacity is known, always use litres/capacity (even if litres ≤ 100).
  */
 export function extractFuelLevel(
   prp: Record<string, string> = {},
   prms: WialonPrm[] = [],
   lmsgParams?: Record<string, string | number>,
-  calcSensors?: Array<{ n: string; v: string; t?: number }>,
+  calcSensors?: Array<{ n: string; v: string; t?: number; u?: string }>,
   liveLls?: WialonLlsReading[],
   fuelLiters?: number,
   tankCapacity?: number
 ): number | undefined {
   if (fuelLiters != null && fuelLiters >= 0 && tankCapacity && tankCapacity > 0) {
-    return Math.min(100, Math.round((fuelLiters / tankCapacity) * 100));
+    return fuelPercentFromLitres(fuelLiters, tankCapacity);
   }
 
   if (liveLls?.length) {
     const liters = liveLls.reduce((sum, r) => sum + (r.level ?? r.value ?? 0), 0);
-    if (liters > 0 && tankCapacity && tankCapacity > 0) {
-      return Math.min(100, Math.round((liters / tankCapacity) * 100));
+    if (liters >= 0 && tankCapacity && tankCapacity > 0) {
+      return fuelPercentFromLitres(liters, tankCapacity);
     }
   }
+
+  // Capacity known but no litre reading yet — never treat raw ≤100 values as %.
+  const capacityKnown = tankCapacity != null && tankCapacity > 0;
+  const looksLikeLitres =
+    fuelLiters != null && fuelLiters > 0
+      ? true
+      : calcSensors?.some((s) => /l|litre|liter/i.test(s.u || '')) === true;
 
   // Explicit percent-named keys only — avoid treating LLS litre params as %.
   const percentKeys = ['fuel_percent', 'fuel_level_percent', 'fuel_pct', 'fuel%'];
@@ -328,20 +337,23 @@ export function extractFuelLevel(
     if (n != null && n >= 0 && n <= 100) return Math.round(n);
   }
 
-  for (const key of ['fuel_level', 'can_fuel']) {
-    const raw = prp[key] ?? prms.find((p) => p.key === key)?.value ?? lmsgParams?.[key];
-    const n = parseNumeric(raw);
-    // Only accept as % when value is clearly a percentage (≤100) and no litre reading exists.
-    if (n != null && n >= 0 && n <= 100 && (fuelLiters == null || fuelLiters <= 0)) {
-      return Math.round(n);
+  // Never treat raw litre values ≤100 as percentage when capacity is known or unit looks like litres.
+  if (!capacityKnown && !looksLikeLitres) {
+    for (const key of ['fuel_level', 'can_fuel']) {
+      const raw = prp[key] ?? prms.find((p) => p.key === key)?.value ?? lmsgParams?.[key];
+      const n = parseNumeric(raw);
+      if (n != null && n >= 0 && n <= 100 && (fuelLiters == null || fuelLiters <= 0)) {
+        return Math.round(n);
+      }
     }
   }
 
   if (calcSensors?.length) {
     for (const s of calcSensors) {
+      if (/l|litre|liter/i.test(s.u || '')) continue;
       if (!/percent|%|pct/i.test(s.n) && s.t !== 1) continue;
       const n = parseNumeric(s.v);
-      if (n != null && n >= 0 && n <= 100) return Math.round(n);
+      if (n != null && n >= 0 && n <= 100 && !capacityKnown) return Math.round(n);
     }
   }
 
@@ -395,13 +407,9 @@ export function parseWialonFuelSettings(
   const primary = tanks[0];
   const levelFromSensor = primary ? parseNumeric(primary.value) : undefined;
 
-  const levelLiters = live?.levelLiters ?? (levelFromSensor != null && levelFromSensor > 100 ? levelFromSensor : undefined);
-  const levelPercent =
-    live?.levelLiters != null && live.levelLiters <= 100
-      ? Math.round(live.levelLiters)
-      : levelFromSensor != null && levelFromSensor <= 100
-        ? levelFromSensor
-        : undefined;
+  // Fuel-level / tank sensor readings are always litres — never treat ≤100 as %.
+  const levelLiters = live?.levelLiters ?? levelFromSensor;
+  const levelPercent = undefined;
 
   return {
     level: levelPercent,
