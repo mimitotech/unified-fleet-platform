@@ -14,7 +14,7 @@ import {
   CreditCard,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { fuelTh } from './fuelTableCells';
+import { fuelTh, fuelStickyDateTh, fuelStickyUnitTh } from './fuelTableCells';
 
 const headerIcon = 'w-3.5 h-3.5 shrink-0';
 
@@ -36,12 +36,12 @@ export function FuelTableColumnHeaders({
 }) {
   const show = (key: string) => !visibleColumns?.length || visibleColumns.includes(key);
   return (
-    <thead className="sticky top-0 bg-card z-10 shadow-sm fuel-table-header">
+    <thead className="sticky top-0 bg-card z-20 shadow-sm fuel-table-header">
       <tr className="border-b border-border">
-        <th className={fuelTh}>
+        <th className={fuelStickyDateTh}>
           <HeaderLabel icon={<Calendar className={cn(headerIcon, 'text-primary')} />}>Date</HeaderLabel>
         </th>
-        <th className={fuelTh}>
+        <th className={fuelStickyUnitTh}>
           <HeaderLabel icon={<Truck className={cn(headerIcon, 'text-primary')} />}>{unitColumnLabel}</HeaderLabel>
         </th>
         <th className={fuelTh}>

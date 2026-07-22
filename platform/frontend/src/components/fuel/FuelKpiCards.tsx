@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { MetricCard } from '@/components/app/MetricCard';
 import type { FuelReportKpis } from './fuelReportStats';
 import { isWialonGroupSummary } from './fuelTransactionFilters';
+import { isPlausibleFuelEvent } from './fuelEventPlausibility';
 import { effectiveSuddenDropVolume, fuelTheftEventKey } from './fuelTheftVolume';
 
 interface FuelKpiCardsProps {
@@ -53,6 +54,7 @@ export function FuelKpiCards({
       if (isWialonGroupSummary(t) || t.section !== 'theft') continue;
       const volume = effectiveSuddenDropVolume(t);
       if (volume <= 0) continue;
+      if (!isPlausibleFuelEvent({ ...t, suddenFuelDrop: volume })) continue;
       const key = fuelTheftEventKey({ ...t, suddenFuelDrop: volume });
       if (seen.has(key)) continue;
       seen.add(key);

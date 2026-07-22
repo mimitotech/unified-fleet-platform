@@ -31,18 +31,21 @@ export interface StationaryFleetDataResult {
 function buildFuelLevelByName(units: Array<Generator | Machinery>): Map<string, number> {
   const map = new Map<string, number>();
   for (const unit of units) {
-    const tankCapacity = unit.fuelInfo?.tankCapacity ?? 100;
-    let level: number;
+    const tankCapacity =
+      unit.fuelInfo?.tankCapacity && unit.fuelInfo.tankCapacity > 0
+        ? unit.fuelInfo.tankCapacity
+        : 0;
+    let level = 0;
     if (unit.fuelInfo) {
-      level = unit.fuelInfo.level;
+      level = Number(unit.fuelInfo.level) || 0;
     } else if (unit.fuelUnit === 'liters') {
-      level = unit.fuel;
-    } else {
-      const percent = unit.fuel;
+      level = Number(unit.fuel) || 0;
+    } else if (tankCapacity > 0) {
+      const percent = Number(unit.fuel) || 0;
       level = (percent / 100) * tankCapacity;
     }
     if (level > 0) {
-      map.set(unit.name, Math.round(level));
+      map.set(unit.name, Math.round(level * 10) / 10);
     }
   }
   return map;

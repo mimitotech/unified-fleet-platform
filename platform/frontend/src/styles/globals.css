@@ -324,6 +324,39 @@
     @apply w-full max-w-full min-w-0 overflow-x-auto overflow-y-visible rounded-md border border-border/60 bg-card;
     overscroll-behavior-x: contain;
     -webkit-overflow-scrolling: touch;
+    scrollbar-gutter: stable;
+  }
+
+  .fuel-page .fuel-usage-scroll .fuel-sticky-col {
+    position: sticky;
+    z-index: 5;
+    box-shadow: 1px 0 0 0 hsl(var(--border) / 0.7);
+  }
+
+  .fuel-page .fuel-usage-scroll thead .fuel-sticky-col {
+    z-index: 15;
+  }
+
+  .fuel-page .fuel-usage-scroll .fuel-sticky-date {
+    left: 0;
+    min-width: 5.5rem;
+  }
+
+  .fuel-page .fuel-usage-scroll .fuel-sticky-unit {
+    left: 5.5rem;
+    min-width: 8.5rem;
+  }
+
+  .fuel-page .fuel-usage-scroll::-webkit-scrollbar {
+    height: 10px;
+  }
+
+  .fuel-page .fuel-usage-scroll::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-muted-foreground/35;
+  }
+
+  .fuel-page .fuel-usage-scroll::-webkit-scrollbar-track {
+    @apply bg-muted/40;
   }
 
   .fuel-page .recharts-responsive-container {

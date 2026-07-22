@@ -83,31 +83,30 @@ export function useFuelTableData({
       });
     }
 
-    if (vehicleFuelLevels && vehicleFuelLevels.size > 0) {
-      for (const u of units) {
-        if (groupMap.has(u.name)) continue;
-        const liveLevel = vehicleFuelLevels.get(u.name);
-        groups.push({
-          unitName: u.name,
-          driverName: u.driver,
-          transactions: [],
-          filledMain: 0,
-          filledReserve: 0,
-          filledStation: 0,
-          variance: 0,
-          usedMain: 0,
-          usedReserve: 0,
-          levelMain: 0,
-          levelReserve: 0,
-          dropMain: 0,
-          dropReserve: 0,
-          totalCost: 0,
-          alertCount: 0,
-          liveLevel: liveLevel && liveLevel > 0 ? liveLevel : undefined,
-          fuelType: '',
-          cardNumber: '',
-        });
-      }
+    // Always list every unit in this category tab — even with no period events.
+    for (const u of units) {
+      if (groupMap.has(u.name)) continue;
+      const liveLevel = vehicleFuelLevels?.get(u.name);
+      groups.push({
+        unitName: u.name,
+        driverName: u.driver,
+        transactions: [],
+        filledMain: 0,
+        filledReserve: 0,
+        filledStation: 0,
+        variance: 0,
+        usedMain: 0,
+        usedReserve: 0,
+        levelMain: liveLevel && liveLevel > 0 ? liveLevel : 0,
+        levelReserve: 0,
+        dropMain: 0,
+        dropReserve: 0,
+        totalCost: 0,
+        alertCount: 0,
+        liveLevel: liveLevel && liveLevel > 0 ? liveLevel : undefined,
+        fuelType: '',
+        cardNumber: '',
+      });
     }
 
     groups.sort((a, b) => a.unitName.localeCompare(b.unitName));

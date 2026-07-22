@@ -14,6 +14,7 @@ import { FuelTransactionRow } from './FuelTransactionRow';
 import { VehicleGroupRow } from './VehicleGroupRow';
 import { TransactionDetailModal } from '../TransactionDetailModal';
 import { FuelPerTripModal } from './FuelPerTripModal';
+import { fuelTableMinWidthPx } from './fuelTableCells';
 
 export function FuelTransactionsTable({
   transactions,
@@ -155,6 +156,8 @@ export function FuelTransactionsTable({
     URL.revokeObjectURL(url);
   };
 
+  const tableMinWidth = useMemo(() => fuelTableMinWidthPx(visibleColumns), [visibleColumns]);
+
   return (
     <div className="fleet-card fuel-usage-panel flex flex-col min-w-0 max-w-full">
       <FuelTableHeader
@@ -179,7 +182,10 @@ export function FuelTransactionsTable({
       />
 
       <div className="fuel-usage-scroll mt-3 w-full max-w-full min-w-0">
-        <table className="fuel-compact-table w-max min-w-[1520px]">
+        <table
+          className="fuel-compact-table w-max"
+          style={{ minWidth: tableMinWidth }}
+        >
           <FuelTableColumnHeaders unitColumnLabel={unitLabel} visibleColumns={visibleColumns} />
           <tbody>
             {!hasMultipleVehicles &&

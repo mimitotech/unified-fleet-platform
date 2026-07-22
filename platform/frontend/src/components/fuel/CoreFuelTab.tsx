@@ -120,7 +120,7 @@ export function CoreFuelTab({
         u.fuelUnit === 'percent' && typeof u.fuel === 'number' && u.fuel > 0 ? u.fuel : undefined;
       let fuelPercent = pctFromInfo ?? pctFromUnit;
       if (
-        (fuelPercent == null || fuelPercent <= 0) &&
+        (fuelPercent == null || fuelPercent <= 0 || fuelPercent > 100) &&
         level > 0 &&
         u.fuelInfo?.tankCapacity &&
         u.fuelInfo.tankCapacity > 0
@@ -178,7 +178,7 @@ export function CoreFuelTab({
         u.fuelUnit === 'percent' && typeof u.fuel === 'number' && u.fuel > 0 ? u.fuel : undefined;
       let fuelPercent = pctFromInfo ?? pctFromUnit ?? 0;
       if (
-        fuelPercent <= 0 &&
+        (fuelPercent <= 0 || fuelPercent > 100) &&
         level > 0 &&
         u.fuelInfo?.tankCapacity &&
         u.fuelInfo.tankCapacity > 0

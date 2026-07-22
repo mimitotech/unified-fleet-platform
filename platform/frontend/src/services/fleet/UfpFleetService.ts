@@ -309,17 +309,24 @@ export class UfpFleetService implements IFleetService {
       try {
         const assets = await this.getFuelAssets();
         const categoryAssets = assets.filter((a) => a.assetType === filters.assetCategory);
-        // Patch unit IDs from names when Wialon group rows lack IDs; trust backend category scope.
-        transactions = transactions.map((t) => {
-          if (t.unitId && categoryAssets.some((a) => String(a.unitId) === String(t.unitId))) {
+        const idSet = new Set(categoryAssets.map((a) => String(a.unitId)));
+        const nameSet = new Set(categoryAssets.map((a) => a.name.trim().toLowerCase()));
+
+        // Patch unit IDs from names, then keep only this category's assets.
+        transactions = transactions
+          .map((t) => {
+            if (t.unitId && idSet.has(String(t.unitId))) return t;
+            const match = categoryAssets.find(
+              (a) => a.name.trim().toLowerCase() === t.unitName.trim().toLowerCase(),
+            );
+            if (match) return { ...t, unitId: Number(match.unitId) || t.unitId };
             return t;
-          }
-          const match = categoryAssets.find(
-            (a) => a.name.trim().toLowerCase() === t.unitName.trim().toLowerCase(),
+          })
+          .filter(
+            (t) =>
+              (t.unitId != null && idSet.has(String(t.unitId))) ||
+              nameSet.has(t.unitName.trim().toLowerCase()),
           );
-          if (match) return { ...t, unitId: Number(match.unitId) || t.unitId };
-          return t;
-        });
       } catch {
         // DB rows already scoped by assetCategory when possible.
       }

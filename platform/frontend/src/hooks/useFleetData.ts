@@ -106,40 +106,40 @@ export function useFleetData(options?: FleetDataOptions): FleetDataResult {
   // -------------------------------------------------------------------------
   const vehicleFuelMap = useMemo(() => {
     const map = new Map<string, VehicleFuelInfo>();
-    
+
     for (const v of vehicles) {
-      const tankCapacity = v.fuelInfo?.tankCapacity ?? 100;
-      let level: number;
-      let percent: number;
-      
+      const tankCapacity =
+        v.fuelInfo?.tankCapacity && v.fuelInfo.tankCapacity > 0 ? v.fuelInfo.tankCapacity : 0;
+      let level = 0;
+      let percent = 0;
+
       if (v.fuelInfo) {
-        // Best case: fuelInfo from Wialon with calibrated sensor
-        level = v.fuelInfo.level;
-        percent = v.fuelInfo.percentage ?? 0;
+        level = Number(v.fuelInfo.level) || 0;
+        percent = Number(v.fuelInfo.percentage) || 0;
       } else if (v.fuelUnit === 'liters') {
-        // Fuel is already in liters
-        level = v.fuel;
-        percent = tankCapacity > 0 ? (v.fuel / tankCapacity) * 100 : 0;
+        level = Number(v.fuel) || 0;
       } else {
-        // Fuel is in percentage
-        percent = v.fuel;
-        level = (percent / 100) * tankCapacity;
+        percent = Number(v.fuel) || 0;
+        if (tankCapacity > 0 && percent > 0) level = (percent / 100) * tankCapacity;
       }
-      
-      // Determine status thresholds
-      const status: 'critical' | 'warning' | 'ok' = 
-        percent <= 15 ? 'critical' : 
-        percent <= 30 ? 'warning' : 
-        'ok';
-      
+
+      // Prefer calibrated tank capacity for % — never invent a 100 L default.
+      if ((percent <= 0 || percent > 100) && level > 0 && tankCapacity > 0) {
+        percent = Math.min(100, (level / tankCapacity) * 100);
+      }
+      if (percent > 100) percent = 100;
+
+      const status: 'critical' | 'warning' | 'ok' =
+        percent <= 15 ? 'critical' : percent <= 30 ? 'warning' : 'ok';
+
       map.set(v.id, {
-        level: Math.round(level),
+        level: Math.round(level * 10) / 10,
         percent: Math.round(percent * 10) / 10,
         tankCapacity,
         status,
       });
     }
-    
+
     return map;
   }, [vehicles]);
   
