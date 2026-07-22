@@ -98,7 +98,25 @@ router.get('/kpis', requireTenant, mod, async (req: TenantRequest, res) => {
        ) AS fleet_health_score`,
     [req.tenantId]
   );
-  return success(res, toCamelRows(rows)[0]);
+  const row = toCamelRows(rows)[0] || {};
+  const n = (v: unknown) => {
+    const x = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(x) ? x : 0;
+  };
+  return success(res, {
+    ...row,
+    pendingMaintenance: n(row.pendingMaintenance),
+    completedThisMonth: n(row.completedThisMonth),
+    openBreakdowns: n(row.openBreakdowns),
+    inspectionsDue: n(row.inspectionsDue),
+    totalMaintenanceCost: n(row.totalMaintenanceCost),
+    totalBreakdownCost: n(row.totalBreakdownCost),
+    vehiclesNeedingService: n(row.vehiclesNeedingService),
+    activeMaintenanceJobs: n(row.activeMaintenanceJobs),
+    avgRepairTime: n(row.avgRepairTime),
+    inspectionPassRate: n(row.inspectionPassRate),
+    fleetHealthScore: n(row.fleetHealthScore),
+  });
 });
 
 router.get('/inspections', requireTenant, mod, async (req: TenantRequest, res) => {

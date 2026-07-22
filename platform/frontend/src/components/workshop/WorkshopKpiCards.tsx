@@ -22,6 +22,12 @@ interface WorkshopKpiCardsProps {
   isLoading?: boolean;
 }
 
+/** MySQL DECIMAL often arrives as string — always coerce before math/UI. */
+function num(v: unknown, fallback = 0): number {
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 const formatCurrency = (amount: number) => {
   return new Intl.NumberFormat('en-UG', {
     style: 'currency',
@@ -32,13 +38,13 @@ const formatCurrency = (amount: number) => {
 
 export function WorkshopKpiCards({ kpis, isLoading = false }: WorkshopKpiCardsProps) {
   const safeKpis = {
-    totalMaintenanceCost: kpis?.totalMaintenanceCost ?? 0,
-    totalBreakdownCost: kpis?.totalBreakdownCost ?? 0,
-    vehiclesNeedingService: kpis?.vehiclesNeedingService ?? kpis?.inspectionsDue ?? 0,
-    activeMaintenanceJobs: kpis?.activeMaintenanceJobs ?? kpis?.pendingMaintenance ?? 0,
-    avgRepairTime: kpis?.avgRepairTime ?? 0,
-    inspectionPassRate: kpis?.inspectionPassRate ?? 0,
-    fleetHealthScore: kpis?.fleetHealthScore ?? 0,
+    totalMaintenanceCost: num(kpis?.totalMaintenanceCost),
+    totalBreakdownCost: num(kpis?.totalBreakdownCost),
+    vehiclesNeedingService: num(kpis?.vehiclesNeedingService ?? kpis?.inspectionsDue),
+    activeMaintenanceJobs: num(kpis?.activeMaintenanceJobs ?? kpis?.pendingMaintenance),
+    avgRepairTime: num(kpis?.avgRepairTime),
+    inspectionPassRate: num(kpis?.inspectionPassRate),
+    fleetHealthScore: num(kpis?.fleetHealthScore),
   };
 
   const healthScore = safeKpis.fleetHealthScore;

@@ -35,13 +35,18 @@ interface FleetMaintenanceTableProps {
   isLoading?: boolean;
 }
 
+function num(v: unknown, fallback = 0): number {
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 // Format currency for Uganda
-const formatCurrency = (amount: number) => {
+const formatCurrency = (amount: unknown) => {
   return new Intl.NumberFormat('en-UG', {
     style: 'currency',
     currency: 'UGX',
     maximumFractionDigits: 0,
-  }).format(amount);
+  }).format(num(amount));
 };
 
 const getStatusBadge = (status: InspectionStatus | null) => {
@@ -223,13 +228,13 @@ export function FleetMaintenanceTable({
                         <span className="text-sm text-muted-foreground">—</span>
                       )}
                       <p className="text-xs text-muted-foreground">
-                        Current: {vehicle.currentMileage.toLocaleString()} km
+                        Current: {num(vehicle.currentMileage).toLocaleString()} km
                       </p>
                     </td>
                     <td className="py-3 px-4">
                       <p className="font-medium">{formatCurrency(vehicle.totalMaintenanceCost)}</p>
                       <p className="text-xs text-muted-foreground">
-                        Avg {vehicle.avgRepairTime.toFixed(1)}h/job
+                        Avg {num(vehicle.avgRepairTime).toFixed(1)}h/job
                       </p>
                     </td>
                     <td className="py-3 px-4">
