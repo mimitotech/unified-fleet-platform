@@ -46,13 +46,20 @@ function FitTrackBounds({
   track,
   point,
   focus,
+  fitKey,
 }: {
   track: [number, number][];
   point?: { lat: number; lng: number };
   focus?: { lat: number; lng: number } | null;
+  /** Only re-fit when unit/range changes — not when live points append. */
+  fitKey?: string;
 }) {
   const map = useMap();
-  const trackKey = track.length > 1 ? `${track[0][0]},${track[0][1]}-${track.length}` : 'empty';
+  const stableKey =
+    fitKey ||
+    (track.length > 1
+      ? `${track[0][0].toFixed(5)},${track[0][1].toFixed(5)}`
+      : 'empty');
 
   useEffect(() => {
     if (focus) {
@@ -68,9 +75,9 @@ function FitTrackBounds({
     }
     const bounds = L.latLngBounds(track);
     if (point) bounds.extend([point.lat, point.lng]);
-    map.fitBounds(bounds, { padding: [48, 48], maxZoom: 17, animate: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-fit when track identity changes
-  }, [map, trackKey]);
+    map.fitBounds(bounds, { padding: [56, 56], maxZoom: 16, animate: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fit only when fitKey / unit range changes
+  }, [map, stableKey]);
 
   return null;
 }
@@ -204,6 +211,8 @@ type Props = {
   playhead?: { lat: number; lng: number; speed?: number; time?: number; course?: number } | null;
   /** Clicked stop — fly map here. */
   focusPoint?: { lat: number; lng: number } | null;
+  /** Stable key so map only auto-fits on unit/range change. */
+  fitKey?: string;
 };
 
 export function FleetTrackMap({
@@ -214,6 +223,7 @@ export function FleetTrackMap({
   onTrackStats,
   playhead = null,
   focusPoint = null,
+  fitKey,
 }: Props) {
   const { provider, view } = useMapStyle();
   const tiles = getFleetMapTiles(provider, view);
@@ -234,11 +244,13 @@ export function FleetTrackMap({
     stopCount,
   } = history;
 
-  const loading = isLoading || isFetching;
+  // Never flash a full-screen loader over an already-drawn track (background refetch).
+  const initialLoading = isLoading && pointCount === 0;
+  const loading = initialLoading;
 
   useEffect(() => {
-    onTrackStats?.({ pointCount, stopCount, loading });
-  }, [pointCount, stopCount, loading, onTrackStats]);
+    onTrackStats?.({ pointCount, stopCount, loading: initialLoading || isFetching });
+  }, [pointCount, stopCount, initialLoading, isFetching, onTrackStats]);
 
   const mapCenter = useMemo(() => {
     if (unit?.lat != null && unit?.lng != null) return { lat: unit.lat, lng: unit.lng };
@@ -305,13 +317,18 @@ export function FleetTrackMap({
 
   return (
     <div className="relative h-full w-full">
-      {loading && (
+      {initialLoading && (
         <div className="absolute inset-0 z-[500] bg-card/70 backdrop-blur-[1px] flex flex-col items-center justify-center gap-2">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <p className="text-sm font-medium">Loading route history…</p>
-          <p className="text-xs text-muted-foreground">
-            {pointCount > 0 ? `Updating track · ${pointCount} points` : 'Fetching GPS track & trips'}
-          </p>
+          <p className="text-xs text-muted-foreground">Fetching GPS track & trips</p>
+        </div>
+      )}
+
+      {isFetching && !initialLoading && (
+        <div className="absolute top-2 right-2 z-[500] bg-card/95 border border-border rounded-md px-2 py-1 shadow-sm flex items-center gap-1.5 text-[10px] text-muted-foreground">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Refreshing…
         </div>
       )}
 
@@ -325,7 +342,7 @@ export function FleetTrackMap({
         <p className="text-[10px] text-muted-foreground mt-1 tabular-nums">
           {pointCount > 0
             ? `${pointCount} GPS points · ${stopCount} stops · ${formatTrackDuration(summary.movingSec)} moving`
-            : loading
+            : initialLoading
               ? 'Building route…'
               : 'No points yet'}
         </p>
@@ -380,7 +397,12 @@ export function FleetTrackMap({
         maxZoom={tiles.maxZoom}
       >
         <FleetMapTileLayer key={`${provider}-${view}`} provider={provider} view={view} />
-        <FitTrackBounds track={fitTrack} point={unitMarkerPos ?? undefined} focus={focusPoint} />
+        <FitTrackBounds
+          track={fitTrack}
+          point={unitMarkerPos ?? undefined}
+          focus={focusPoint}
+          fitKey={fitKey}
+        />
         <FlyToPlayhead playhead={playhead} />
 
         {/* White outline for contrast on any basemap */}

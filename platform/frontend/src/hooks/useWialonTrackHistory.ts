@@ -76,9 +76,10 @@ export function useWialonTrackHistory(
   const query = useQuery({
     queryKey: ['wialon-track-history', unitId, resolved.key, live ? 'live' : 'static'],
     enabled: enabled && unitId != null,
-    staleTime: live ? LIVE_POLL.unitTrack : 20_000,
+    // Historical tracks are static after Show track — don't thrash the map every few seconds.
+    staleTime: live ? LIVE_POLL.unitTrack : 5 * 60_000,
     refetchInterval: enabled && live && resolved.liveOk ? pollWhenVisible(LIVE_POLL.unitTrack) : false,
-    // Don't keep a previous unit/period's empty result while the next fetch runs.
+    refetchOnWindowFocus: false,
     placeholderData: undefined,
     queryFn: async () => {
       // Re-resolve relative ranges at fetch time so live refresh advances

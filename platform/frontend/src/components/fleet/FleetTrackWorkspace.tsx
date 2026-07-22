@@ -66,6 +66,9 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
   const [playing, setPlaying] = useState(false);
   const [playSpeed, setPlaySpeed] = useState<(typeof SPEEDS)[number]>(1);
   const [focusStop, setFocusStop] = useState<{ lat: number; lng: number } | null>(null);
+  /** Opt-in only — auto-refresh was blanketing the map with "Updating track…". */
+  const [liveUpdates, setLiveUpdates] = useState(false);
+  const [mapExpanded, setMapExpanded] = useState(false);
 
   const withPosition = useMemo(() => units.filter((u) => u.lat != null && u.lng != null), [units]);
   const filtered = useMemo(() => {
@@ -97,7 +100,8 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
   }, [rangeMode, minutes, fromDate, toDate]);
 
   const wialonId = selected?.wialonId ?? (selected && Number.isFinite(Number(selected.id)) ? Number(selected.id) : null);
-  const liveRecent = rangeMode === 'relative' && minutes <= 24 * 60;
+  const canLive = rangeMode === 'relative' && minutes <= 60;
+  const liveRecent = liveUpdates && canLive;
   const history = useWialonTrackHistory(
     wialonId,
     connected && wialonId != null,
@@ -107,6 +111,15 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
 
   const { stops, summary, isLoading, isFetching, isError, errorMessage, pointCount, points, trips, useTripColors, refetch } =
     history;
+
+  const fitKey = useMemo(
+    () => `${wialonId ?? 'none'}|${rangeMode === 'absolute' ? `${fromDate}:${toDate}` : `rel:${minutes}`}`,
+    [wialonId, rangeMode, fromDate, toDate, minutes],
+  );
+
+  // Full overlay / "analysing" only on first load — never on quiet background refresh.
+  const initialLoading = isLoading && pointCount === 0;
+  const trackLoading = initialLoading;
 
   useEffect(() => {
     setPlaying(false);
@@ -194,12 +207,21 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
     return `${Math.round(mins / 10080)} wk`;
   }, [rangeMode, fromDate, toDate, minutes]);
 
-  const trackLoading = isLoading || isFetching;
-
   return (
-    <div className={cn('fleet-card p-0 overflow-hidden monitoring-workspace', className)}>
+    <div
+      className={cn(
+        'fleet-card p-0 overflow-hidden monitoring-workspace monitoring-workspace-track',
+        mapExpanded && 'monitoring-workspace-track-expanded',
+        className,
+      )}
+    >
       <div className="grid h-full grid-cols-1 lg:grid-cols-12">
-        <div className="lg:col-span-3 border-r border-border/60 flex flex-col h-full min-h-0 overflow-hidden">
+        <div
+          className={cn(
+            'border-r border-border/60 flex flex-col h-full min-h-0 overflow-hidden',
+            mapExpanded ? 'hidden' : 'lg:col-span-2',
+          )}
+        >
           <div className="p-2.5 border-b border-border/60 space-y-2 shrink-0">
             <div className="flex gap-1">
               <Button
@@ -286,10 +308,10 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
               type="button"
               size="sm"
               className="h-8 w-full text-xs"
-              disabled={!selected || !connected || trackLoading}
+              disabled={!selected || !connected || isFetching}
               onClick={() => refetch()}
             >
-              {trackLoading ? (
+              {isFetching ? (
                 <>
                   <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
                   Loading track…
@@ -298,12 +320,38 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
                 'Show track'
               )}
             </Button>
+            <div className="flex items-center justify-between gap-2">
+              <label
+                className={cn(
+                  'inline-flex items-center gap-1.5 text-[10px]',
+                  canLive ? 'text-muted-foreground cursor-pointer' : 'text-muted-foreground/50',
+                )}
+              >
+                <input
+                  type="checkbox"
+                  className="rounded border-border"
+                  checked={liveUpdates && canLive}
+                  disabled={!canLive}
+                  onChange={(e) => setLiveUpdates(e.target.checked)}
+                />
+                Live update (≤1 h)
+              </label>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 text-[10px] px-2"
+                onClick={() => setMapExpanded((v) => !v)}
+              >
+                {mapExpanded ? 'Exit expand' : 'Expand map'}
+              </Button>
+            </div>
             {!connected && (
               <p className="text-[10px] text-amber-700">Wialon link idle — connect in Admin to load GPS history.</p>
             )}
           </div>
 
-          <ul className="max-h-[22%] lg:max-h-[28%] overflow-auto p-1.5 space-y-0.5 shrink-0 border-b border-border/60">
+          <ul className="max-h-[18%] lg:max-h-[22%] overflow-auto p-1.5 space-y-0.5 shrink-0 border-b border-border/60">
             {filtered.map((u) => (
               <li key={u.id}>
                 <button
@@ -445,7 +493,12 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
           </div>
         </div>
 
-        <div className="lg:col-span-6 h-full min-h-0 relative border-r border-border/60 flex flex-col">
+        <div
+          className={cn(
+            'h-full min-h-0 relative border-r border-border/60 flex flex-col',
+            mapExpanded ? 'lg:col-span-12 border-r-0' : 'lg:col-span-8',
+          )}
+        >
           <div className="flex-1 min-h-0 relative">
             <FleetTrackMap
               unit={selected}
@@ -454,7 +507,19 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
               height="100%"
               playhead={playhead}
               focusPoint={focusStop}
+              fitKey={fitKey}
             />
+            {mapExpanded && (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="absolute top-2 right-2 z-[600] h-8 text-xs shadow-md"
+                onClick={() => setMapExpanded(false)}
+              >
+                Exit expand
+              </Button>
+            )}
           </div>
 
           {/* Wialon-style track player */}
@@ -546,7 +611,8 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
           )}
         </div>
 
-        <div className="hidden lg:flex lg:col-span-3 flex-col h-full min-h-0 overflow-hidden">
+        {!mapExpanded && (
+        <div className="hidden lg:flex lg:col-span-2 flex-col h-full min-h-0 overflow-hidden">
           {pointCount > 0 && playhead ? (
             <div className="flex flex-col h-full min-h-0">
               <div className="shrink-0 border-b border-border/60 px-3 py-2.5 space-y-1">
@@ -591,6 +657,7 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
             />
           )}
         </div>
+        )}
       </div>
     </div>
   );

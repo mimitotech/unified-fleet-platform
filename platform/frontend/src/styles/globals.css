@@ -243,10 +243,27 @@
     min-height: 32rem;
   }
 
+  /** Track tab — taller map canvas for route detail / playback. */
+  .monitoring-workspace-track {
+    height: calc(100dvh - 10.75rem);
+    min-height: 36rem;
+  }
+
+  .monitoring-workspace-track-expanded {
+    height: calc(100dvh - 7.5rem);
+    min-height: 40rem;
+  }
+
   @media (max-width: 1023px) {
     .monitoring-workspace {
       height: calc(100dvh - 15rem);
       min-height: 28rem;
+    }
+
+    .monitoring-workspace-track,
+    .monitoring-workspace-track-expanded {
+      height: calc(100dvh - 12rem);
+      min-height: 30rem;
     }
   }
 
