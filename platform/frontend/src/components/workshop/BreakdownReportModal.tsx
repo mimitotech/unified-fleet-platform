@@ -28,13 +28,22 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { FleetUnitSelect } from '@/components/fleet/FleetUnitSelect';
 import { useFleetUnits } from '@/hooks/useFleetUnits';
+import { FAILURE_SYSTEMS } from '@/lib/workshopChecklists';
+import {
+  resolveWorkshopAssetCategory,
+  workshopAssetLabel,
+  workshopOperatorLabel,
+  isStationaryUnit,
+} from '@/lib/workshopUnit';
 import type { FleetUnit } from '@/lib/fleetUnits';
-import type { BreakdownSeverity } from '@/types/workshop';
+import type { BreakdownSeverity, WorkshopAssetCategory } from '@/types/workshop';
 
 export interface BreakdownReportFormData {
   vehicleId: string;
   vehicleName: string;
   vehiclePlate: string;
+  assetCategory: WorkshopAssetCategory;
+  failureSystem: string;
   driverId: string | null;
   driverName: string;
   tripId?: string;
@@ -84,6 +93,8 @@ const initialFormState: BreakdownReportFormData = {
   vehicleId: '',
   vehicleName: '',
   vehiclePlate: '',
+  assetCategory: 'vehicle',
+  failureSystem: '',
   driverId: null,
   driverName: '',
   location: { lat: 0, lng: 0, address: '' },
@@ -141,17 +152,26 @@ export function BreakdownReportModal({
     if (!id) return null;
     return units.find((u) => u.id === id || String(u.wialonId) === id) || null;
   }, [selectedUnit, formData.vehicleId, units]);
+  const assetCategory = resolveWorkshopAssetCategory(matchedUnit, formData.assetCategory);
+  const stationary = isStationaryUnit(matchedUnit) || assetCategory !== 'vehicle';
+  const assetLabel = workshopAssetLabel(assetCategory);
+  const operatorLabel = workshopOperatorLabel(assetCategory);
+  const failureOptions = FAILURE_SYSTEMS[assetCategory];
+
   const handleClose = useCallback(() => {
     if (!isSubmitting) onOpenChange(false);
   }, [onOpenChange, isSubmitting]);
 
   const handleUnitChange = (unitId: string, unit: FleetUnit) => {
     setSelectedUnit(unit);
+    const category = resolveWorkshopAssetCategory(unit);
     setFormData((prev) => ({
       ...prev,
       vehicleId: unitId,
       vehicleName: unit.name,
       vehiclePlate: unit.plate || '',
+      assetCategory: category,
+      failureSystem: '',
       location: {
         ...prev.location,
         lat: unit.lat ?? prev.location.lat,
@@ -187,7 +207,11 @@ export function BreakdownReportModal({
     if (!isFormValid) return;
     setIsSubmitting(true);
     try {
-      await onSave({ ...formData, unit: selectedUnit ?? matchedUnit });
+      await onSave({
+        ...formData,
+        assetCategory,
+        unit: selectedUnit ?? matchedUnit,
+      });
       handleClose();
     } finally {
       setIsSubmitting(false);
@@ -204,14 +228,17 @@ export function BreakdownReportModal({
             </div>
             <div>
               <DialogTitle className="text-xl font-semibold">
-                {isEditMode ? 'Edit Breakdown Report' : 'Report Breakdown'}
+                {isEditMode ? 'Edit Breakdown Report' : `Report ${assetLabel} Breakdown`}
               </DialogTitle>
               <DialogDescription>
                 {isEditMode
                   ? 'Update breakdown details and resolution'
-                  : 'Record vehicle breakdown details and costs'}
+                  : `Record ${assetLabel.toLowerCase()} failure details and costs`}
               </DialogDescription>
             </div>
+            <Badge variant="outline" className="capitalize shrink-0 ml-auto">
+              {assetCategory}
+            </Badge>
           </div>
         </DialogHeader>
 
@@ -219,7 +246,7 @@ export function BreakdownReportModal({
           <div className="p-6 space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Vehicle *</Label>
+                <Label>Asset *</Label>
                 <FleetUnitSelect
                   value={selectedUnit?.id || (isEditMode ? undefined : formData.vehicleId) || undefined}
                   onValueChange={handleUnitChange}
@@ -233,14 +260,14 @@ export function BreakdownReportModal({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="driver">Driver</Label>
+                <Label htmlFor="driver">{operatorLabel}</Label>
                 <Select
                   value={formData.driverId || ''}
                   onValueChange={handleDriverChange}
                   disabled={isSubmitting}
                 >
                   <SelectTrigger id="driver">
-                    <SelectValue placeholder="Select driver" />
+                    <SelectValue placeholder={`Select ${operatorLabel.toLowerCase()}`} />
                   </SelectTrigger>
                   <SelectContent>
                     {drivers.map((d) => (
@@ -278,7 +305,29 @@ export function BreakdownReportModal({
                   <SelectContent>
                     <SelectItem value="minor">Minor - Can continue with caution</SelectItem>
                     <SelectItem value="major">Major - Requires immediate attention</SelectItem>
-                    <SelectItem value="critical">Critical - Vehicle immobilized</SelectItem>
+                    <SelectItem value="critical">
+                      Critical - {stationary ? 'Asset immobilized' : 'Vehicle immobilized'}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="failureSystem">Failed system</Label>
+                <Select
+                  value={formData.failureSystem || ''}
+                  onValueChange={(v) => setFormData((prev) => ({ ...prev, failureSystem: v }))}
+                  disabled={isSubmitting}
+                >
+                  <SelectTrigger id="failureSystem">
+                    <SelectValue placeholder="Select system / area" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {failureOptions.map((sys) => (
+                      <SelectItem key={sys} value={sys}>
+                        {sys}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -369,7 +418,9 @@ export function BreakdownReportModal({
               </Label>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="towingCost" className="text-sm text-muted-foreground">Towing Cost (UGX)</Label>
+                  <Label htmlFor="towingCost" className="text-sm text-muted-foreground">
+                    {stationary ? 'Recovery / Call-out Cost (UGX)' : 'Towing Cost (UGX)'}
+                  </Label>
                   <Input
                     id="towingCost"
                     type="number"

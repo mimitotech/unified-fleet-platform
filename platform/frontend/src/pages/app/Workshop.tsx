@@ -42,7 +42,8 @@ import {
 } from '@/hooks/useDomain';
 import { useFleetUnits } from '@/hooks/useFleetUnits';
 import { notify } from '@/lib/notify';
-import { workshopUnitFields } from '@/lib/workshopUnit';
+import { workshopUnitFields, sanitizeWorkshopAssetCategory } from '@/lib/workshopUnit';
+import { flattenChecklistSections } from '@/lib/workshopChecklists';
 import { safeArray } from '@/lib/safeArray';
 import type {
   VehicleInspection,
@@ -69,17 +70,24 @@ type BreakLike = {
 };
 
 function asInspection(row: Record<string, unknown>): VehicleInspection {
+  const assetCategory = sanitizeWorkshopAssetCategory(row.assetCategory);
+  const checklistSections = Array.isArray(row.checklistSections)
+    ? (row.checklistSections as VehicleInspection['checklistSections'])
+    : undefined;
   return {
     id: String(row.id ?? ''),
     vehicleId: String(row.vehicleId ?? ''),
     vehicleName: String(row.vehicleName ?? ''),
     vehiclePlate: String(row.vehiclePlate ?? ''),
+    assetCategory,
     driverId: (row.driverId as string | null) ?? null,
     driverName: (row.driverName as string | null) ?? null,
     inspectionType: (row.inspectionType as VehicleInspection['inspectionType']) || 'scheduled',
     inspectionDate: String(row.inspectionDate ?? new Date().toISOString()),
     odometerReading: Number(row.odometerReading ?? 0),
+    engineHours: row.engineHours != null ? Number(row.engineHours) : null,
     nextServiceMileage: row.nextServiceMileage != null ? Number(row.nextServiceMileage) : undefined,
+    checklistSections,
     truckHeadChecklist: Array.isArray(row.truckHeadChecklist) ? (row.truckHeadChecklist as VehicleInspection['truckHeadChecklist']) : [],
     trailerChecklist: Array.isArray(row.trailerChecklist) ? (row.trailerChecklist as VehicleInspection['trailerChecklist']) : [],
     overallStatus: (row.overallStatus as InspectionStatus) || 'pass',
@@ -95,6 +103,7 @@ function asMaintenanceLog(row: Record<string, unknown>): MaintenanceLog {
     vehicleId: String(row.vehicleId ?? ''),
     vehicleName: String(row.vehicleName ?? ''),
     vehiclePlate: String(row.vehiclePlate ?? ''),
+    assetCategory: sanitizeWorkshopAssetCategory(row.assetCategory),
     driverId: (row.driverId as string | null) ?? null,
     driverName: row.driverName as string | undefined,
     inspectionId: row.inspectionId as string | undefined,
@@ -113,6 +122,7 @@ function asMaintenanceLog(row: Record<string, unknown>): MaintenanceLog {
     status: (row.status as MaintenanceLog['status']) || 'pending',
     notes: row.notes as string | undefined,
     odometerReading: row.odometerReading != null ? Number(row.odometerReading) : undefined,
+    engineHours: row.engineHours != null ? Number(row.engineHours) : null,
     nextServiceKm: row.nextServiceKm != null ? Number(row.nextServiceKm) : undefined,
     nextServiceHours: row.nextServiceHours != null ? Number(row.nextServiceHours) : undefined,
     nextServiceDays: row.nextServiceDays != null ? Number(row.nextServiceDays) : undefined,
@@ -128,6 +138,8 @@ function asBreakdown(row: Record<string, unknown>): BreakdownReport {
     vehicleId: String(row.vehicleId ?? ''),
     vehicleName: String(row.vehicleName ?? ''),
     vehiclePlate: String(row.vehiclePlate ?? ''),
+    assetCategory: sanitizeWorkshopAssetCategory(row.assetCategory),
+    failureSystem: (row.failureSystem as string | null) ?? null,
     driverId: (row.driverId as string | null) ?? null,
     driverName: (row.driverName as string | null) ?? null,
     tripId: row.tripId as string | undefined,
@@ -154,6 +166,7 @@ const maintenanceLogToFormData = (log: MaintenanceLog): MaintenanceLogFormData =
   vehicleId: log.vehicleId,
   vehicleName: log.vehicleName,
   vehiclePlate: log.vehiclePlate,
+  assetCategory: log.assetCategory || 'vehicle',
   driverId: log.driverId || null,
   driverName: log.driverName || '',
   inspectionId: log.inspectionId,
@@ -172,6 +185,7 @@ const maintenanceLogToFormData = (log: MaintenanceLog): MaintenanceLogFormData =
   status: log.status,
   notes: log.notes || '',
   odometerReading: log.odometerReading,
+  engineHours: log.engineHours ?? undefined,
   nextServiceKm: log.nextServiceKm,
   nextServiceHours: log.nextServiceHours,
   nextServiceDays: log.nextServiceDays,
@@ -181,6 +195,8 @@ const breakdownToFormData = (brk: BreakdownReport): BreakdownReportFormData => (
   vehicleId: brk.vehicleId,
   vehicleName: brk.vehicleName,
   vehiclePlate: brk.vehiclePlate,
+  assetCategory: brk.assetCategory || 'vehicle',
+  failureSystem: brk.failureSystem || '',
   driverId: brk.driverId,
   driverName: brk.driverName || '',
   tripId: brk.tripId,
@@ -384,45 +400,48 @@ export default function Workshop() {
   }, [deleteInspectionMutation]);
 
   const handleSaveInspection = useCallback(async (data: InspectionFormData) => {
-    const allItems = [...data.truckHeadChecklist, ...data.trailerChecklist];
+    const allItems = flattenChecklistSections(data.checklistSections?.length
+      ? data.checklistSections
+      : [
+          { id: 'legacy-a', title: 'A', items: data.truckHeadChecklist || [] },
+          { id: 'legacy-b', title: 'B', items: data.trailerChecklist || [] },
+        ]);
     const hasIssues = allItems.some((item) => item.status === 'issue');
     const hasFails = allItems.filter((i) => i.status === 'issue').length > 3;
     const overallStatus: InspectionStatus = hasFails ? 'fail' : hasIssues ? 'needs-attention' : 'pass';
     const unitPayload = resolveUnitPayload(data);
+    const assetCategory =
+      data.assetCategory ||
+      sanitizeWorkshopAssetCategory((unitPayload as { assetCategory?: string }).assetCategory);
+
+    const payload = {
+      ...unitPayload,
+      assetCategory,
+      driverId: data.driverId,
+      driverName: data.driverName,
+      inspectionType: data.inspectionType,
+      odometerReading: data.odometerReading,
+      engineHours: data.engineHours || null,
+      nextServiceMileage: data.nextServiceMileage || null,
+      checklistSections: data.checklistSections,
+      truckHeadChecklist: data.truckHeadChecklist,
+      trailerChecklist: data.trailerChecklist,
+      overallStatus,
+      notes: data.notes,
+      inspectorName: data.inspectorName,
+    };
 
     try {
       if (editingInspection) {
         await updateInspectionMutation.mutateAsync({
           id: editingInspection.id,
-          data: {
-            ...unitPayload,
-            driverId: data.driverId,
-            driverName: data.driverName,
-            inspectionType: data.inspectionType,
-            odometerReading: data.odometerReading,
-            nextServiceMileage: data.nextServiceMileage || null,
-            truckHeadChecklist: data.truckHeadChecklist,
-            trailerChecklist: data.trailerChecklist,
-            overallStatus,
-            notes: data.notes,
-            inspectorName: data.inspectorName,
-          },
+          data: payload,
         });
         notify.success('Inspection updated');
       } else {
         await createInspectionMutation.mutateAsync({
-          ...unitPayload,
-          driverId: data.driverId,
-          driverName: data.driverName,
-          inspectionType: data.inspectionType,
+          ...payload,
           inspectionDate: new Date().toISOString(),
-          odometerReading: data.odometerReading,
-          nextServiceMileage: data.nextServiceMileage || null,
-          truckHeadChecklist: data.truckHeadChecklist,
-          trailerChecklist: data.trailerChecklist,
-          overallStatus,
-          notes: data.notes,
-          inspectorName: data.inspectorName,
         });
         notify.success('Inspection created');
       }
@@ -461,8 +480,12 @@ export default function Workshop() {
 
   const handleSaveMaintenanceLog = useCallback(async (data: MaintenanceLogFormData) => {
     const unitPayload = resolveUnitPayload(data);
+    const assetCategory =
+      data.assetCategory ||
+      sanitizeWorkshopAssetCategory((unitPayload as { assetCategory?: string }).assetCategory);
     const payload = {
       ...unitPayload,
+      assetCategory,
       driverId: data.driverId,
       driverName: data.driverName,
       inspectionId: data.inspectionId,
@@ -481,6 +504,7 @@ export default function Workshop() {
       status: data.status,
       notes: data.notes,
       odometerReading: data.odometerReading,
+      engineHours: data.engineHours ?? null,
       nextServiceKm: data.nextServiceKm,
       nextServiceHours: data.nextServiceHours,
       nextServiceDays: data.nextServiceDays,
@@ -534,8 +558,13 @@ export default function Workshop() {
 
   const handleSaveBreakdownReport = useCallback(async (data: BreakdownReportFormData) => {
     const unitPayload = resolveUnitPayload(data);
+    const assetCategory =
+      data.assetCategory ||
+      sanitizeWorkshopAssetCategory((unitPayload as { assetCategory?: string }).assetCategory);
     const payload = {
       ...unitPayload,
+      assetCategory,
+      failureSystem: data.failureSystem || null,
       driverId: data.driverId,
       driverName: data.driverName,
       tripId: data.tripId,

@@ -1,11 +1,12 @@
 /**
- * PreDeliveryInspectionModal - Truck Pre-Delivery Inspection Form
+ * PreDeliveryInspectionModal — category-aware inspection form
+ * (vehicle / generator / machinery checklists).
  */
 
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
-  ClipboardCheck, Truck, User, Gauge, Check, X,
-  AlertCircle, Loader2, MessageSquare, ChevronDown, ChevronUp,
+  ClipboardCheck, User, Gauge, Check, X,
+  AlertCircle, Loader2, MessageSquare, ChevronDown, ChevronUp, Clock,
 } from 'lucide-react';
 import {
   Dialog,
@@ -26,74 +27,52 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { FleetUnitSelect } from '@/components/fleet/FleetUnitSelect';
 import { useFleetUnits } from '@/hooks/useFleetUnits';
 import { cn } from '@/lib/utils';
-import { isStationaryUnit } from '@/lib/workshopUnit';
+import { clientApi } from '@/lib/api';
+import {
+  instantiateChecklistSections,
+  legacyChecklistsFromSections,
+  sectionsFromLegacy,
+  flattenChecklistSections,
+} from '@/lib/workshopChecklists';
+import {
+  isStationaryUnit,
+  resolveWorkshopAssetCategory,
+  workshopAssetLabel,
+  workshopOperatorLabel,
+  workshopMeterLabel,
+} from '@/lib/workshopUnit';
 import type { FleetUnit } from '@/lib/fleetUnits';
-import type { InspectionType, ChecklistItem, ChecklistItemStatus } from '@/types/workshop';
-
-const TRUCK_HEAD_CHECKLIST_ITEMS: Omit<ChecklistItem, 'id' | 'status' | 'comment'>[] = [
-  { name: 'Engine Compartment', category: 'truck-head' },
-  { name: 'Radiator Level', category: 'truck-head' },
-  { name: 'Brake Fluid Level', category: 'truck-head' },
-  { name: 'Power Steering Fluid Level', category: 'truck-head' },
-  { name: 'Tyres and Wheels', category: 'truck-head' },
-  { name: 'Tyre Tread Depth (including spares)', category: 'truck-head' },
-  { name: 'Tyre Pressure', category: 'truck-head' },
-  { name: 'Tyres: Check for visible damage or punctures', category: 'truck-head' },
-  { name: 'Hoist Operation', category: 'truck-head' },
-  { name: 'Headlamps (high and low beams)', category: 'truck-head' },
-  { name: 'Brake Lights (front and rear indicators)', category: 'truck-head' },
-  { name: 'Reverse Lights', category: 'truck-head' },
-  { name: 'Reflectors (supplied)', category: 'truck-head' },
-  { name: 'Chassis: Check for visible damage or corrosion', category: 'truck-head' },
-  { name: 'T-Back Visuals', category: 'truck-head' },
-  { name: 'Brake Pads and Discs/Drums', category: 'truck-head' },
-  { name: 'Suspension System', category: 'truck-head' },
-  { name: 'Shock Absorbers: check for wear, damage, or leaks', category: 'truck-head' },
-  { name: 'Test Steering for smooth operation', category: 'truck-head' },
-  { name: 'Transmission Fluid Level (if applicable)', category: 'truck-head' },
-  { name: 'Differential Oil Level (if applicable)', category: 'truck-head' },
-];
-
-const TRAILER_CHECKLIST_ITEMS: Omit<ChecklistItem, 'id' | 'status' | 'comment'>[] = [
-  { name: 'Body and Structure: Check for visible damage or leaks', category: 'trailer' },
-  { name: 'Ensure hose connections are secure', category: 'trailer' },
-  { name: 'Verify additional equipment is properly stowed and secured', category: 'trailer' },
-  { name: 'Fifth Wheel greased and in good condition', category: 'trailer' },
-  { name: 'Safety chains properly attached and not dragging', category: 'trailer' },
-  { name: 'All side lights (brake lights, turn signals, reflectors)', category: 'trailer' },
-  { name: 'Electrical connector secure', category: 'trailer' },
-  { name: 'Trailer Tyre Tread Depth (including spare)', category: 'trailer' },
-  { name: 'Check for cracked wheels', category: 'trailer' },
-  { name: 'Inspect tyres for visible damage or punctures', category: 'trailer' },
-  { name: 'Brake system proper operation', category: 'trailer' },
-  { name: 'Air/electrical lines', category: 'trailer' },
-  { name: 'Trailer frame for damage or corrosion', category: 'trailer' },
-  { name: 'Fire Extinguisher', category: 'safety' },
-  { name: 'First Aid Kits', category: 'safety' },
-  { name: 'Wheel Chocks', category: 'safety' },
-  { name: 'Suspension', category: 'trailer' },
-  { name: 'Cabin clean (inside and outside)', category: 'general' },
-  { name: 'Truck clean', category: 'general' },
-];
+import type {
+  InspectionType,
+  ChecklistItem,
+  ChecklistItemStatus,
+  ChecklistSection,
+  WorkshopAssetCategory,
+  VehicleInspection,
+} from '@/types/workshop';
 
 export interface InspectionFormData {
   vehicleId: string;
   vehicleName: string;
   vehiclePlate: string;
+  assetCategory: WorkshopAssetCategory;
   driverId: string | null;
   driverName: string;
   inspectionType: InspectionType;
   odometerReading: number;
+  engineHours: number;
   nextServiceMileage: number;
+  checklistSections: ChecklistSection[];
+  /** Legacy dual-write (derived from sections on save) */
   truckHeadChecklist: ChecklistItem[];
   trailerChecklist: ChecklistItem[];
   notes: string;
   inspectorName: string;
-  /** Selected fleet unit for assetId / vehicleId mapping */
   unit?: FleetUnit | null;
 }
 
@@ -109,20 +88,7 @@ export interface PreDeliveryInspectionModalProps {
   drivers?: DriverOption[];
   isLoading?: boolean;
   defaultVehicleId?: string;
-  editData?: {
-    vehicleId: string;
-    vehicleName: string;
-    vehiclePlate: string;
-    driverId: string | null;
-    driverName: string | null;
-    inspectionType: InspectionType;
-    odometerReading: number;
-    nextServiceMileage?: number;
-    truckHeadChecklist: ChecklistItem[];
-    trailerChecklist: ChecklistItem[];
-    notes?: string;
-    inspectorName?: string;
-  } | null;
+  editData?: VehicleInspection | null;
 }
 
 interface ChecklistRowProps {
@@ -187,15 +153,26 @@ function ChecklistRow({ item, onChange, disabled }: ChecklistRowProps) {
   );
 }
 
-function createInitialChecklist(
-  items: Omit<ChecklistItem, 'id' | 'status' | 'comment'>[]
-): ChecklistItem[] {
-  return items.map((item, index) => ({
-    ...item,
-    id: `${item.category}-${index}`,
-    status: 'na' as ChecklistItemStatus,
-    comment: undefined,
-  }));
+function emptyForm(defaultVehicleId?: string): InspectionFormData {
+  const sections = instantiateChecklistSections('vehicle');
+  const legacy = legacyChecklistsFromSections(sections);
+  return {
+    vehicleId: defaultVehicleId || '',
+    vehicleName: '',
+    vehiclePlate: '',
+    assetCategory: 'vehicle',
+    driverId: null,
+    driverName: '',
+    inspectionType: 'pre-delivery',
+    odometerReading: 0,
+    engineHours: 0,
+    nextServiceMileage: 0,
+    checklistSections: sections,
+    truckHeadChecklist: legacy.truckHeadChecklist,
+    trailerChecklist: legacy.trailerChecklist,
+    notes: '',
+    inspectorName: '',
+  };
 }
 
 export function PreDeliveryInspectionModal({
@@ -207,27 +184,16 @@ export function PreDeliveryInspectionModal({
   editData,
 }: PreDeliveryInspectionModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [truckHeadOpen, setTruckHeadOpen] = useState(true);
-  const [trailerOpen, setTrailerOpen] = useState(true);
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
   const [selectedUnit, setSelectedUnit] = useState<FleetUnit | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [templateName, setTemplateName] = useState<string>('');
+  const [loadingTemplate, setLoadingTemplate] = useState(false);
   const { units } = useFleetUnits();
   const isEditMode = !!editData;
+  const loadToken = useRef(0);
 
-  const [formData, setFormData] = useState<InspectionFormData>(() => ({
-    vehicleId: defaultVehicleId || '',
-    vehicleName: '',
-    vehiclePlate: '',
-    driverId: null,
-    driverName: '',
-    inspectionType: 'pre-delivery',
-    odometerReading: 0,
-    nextServiceMileage: 0,
-    truckHeadChecklist: createInitialChecklist(TRUCK_HEAD_CHECKLIST_ITEMS),
-    trailerChecklist: createInitialChecklist(TRAILER_CHECKLIST_ITEMS),
-    notes: '',
-    inspectorName: '',
-  }));
+  const [formData, setFormData] = useState<InspectionFormData>(() => emptyForm(defaultVehicleId));
 
   const matchedUnit = useMemo(() => {
     if (selectedUnit) return selectedUnit;
@@ -235,51 +201,87 @@ export function PreDeliveryInspectionModal({
     if (!id) return null;
     return units.find((u) => u.id === id || String(u.wialonId) === id) || null;
   }, [selectedUnit, formData.vehicleId, units]);
-  const stationary = isStationaryUnit(matchedUnit);
+
+  const assetCategory = resolveWorkshopAssetCategory(matchedUnit, formData.assetCategory);
+  const stationary = isStationaryUnit(matchedUnit) || assetCategory !== 'vehicle';
+  const assetLabel = workshopAssetLabel(assetCategory);
+  const operatorLabel = workshopOperatorLabel(assetCategory);
+
+  const applySections = useCallback((category: WorkshopAssetCategory, sections: ChecklistSection[]) => {
+    const legacy = legacyChecklistsFromSections(sections);
+    setFormData((prev) => ({
+      ...prev,
+      assetCategory: category,
+      checklistSections: sections,
+      truckHeadChecklist: legacy.truckHeadChecklist,
+      trailerChecklist: legacy.trailerChecklist,
+    }));
+    setOpenSections(Object.fromEntries(sections.map((s, i) => [s.id, i < 2])));
+  }, []);
+
+  const loadTemplateForCategory = useCallback(
+    async (category: WorkshopAssetCategory, preserveFilled = false) => {
+      const token = ++loadToken.current;
+      setLoadingTemplate(true);
+      try {
+        const tpl = await clientApi.getWorkshopChecklistTemplate(category);
+        if (token !== loadToken.current) return;
+        setTemplateName(tpl.name || '');
+        if (preserveFilled) return;
+        applySections(category, instantiateChecklistSections(category, tpl.sections));
+      } catch {
+        if (token !== loadToken.current) return;
+        setTemplateName('');
+        if (!preserveFilled) {
+          applySections(category, instantiateChecklistSections(category));
+        }
+      } finally {
+        if (token === loadToken.current) setLoadingTemplate(false);
+      }
+    },
+    [applySections],
+  );
+
   useEffect(() => {
     if (open && !isInitialized) {
       if (editData) {
+        const cat = sanitizeFromInspection(editData);
+        const sections =
+          editData.checklistSections && editData.checklistSections.length > 0
+            ? instantiateChecklistSections(cat, editData.checklistSections)
+            : sectionsFromLegacy(editData.truckHeadChecklist, editData.trailerChecklist, cat);
+        const legacy = legacyChecklistsFromSections(sections);
         setFormData({
           vehicleId: editData.vehicleId,
           vehicleName: editData.vehicleName,
           vehiclePlate: editData.vehiclePlate,
+          assetCategory: cat,
           driverId: editData.driverId,
           driverName: editData.driverName || '',
           inspectionType: editData.inspectionType,
           odometerReading: editData.odometerReading,
+          engineHours: Number(editData.engineHours ?? 0),
           nextServiceMileage: editData.nextServiceMileage || 0,
-          truckHeadChecklist: editData.truckHeadChecklist?.length
-            ? editData.truckHeadChecklist
-            : createInitialChecklist(TRUCK_HEAD_CHECKLIST_ITEMS),
-          trailerChecklist: editData.trailerChecklist?.length
-            ? editData.trailerChecklist
-            : createInitialChecklist(TRAILER_CHECKLIST_ITEMS),
+          checklistSections: sections,
+          truckHeadChecklist: legacy.truckHeadChecklist,
+          trailerChecklist: legacy.trailerChecklist,
           notes: editData.notes || '',
           inspectorName: editData.inspectorName || '',
         });
+        setOpenSections(Object.fromEntries(sections.map((s, i) => [s.id, i < 2])));
         setSelectedUnit(null);
+        void loadTemplateForCategory(cat, true);
       } else {
-        setFormData({
-          vehicleId: defaultVehicleId || '',
-          vehicleName: '',
-          vehiclePlate: '',
-          driverId: null,
-          driverName: '',
-          inspectionType: 'pre-delivery',
-          odometerReading: 0,
-          nextServiceMileage: 0,
-          truckHeadChecklist: createInitialChecklist(TRUCK_HEAD_CHECKLIST_ITEMS),
-          trailerChecklist: createInitialChecklist(TRAILER_CHECKLIST_ITEMS),
-          notes: '',
-          inspectorName: '',
-        });
+        setFormData(emptyForm(defaultVehicleId));
         setSelectedUnit(null);
+        setTemplateName('');
+        setOpenSections({});
       }
       setIsInitialized(true);
     } else if (!open) {
       setIsInitialized(false);
     }
-  }, [open, isInitialized, editData, defaultVehicleId]);
+  }, [open, isInitialized, editData, defaultVehicleId, loadTemplateForCategory]);
 
   const handleClose = useCallback(() => {
     if (!isSubmitting) onOpenChange(false);
@@ -287,13 +289,18 @@ export function PreDeliveryInspectionModal({
 
   const handleUnitChange = (unitId: string, unit: FleetUnit) => {
     setSelectedUnit(unit);
+    const category = resolveWorkshopAssetCategory(unit);
     setFormData((prev) => ({
       ...prev,
       vehicleId: unitId,
       vehicleName: unit.name,
       vehiclePlate: unit.plate || '',
+      assetCategory: category,
       unit,
+      odometerReading: category === 'vehicle' ? prev.odometerReading : 0,
+      engineHours: category !== 'vehicle' ? prev.engineHours : 0,
     }));
+    void loadTemplateForCategory(category, false);
   };
 
   const handleDriverChange = (driverId: string) => {
@@ -305,49 +312,63 @@ export function PreDeliveryInspectionModal({
     }));
   };
 
-  const updateTruckHeadItem = (index: number, status: ChecklistItemStatus, comment?: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      truckHeadChecklist: prev.truckHeadChecklist.map((item, i) =>
-        i === index ? { ...item, status, comment } : item
-      ),
-    }));
+  const updateSectionItem = (
+    sectionId: string,
+    index: number,
+    status: ChecklistItemStatus,
+    comment?: string,
+  ) => {
+    setFormData((prev) => {
+      const checklistSections = prev.checklistSections.map((section) => {
+        if (section.id !== sectionId) return section;
+        return {
+          ...section,
+          items: section.items.map((item, i) =>
+            i === index ? { ...item, status, comment } : item,
+          ),
+        };
+      });
+      const legacy = legacyChecklistsFromSections(checklistSections);
+      return {
+        ...prev,
+        checklistSections,
+        truckHeadChecklist: legacy.truckHeadChecklist,
+        trailerChecklist: legacy.trailerChecklist,
+      };
+    });
   };
 
-  const updateTrailerItem = (index: number, status: ChecklistItemStatus, comment?: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      trailerChecklist: prev.trailerChecklist.map((item, i) =>
-        i === index ? { ...item, status, comment } : item
-      ),
-    }));
-  };
+  const sectionStats = useCallback((section: ChecklistSection) => {
+    const completed = section.items.filter((i) => i.status !== 'na').length;
+    const issues = section.items.filter((i) => i.status === 'issue').length;
+    return { completed, total: section.items.length, issues };
+  }, []);
 
-  const truckHeadStats = useMemo(() => {
-    const completed = formData.truckHeadChecklist.filter((i) => i.status !== 'na').length;
-    const issues = formData.truckHeadChecklist.filter((i) => i.status === 'issue').length;
-    return { completed, total: formData.truckHeadChecklist.length, issues };
-  }, [formData.truckHeadChecklist]);
-
-  const trailerStats = useMemo(() => {
-    const completed = formData.trailerChecklist.filter((i) => i.status !== 'na').length;
-    const issues = formData.trailerChecklist.filter((i) => i.status === 'issue').length;
-    return { completed, total: formData.trailerChecklist.length, issues };
-  }, [formData.trailerChecklist]);
+  const totalIssues = useMemo(
+    () => flattenChecklistSections(formData.checklistSections).filter((i) => i.status === 'issue').length,
+    [formData.checklistSections],
+  );
 
   const isFormValid = useMemo(() => {
-    return (
-      Boolean(formData.vehicleId || formData.vehicleName) &&
-      formData.inspectorName.trim() !== '' &&
-      (stationary || formData.odometerReading > 0 || isEditMode)
-    );
+    const hasAsset = Boolean(formData.vehicleId || formData.vehicleName);
+    const hasInspector = formData.inspectorName.trim() !== '';
+    if (!hasAsset || !hasInspector) return false;
+    if (isEditMode || stationary) return true;
+    return formData.odometerReading > 0;
   }, [formData, stationary, isEditMode]);
 
   const handleSave = async () => {
     if (!isFormValid) return;
     setIsSubmitting(true);
     try {
-      await onSave({ ...formData, unit: selectedUnit ?? matchedUnit });
+      const legacy = legacyChecklistsFromSections(formData.checklistSections);
+      await onSave({
+        ...formData,
+        assetCategory,
+        truckHeadChecklist: legacy.truckHeadChecklist,
+        trailerChecklist: legacy.trailerChecklist,
+        unit: selectedUnit ?? matchedUnit,
+      });
       handleClose();
     } finally {
       setIsSubmitting(false);
@@ -362,16 +383,20 @@ export function PreDeliveryInspectionModal({
             <div className="p-2 bg-primary/10 rounded-lg">
               <ClipboardCheck className="h-5 w-5 text-primary" />
             </div>
-            <div>
+            <div className="flex-1">
               <DialogTitle className="text-xl font-semibold">
-                {isEditMode ? 'Edit Inspection' : 'Pre-Delivery Inspection'}
+                {isEditMode ? 'Edit Inspection' : `${assetLabel} Inspection`}
               </DialogTitle>
               <DialogDescription>
-                {isEditMode
-                  ? 'Update the inspection details and checklist'
-                  : 'Complete the vehicle inspection checklist before delivery'}
+                {templateName ||
+                  (isEditMode
+                    ? 'Update inspection details and checklist'
+                    : `Checklist adapts to the selected ${assetLabel.toLowerCase()}`)}
               </DialogDescription>
             </div>
+            <Badge variant="outline" className="capitalize shrink-0">
+              {assetCategory}
+            </Badge>
           </div>
         </DialogHeader>
 
@@ -379,7 +404,7 @@ export function PreDeliveryInspectionModal({
           <div className="p-6 space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Vehicle *</Label>
+                <Label>Asset *</Label>
                 <FleetUnitSelect
                   value={selectedUnit?.id || (isEditMode ? undefined : formData.vehicleId) || undefined}
                   onValueChange={handleUnitChange}
@@ -393,14 +418,14 @@ export function PreDeliveryInspectionModal({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="driver">Driver</Label>
+                <Label htmlFor="driver">{operatorLabel}</Label>
                 <Select
                   value={formData.driverId || ''}
                   onValueChange={handleDriverChange}
                   disabled={isSubmitting}
                 >
                   <SelectTrigger id="driver">
-                    <SelectValue placeholder="Select driver (optional)" />
+                    <SelectValue placeholder={`Select ${operatorLabel.toLowerCase()} (optional)`} />
                   </SelectTrigger>
                   <SelectContent>
                     {drivers.map((d) => (
@@ -425,9 +450,9 @@ export function PreDeliveryInspectionModal({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="pre-delivery">Pre-Delivery</SelectItem>
-                    <SelectItem value="pre-trip">Pre-Trip</SelectItem>
-                    <SelectItem value="post-trip">Post-Trip</SelectItem>
+                    <SelectItem value="pre-delivery">Pre-Delivery / Pre-Use</SelectItem>
+                    <SelectItem value="pre-trip">Pre-Trip / Pre-Start</SelectItem>
+                    <SelectItem value="post-trip">Post-Trip / After Run</SelectItem>
                     <SelectItem value="scheduled">Scheduled</SelectItem>
                   </SelectContent>
                 </Select>
@@ -448,10 +473,10 @@ export function PreDeliveryInspectionModal({
                 </div>
               </div>
 
-              {!stationary && (
+              {!stationary ? (
                 <>
                   <div className="space-y-2">
-                    <Label htmlFor="odometer">Odometer Reading (km) *</Label>
+                    <Label htmlFor="odometer">{workshopMeterLabel('vehicle')} *</Label>
                     <div className="relative">
                       <Input
                         id="odometer"
@@ -488,68 +513,81 @@ export function PreDeliveryInspectionModal({
                     />
                   </div>
                 </>
+              ) : (
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="engineHours">{workshopMeterLabel(assetCategory)}</Label>
+                  <div className="relative max-w-sm">
+                    <Input
+                      id="engineHours"
+                      type="number"
+                      step="0.1"
+                      placeholder="e.g., 1245.5"
+                      value={formData.engineHours || ''}
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          engineHours: parseFloat(e.target.value) || 0,
+                        }))
+                      }
+                      className="pl-9"
+                      disabled={isSubmitting}
+                    />
+                    <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  </div>
+                </div>
               )}
             </div>
 
-            <Collapsible open={truckHeadOpen} onOpenChange={setTruckHeadOpen}>
-              <CollapsibleTrigger asChild>
-                <Button variant="ghost" className="w-full justify-between p-4 h-auto border rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <Truck className="h-5 w-5 text-primary" />
-                    <div className="text-left">
-                      <div className="font-medium">Truck Head Checklist</div>
-                      <div className="text-xs text-muted-foreground">
-                        {truckHeadStats.completed}/{truckHeadStats.total} completed
-                        {truckHeadStats.issues > 0 && (
-                          <span className="text-destructive ml-2">• {truckHeadStats.issues} issues</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  {truckHeadOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                </Button>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="border border-t-0 rounded-b-lg px-4">
-                {formData.truckHeadChecklist.map((item, index) => (
-                  <ChecklistRow
-                    key={item.id}
-                    item={item}
-                    onChange={(status, comment) => updateTruckHeadItem(index, status, comment)}
-                    disabled={isSubmitting}
-                  />
-                ))}
-              </CollapsibleContent>
-            </Collapsible>
+            {loadingTemplate && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading {assetLabel.toLowerCase()} checklist…
+              </div>
+            )}
 
-            <Collapsible open={trailerOpen} onOpenChange={setTrailerOpen}>
-              <CollapsibleTrigger asChild>
-                <Button variant="ghost" className="w-full justify-between p-4 h-auto border rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <Truck className="h-5 w-5 text-primary" />
-                    <div className="text-left">
-                      <div className="font-medium">Trailer & Safety Checklist</div>
-                      <div className="text-xs text-muted-foreground">
-                        {trailerStats.completed}/{trailerStats.total} completed
-                        {trailerStats.issues > 0 && (
-                          <span className="text-destructive ml-2">• {trailerStats.issues} issues</span>
-                        )}
+            {formData.checklistSections.map((section) => {
+              const stats = sectionStats(section);
+              const isOpen = openSections[section.id] ?? true;
+              return (
+                <Collapsible
+                  key={section.id}
+                  open={isOpen}
+                  onOpenChange={(next) =>
+                    setOpenSections((prev) => ({ ...prev, [section.id]: next }))
+                  }
+                >
+                  <CollapsibleTrigger asChild>
+                    <Button variant="ghost" className="w-full justify-between p-4 h-auto border rounded-lg">
+                      <div className="flex items-center gap-3">
+                        <ClipboardCheck className="h-5 w-5 text-primary" />
+                        <div className="text-left">
+                          <div className="font-medium">{section.title}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {stats.completed}/{stats.total} completed
+                            {stats.issues > 0 && (
+                              <span className="text-destructive ml-2">• {stats.issues} issues</span>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                  {trailerOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                </Button>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="border border-t-0 rounded-b-lg px-4">
-                {formData.trailerChecklist.map((item, index) => (
-                  <ChecklistRow
-                    key={item.id}
-                    item={item}
-                    onChange={(status, comment) => updateTrailerItem(index, status, comment)}
-                    disabled={isSubmitting}
-                  />
-                ))}
-              </CollapsibleContent>
-            </Collapsible>
+                      {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="border border-t-0 rounded-b-lg px-4">
+                    {section.items.map((item, index) => (
+                      <ChecklistRow
+                        key={item.id}
+                        item={item}
+                        onChange={(status, comment) =>
+                          updateSectionItem(section.id, index, status, comment)
+                        }
+                        disabled={isSubmitting}
+                      />
+                    ))}
+                  </CollapsibleContent>
+                </Collapsible>
+              );
+            })}
 
             <div className="space-y-2">
               <Label htmlFor="notes">Additional Notes</Label>
@@ -568,10 +606,10 @@ export function PreDeliveryInspectionModal({
         <DialogFooter className="px-6 py-4 border-t bg-muted/20 flex-shrink-0">
           <div className="flex items-center justify-between w-full">
             <div className="text-sm text-muted-foreground">
-              {truckHeadStats.issues + trailerStats.issues > 0 && (
+              {totalIssues > 0 && (
                 <span className="flex items-center gap-1 text-destructive">
                   <AlertCircle className="h-4 w-4" />
-                  {truckHeadStats.issues + trailerStats.issues} issues found
+                  {totalIssues} issues found
                 </span>
               )}
             </div>
@@ -597,4 +635,8 @@ export function PreDeliveryInspectionModal({
       </DialogContent>
     </Dialog>
   );
+}
+
+function sanitizeFromInspection(insp: VehicleInspection): WorkshopAssetCategory {
+  return resolveWorkshopAssetCategory(null, insp.assetCategory);
 }

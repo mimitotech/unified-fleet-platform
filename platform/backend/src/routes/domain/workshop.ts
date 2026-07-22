@@ -4,6 +4,13 @@ import { requireTenant, type TenantRequest } from '../../middleware/tenant.js';
 import { requireModule, requireWriteAccess } from '../../middleware/rbac.js';
 import { success, error } from '../../utils/response.js';
 import { toCamelRows } from '../../utils/mapper.js';
+import { getChecklistTemplateForCategory } from '../../services/WorkshopSchema.js';
+import {
+  FAILURE_SYSTEMS,
+  sanitizeWorkshopAssetCategory,
+  WORKSHOP_ASSET_CATEGORIES,
+  type WorkshopAssetCategory,
+} from '../../services/WorkshopChecklistTemplates.js';
 
 const router = Router();
 const mod = requireModule('workshop');
@@ -54,6 +61,43 @@ function asJson(value: unknown, fallback: unknown) {
   if (value == null) return JSON.stringify(fallback);
   if (typeof value === 'string') return value;
   return JSON.stringify(value);
+}
+
+async function persistAssetCategory(assetId: string | null, category: WorkshopAssetCategory) {
+  if (!assetId) return;
+  try {
+    await query(`UPDATE assets SET asset_category = $2, updated_at = NOW() WHERE id = $1`, [
+      assetId,
+      category,
+    ]);
+  } catch {
+    /* column may be missing until migrate */
+  }
+}
+
+/** Split flexible sections into legacy truck/trailer JSON columns for older clients. */
+function legacyChecklistsFromSections(sections: unknown): { truck: unknown; trailer: unknown } {
+  if (!Array.isArray(sections)) return { truck: [], trailer: [] };
+  const truck: unknown[] = [];
+  const trailer: unknown[] = [];
+  for (const sec of sections) {
+    const s = sec as { id?: string; items?: unknown[] };
+    const items = Array.isArray(s.items) ? s.items : [];
+    if (s.id === 'truck-head' || s.id === 'powertrain' || s.id === 'engine') {
+      truck.push(...items);
+    } else {
+      trailer.push(...items);
+    }
+  }
+  if (truck.length === 0 && trailer.length === 0) {
+    for (const sec of sections) {
+      const items = Array.isArray((sec as { items?: unknown[] }).items)
+        ? (sec as { items: unknown[] }).items
+        : [];
+      truck.push(...items);
+    }
+  }
+  return { truck, trailer };
 }
 
 router.get('/kpis', requireTenant, mod, async (req: TenantRequest, res) => {
@@ -151,20 +195,56 @@ router.get('/mechanics', requireTenant, mod, async (req: TenantRequest, res) => 
   return success(res, toCamelRows(rows));
 });
 
+router.get('/checklist-templates', requireTenant, mod, async (req: TenantRequest, res) => {
+  const categoryParam = req.query.assetCategory ?? req.query.category;
+  if (categoryParam) {
+    const category = sanitizeWorkshopAssetCategory(categoryParam);
+    const tpl = await getChecklistTemplateForCategory(req.tenantId!, category);
+    return success(res, {
+      ...tpl,
+      failureSystems: FAILURE_SYSTEMS[category],
+    });
+  }
+  const all = await Promise.all(
+    WORKSHOP_ASSET_CATEGORIES.map(async (category) => {
+      const tpl = await getChecklistTemplateForCategory(req.tenantId!, category);
+      return { ...tpl, failureSystems: FAILURE_SYSTEMS[category] };
+    }),
+  );
+  return success(res, all);
+});
+
 router.post('/inspections', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
   const {
     vehicleId, vehicleName, vehiclePlate, assetId, driverId, driverName,
     inspectionType, inspectionDate, odometerReading, nextServiceMileage,
     truckHeadChecklist, trailerChecklist, overallStatus, notes, inspectorName,
+    assetCategory, engineHours, checklistSections,
   } = req.body;
   if (!vehicleName || !inspectionType) return error(res, 'vehicleName and inspectionType required');
   const resolvedAssetId = await resolveWorkshopAssetId(req.tenantId!, assetId, vehicleId);
+  const category = sanitizeWorkshopAssetCategory(assetCategory);
+  const sections =
+    checklistSections ??
+    (truckHeadChecklist || trailerChecklist
+      ? [
+          ...(Array.isArray(truckHeadChecklist) && truckHeadChecklist.length
+            ? [{ id: 'truck-head', title: 'Systems', items: truckHeadChecklist }]
+            : []),
+          ...(Array.isArray(trailerChecklist) && trailerChecklist.length
+            ? [{ id: 'trailer-safety', title: 'Safety', items: trailerChecklist }]
+            : []),
+        ]
+      : null);
+  const legacy = legacyChecklistsFromSections(sections);
+  await persistAssetCategory(resolvedAssetId, category);
   const { rows } = await query(
     `INSERT INTO vehicle_inspections (
        tenant_id, asset_id, vehicle_id, vehicle_name, vehicle_plate, driver_id, driver_name,
        inspection_type, inspection_date, odometer_reading, next_service_mileage,
-       truck_head_checklist, trailer_checklist, overall_status, notes, inspector_name
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb,$14,$15,$16) RETURNING *`,
+       truck_head_checklist, trailer_checklist, overall_status, notes, inspector_name,
+       asset_category, engine_hours, checklist_sections
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb,$14,$15,$16,$17,$18,$19::jsonb) RETURNING *`,
     [
       req.tenantId,
       resolvedAssetId,
@@ -177,11 +257,14 @@ router.post('/inspections', requireTenant, mod, requireWriteAccess, async (req: 
       inspectionDate || new Date(),
       odometerReading ?? 0,
       nextServiceMileage ?? null,
-      asJson(truckHeadChecklist, []),
-      asJson(trailerChecklist, []),
+      asJson(truckHeadChecklist ?? legacy.truck, []),
+      asJson(trailerChecklist ?? legacy.trailer, []),
       overallStatus || 'pass',
       notes || null,
       inspectorName || null,
+      category,
+      engineHours ?? null,
+      asJson(sections, []),
     ]
   );
   return success(res, toCamelRows(rows)[0], 201);
@@ -193,6 +276,15 @@ router.patch('/inspections/:id', requireTenant, mod, requireWriteAccess, async (
     b.assetId != null || b.vehicleId != null
       ? await resolveWorkshopAssetId(req.tenantId!, b.assetId, b.vehicleId)
       : undefined;
+  const category =
+    b.assetCategory != null ? sanitizeWorkshopAssetCategory(b.assetCategory) : null;
+  if (resolvedAssetId && category) await persistAssetCategory(resolvedAssetId, category);
+  const sectionsJson =
+    b.checklistSections != null
+      ? asJson(b.checklistSections, [])
+      : null;
+  const legacy =
+    b.checklistSections != null ? legacyChecklistsFromSections(b.checklistSections) : null;
   const { rows } = await query(
     `UPDATE vehicle_inspections SET
        asset_id = COALESCE($3, asset_id),
@@ -210,6 +302,9 @@ router.patch('/inspections/:id', requireTenant, mod, requireWriteAccess, async (
        overall_status = COALESCE($15, overall_status),
        notes = COALESCE($16, notes),
        inspector_name = COALESCE($18, inspector_name),
+       asset_category = COALESCE($19, asset_category),
+       engine_hours = COALESCE($20, engine_hours),
+       checklist_sections = COALESCE($21::jsonb, checklist_sections),
        updated_at = NOW()
      WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
      RETURNING *`,
@@ -226,12 +321,23 @@ router.patch('/inspections/:id', requireTenant, mod, requireWriteAccess, async (
       b.inspectionDate ?? null,
       b.odometerReading ?? null,
       b.nextServiceMileage ?? null,
-      b.truckHeadChecklist != null ? asJson(b.truckHeadChecklist, []) : null,
-      b.trailerChecklist != null ? asJson(b.trailerChecklist, []) : null,
+      b.truckHeadChecklist != null
+        ? asJson(b.truckHeadChecklist, [])
+        : legacy
+          ? asJson(legacy.truck, [])
+          : null,
+      b.trailerChecklist != null
+        ? asJson(b.trailerChecklist, [])
+        : legacy
+          ? asJson(legacy.trailer, [])
+          : null,
       b.overallStatus ?? null,
       b.notes ?? null,
       Object.prototype.hasOwnProperty.call(b, 'driverId'),
       b.inspectorName ?? null,
+      category,
+      b.engineHours ?? null,
+      sectionsJson,
     ]
   );
   if (!rows[0]) return error(res, 'Inspection not found', 404);
@@ -254,18 +360,22 @@ router.post('/maintenance', requireTenant, mod, requireWriteAccess, async (req: 
     inspectionId, breakdownId, maintenanceType, priority, description, mechanicName,
     startDate, endDate, laborHours, laborCost, partsCost, totalCost, partsUsed,
     status, notes, odometerReading, nextServiceKm, nextServiceHours, nextServiceDays,
+    assetCategory, engineHours,
   } = req.body;
   if (!vehicleName || !maintenanceType || !description || !mechanicName) {
     return error(res, 'vehicleName, maintenanceType, description and mechanicName required');
   }
   const resolvedAssetId = await resolveWorkshopAssetId(req.tenantId!, assetId, vehicleId);
+  const category = sanitizeWorkshopAssetCategory(assetCategory);
+  await persistAssetCategory(resolvedAssetId, category);
   const { rows } = await query(
     `INSERT INTO maintenance_logs (
        tenant_id, asset_id, vehicle_id, vehicle_name, vehicle_plate, driver_id, driver_name,
        inspection_id, breakdown_id, maintenance_type, priority, description, mechanic_name,
        start_date, end_date, labor_hours, labor_cost, parts_cost, total_cost, parts_used,
-       status, notes, odometer_reading, next_service_km, next_service_hours, next_service_days
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,$21,$22,$23,$24,$25,$26)
+       status, notes, odometer_reading, next_service_km, next_service_hours, next_service_days,
+       asset_category, engine_hours
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,$21,$22,$23,$24,$25,$26,$27,$28)
      RETURNING *`,
     [
       req.tenantId,
@@ -294,6 +404,8 @@ router.post('/maintenance', requireTenant, mod, requireWriteAccess, async (req: 
       nextServiceKm ?? null,
       nextServiceHours ?? null,
       nextServiceDays ?? null,
+      category,
+      engineHours ?? null,
     ]
   );
   return success(res, toCamelRows(rows)[0], 201);
@@ -305,6 +417,9 @@ router.patch('/maintenance/:id', requireTenant, mod, requireWriteAccess, async (
     b.assetId != null || b.vehicleId != null
       ? await resolveWorkshopAssetId(req.tenantId!, b.assetId, b.vehicleId)
       : undefined;
+  const category =
+    b.assetCategory != null ? sanitizeWorkshopAssetCategory(b.assetCategory) : null;
+  if (resolvedAssetId && category) await persistAssetCategory(resolvedAssetId, category);
   const { rows } = await query(
     `UPDATE maintenance_logs SET
        asset_id = COALESCE($3, asset_id),
@@ -332,6 +447,8 @@ router.patch('/maintenance/:id', requireTenant, mod, requireWriteAccess, async (
        next_service_km = COALESCE($25, next_service_km),
        next_service_hours = COALESCE($26, next_service_hours),
        next_service_days = COALESCE($28, next_service_days),
+       asset_category = COALESCE($29, asset_category),
+       engine_hours = COALESCE($30, engine_hours),
        updated_at = NOW()
      WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
      RETURNING *`,
@@ -364,6 +481,8 @@ router.patch('/maintenance/:id', requireTenant, mod, requireWriteAccess, async (
       b.nextServiceHours ?? null,
       Object.prototype.hasOwnProperty.call(b, 'driverId'),
       b.nextServiceDays ?? null,
+      category,
+      b.engineHours ?? null,
     ]
   );
   if (!rows[0]) return error(res, 'Maintenance log not found', 404);
@@ -385,15 +504,19 @@ router.post('/breakdowns', requireTenant, mod, requireWriteAccess, async (req: T
     vehicleId, vehicleName, vehiclePlate, assetId, driverId, driverName,
     location, breakdownTime, resolutionTime, severity, description, cause, resolution,
     downtimeHours, towingCost, repairCost, totalCost, tripId,
+    assetCategory, failureSystem,
   } = req.body;
   if (!vehicleName || !description) return error(res, 'vehicleName and description required');
   const resolvedAssetId = await resolveWorkshopAssetId(req.tenantId!, assetId, vehicleId);
+  const category = sanitizeWorkshopAssetCategory(assetCategory);
+  await persistAssetCategory(resolvedAssetId, category);
   const { rows } = await query(
     `INSERT INTO breakdown_reports (
        tenant_id, asset_id, vehicle_id, vehicle_name, vehicle_plate, driver_id, driver_name,
        location, breakdown_time, resolution_time, severity, description, cause, resolution,
-       downtime_hours, towing_cost, repair_cost, total_cost, trip_id
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
+       downtime_hours, towing_cost, repair_cost, total_cost, trip_id,
+       asset_category, failure_system
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING *`,
     [
       req.tenantId,
       resolvedAssetId,
@@ -414,6 +537,8 @@ router.post('/breakdowns', requireTenant, mod, requireWriteAccess, async (req: T
       repairCost ?? 0,
       totalCost ?? 0,
       tripId || null,
+      category,
+      failureSystem || null,
     ]
   );
   return success(res, toCamelRows(rows)[0], 201);
@@ -425,6 +550,9 @@ router.patch('/breakdowns/:id', requireTenant, mod, requireWriteAccess, async (r
     b.assetId != null || b.vehicleId != null
       ? await resolveWorkshopAssetId(req.tenantId!, b.assetId, b.vehicleId)
       : undefined;
+  const category =
+    b.assetCategory != null ? sanitizeWorkshopAssetCategory(b.assetCategory) : null;
+  if (resolvedAssetId && category) await persistAssetCategory(resolvedAssetId, category);
   const { rows } = await query(
     `UPDATE breakdown_reports SET
        asset_id = COALESCE($3, asset_id),
@@ -445,6 +573,8 @@ router.patch('/breakdowns/:id', requireTenant, mod, requireWriteAccess, async (r
        repair_cost = COALESCE($18, repair_cost),
        total_cost = COALESCE($19, total_cost),
        trip_id = COALESCE($21, trip_id),
+       asset_category = COALESCE($22, asset_category),
+       failure_system = COALESCE($23, failure_system),
        updated_at = NOW()
      WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
      RETURNING *`,
@@ -470,6 +600,8 @@ router.patch('/breakdowns/:id', requireTenant, mod, requireWriteAccess, async (r
       b.totalCost ?? null,
       Object.prototype.hasOwnProperty.call(b, 'driverId'),
       b.tripId ?? null,
+      category,
+      b.failureSystem ?? null,
     ]
   );
   if (!rows[0]) return error(res, 'Breakdown report not found', 404);

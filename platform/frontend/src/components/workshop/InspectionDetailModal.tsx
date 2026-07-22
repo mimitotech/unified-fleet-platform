@@ -1,12 +1,12 @@
 /**
- * InspectionDetailModal - View Inspection Details
+ * InspectionDetailModal - View Inspection Details (category-aware sections)
  */
 
 import {
-  ClipboardCheck, Truck, User, Gauge, Calendar, Check, X,
-  ChevronDown, ChevronUp, MessageSquare, Pencil, Trash2,
+  ClipboardCheck, User, Gauge, Calendar, Check, X,
+  ChevronDown, ChevronUp, MessageSquare, Pencil, Trash2, Clock,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -28,7 +28,9 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import type { VehicleInspection, ChecklistItem, InspectionStatus } from '@/types/workshop';
+import { sectionsFromLegacy } from '@/lib/workshopChecklists';
+import { sanitizeWorkshopAssetCategory, workshopAssetLabel, workshopMeterLabel } from '@/lib/workshopUnit';
+import type { VehicleInspection, ChecklistItem, InspectionStatus, ChecklistSection } from '@/types/workshop';
 
 export interface InspectionDetailModalProps {
   open: boolean;
@@ -81,6 +83,37 @@ function ChecklistItemRow({ item }: { item: ChecklistItem }) {
   );
 }
 
+function SectionBlock({ section }: { section: ChecklistSection }) {
+  const [open, setOpen] = useState(true);
+  const issues = section.items.filter((i) => i.status === 'issue').length;
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger asChild>
+        <Button variant="ghost" className="w-full justify-between p-4 h-auto border rounded-lg">
+          <div className="flex items-center gap-3">
+            <ClipboardCheck className="h-5 w-5 text-primary" />
+            <div className="text-left">
+              <div className="font-medium">{section.title}</div>
+              <div className="text-xs text-muted-foreground">
+                {section.items.length} items
+                {issues > 0 && (
+                  <span className="text-destructive ml-2">• {issues} issues</span>
+                )}
+              </div>
+            </div>
+          </div>
+          {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="border border-t-0 rounded-b-lg px-4">
+        {section.items.map((item) => (
+          <ChecklistItemRow key={item.id} item={item} />
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 export function InspectionDetailModal({
   open,
   onOpenChange,
@@ -88,36 +121,48 @@ export function InspectionDetailModal({
   onEdit,
   onDelete,
 }: InspectionDetailModalProps) {
-  const [truckHeadOpen, setTruckHeadOpen] = useState(true);
-  const [trailerOpen, setTrailerOpen] = useState(true);
+  const category = sanitizeWorkshopAssetCategory(inspection?.assetCategory);
+  const sections = useMemo(() => {
+    if (!inspection) return [];
+    if (inspection.checklistSections && inspection.checklistSections.length > 0) {
+      return inspection.checklistSections;
+    }
+    return sectionsFromLegacy(
+      inspection.truckHeadChecklist,
+      inspection.trailerChecklist,
+      category,
+    );
+  }, [inspection, category]);
 
   if (!inspection) return null;
 
-  const truckHead = inspection.truckHeadChecklist ?? [];
-  const trailer = inspection.trailerChecklist ?? [];
-  const truckHeadIssues = truckHead.filter((i) => i.status === 'issue').length;
-  const trailerIssues = trailer.filter((i) => i.status === 'issue').length;
-
   const formatDate = (dateStr: string) =>
     new Date(dateStr).toLocaleString('en-UG', { dateStyle: 'medium', timeStyle: 'short' });
+
+  const showHours = category !== 'vehicle' || (inspection.engineHours != null && Number(inspection.engineHours) > 0);
+  const showOdo = category === 'vehicle' && inspection.odometerReading > 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[700px] p-0 overflow-hidden flex flex-col max-h-[90vh]">
         <DialogHeader className="px-6 pt-6 pb-4 border-b flex-shrink-0">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
               <div className="p-2 bg-primary/10 rounded-lg">
                 <ClipboardCheck className="h-5 w-5 text-primary" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <DialogTitle className="text-xl font-semibold">Inspection Details</DialogTitle>
-                <DialogDescription>
-                  {inspection.vehicleName} • {inspection.vehiclePlate}
+                <DialogDescription className="truncate">
+                  {inspection.vehicleName}
+                  {inspection.vehiclePlate ? ` • ${inspection.vehiclePlate}` : ''}
                 </DialogDescription>
               </div>
             </div>
-            <StatusBadge status={inspection.overallStatus} />
+            <div className="flex items-center gap-2 shrink-0">
+              <Badge variant="outline" className="capitalize">{category}</Badge>
+              <StatusBadge status={inspection.overallStatus} />
+            </div>
           </div>
         </DialogHeader>
 
@@ -138,13 +183,23 @@ export function InspectionDetailModal({
                   {inspection.inspectionType.replace('-', ' ')}
                 </div>
               </div>
-              {inspection.odometerReading > 0 && (
+              {showOdo && (
                 <div className="space-y-1">
                   <div className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Gauge className="h-3 w-3" /> Odometer
+                    <Gauge className="h-3 w-3" /> {workshopMeterLabel('vehicle')}
                   </div>
                   <div className="text-sm font-medium">
                     {Number(inspection.odometerReading).toLocaleString()} km
+                  </div>
+                </div>
+              )}
+              {showHours && (
+                <div className="space-y-1">
+                  <div className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Clock className="h-3 w-3" /> {workshopMeterLabel(category)}
+                  </div>
+                  <div className="text-sm font-medium">
+                    {Number(inspection.engineHours ?? 0).toLocaleString()} h
                   </div>
                 </div>
               )}
@@ -156,10 +211,16 @@ export function InspectionDetailModal({
               </div>
             </div>
 
+            <div className="text-sm text-muted-foreground">
+              {workshopAssetLabel(category)} inspection checklist
+            </div>
+
             {inspection.driverName && (
               <div className="flex items-center gap-2 text-sm">
                 <User className="h-4 w-4 text-muted-foreground" />
-                <span className="text-muted-foreground">Driver:</span>
+                <span className="text-muted-foreground">
+                  {category === 'vehicle' ? 'Driver' : 'Operator'}:
+                </span>
                 <span className="font-medium">{inspection.driverName}</span>
               </div>
             )}
@@ -174,59 +235,9 @@ export function InspectionDetailModal({
               </div>
             ) : null}
 
-            {truckHead.length > 0 && (
-              <Collapsible open={truckHeadOpen} onOpenChange={setTruckHeadOpen}>
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" className="w-full justify-between p-4 h-auto border rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <Truck className="h-5 w-5 text-primary" />
-                      <div className="text-left">
-                        <div className="font-medium">Truck Head Checklist</div>
-                        <div className="text-xs text-muted-foreground">
-                          {truckHead.length} items
-                          {truckHeadIssues > 0 && (
-                            <span className="text-destructive ml-2">• {truckHeadIssues} issues</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    {truckHeadOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="border border-t-0 rounded-b-lg px-4">
-                  {truckHead.map((item) => (
-                    <ChecklistItemRow key={item.id} item={item} />
-                  ))}
-                </CollapsibleContent>
-              </Collapsible>
-            )}
-
-            {trailer.length > 0 && (
-              <Collapsible open={trailerOpen} onOpenChange={setTrailerOpen}>
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" className="w-full justify-between p-4 h-auto border rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <Truck className="h-5 w-5 text-primary" />
-                      <div className="text-left">
-                        <div className="font-medium">Trailer & Safety Checklist</div>
-                        <div className="text-xs text-muted-foreground">
-                          {trailer.length} items
-                          {trailerIssues > 0 && (
-                            <span className="text-destructive ml-2">• {trailerIssues} issues</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    {trailerOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="border border-t-0 rounded-b-lg px-4">
-                  {trailer.map((item) => (
-                    <ChecklistItemRow key={item.id} item={item} />
-                  ))}
-                </CollapsibleContent>
-              </Collapsible>
-            )}
+            {sections.map((section) => (
+              <SectionBlock key={section.id} section={section} />
+            ))}
 
             {inspection.notes && (
               <div className="space-y-2">
@@ -256,24 +267,21 @@ export function InspectionDetailModal({
             {onDelete && (
               <AlertDialog>
                 <AlertDialogTrigger asChild>
-                  <Button variant="outline" className="text-destructive hover:text-destructive">
+                  <Button variant="outline" className="text-destructive">
                     <Trash2 className="h-4 w-4 mr-2" />
                     Delete
                   </Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent>
                   <AlertDialogHeader>
-                    <AlertDialogTitle>Delete Inspection</AlertDialogTitle>
+                    <AlertDialogTitle>Delete inspection?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      Delete this inspection for {inspection.vehicleName}? This cannot be undone.
+                      This will soft-delete the inspection for {inspection.vehicleName}.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={() => onDelete(inspection.id)}
-                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                    >
+                    <AlertDialogAction onClick={() => onDelete(inspection.id)}>
                       Delete
                     </AlertDialogAction>
                   </AlertDialogFooter>
@@ -281,7 +289,9 @@ export function InspectionDetailModal({
               </AlertDialog>
             )}
           </div>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Close
+          </Button>
         </div>
       </DialogContent>
     </Dialog>

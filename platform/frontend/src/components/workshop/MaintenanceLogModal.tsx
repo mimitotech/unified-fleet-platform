@@ -28,19 +28,28 @@ import {
 } from '@/components/ui/select';
 import { FleetUnitSelect } from '@/components/fleet/FleetUnitSelect';
 import { useFleetUnits } from '@/hooks/useFleetUnits';
-import { isStationaryUnit } from '@/lib/workshopUnit';
+import { Badge } from '@/components/ui/badge';
+import {
+  isStationaryUnit,
+  resolveWorkshopAssetCategory,
+  workshopAssetLabel,
+  workshopOperatorLabel,
+  workshopMeterLabel,
+} from '@/lib/workshopUnit';
 import type { FleetUnit } from '@/lib/fleetUnits';
 import type {
   MaintenanceType,
   MaintenanceStatus,
   MaintenancePriority,
   MaintenancePart,
+  WorkshopAssetCategory,
 } from '@/types/workshop';
 
 export interface MaintenanceLogFormData {
   vehicleId: string;
   vehicleName: string;
   vehiclePlate: string;
+  assetCategory: WorkshopAssetCategory;
   driverId: string | null;
   driverName: string;
   inspectionId?: string;
@@ -59,6 +68,7 @@ export interface MaintenanceLogFormData {
   status: MaintenanceStatus;
   notes: string;
   odometerReading?: number;
+  engineHours?: number;
   nextServiceKm?: number;
   nextServiceHours?: number;
   nextServiceDays?: number;
@@ -159,6 +169,7 @@ const initialFormState: MaintenanceLogFormData = {
   vehicleId: '',
   vehicleName: '',
   vehiclePlate: '',
+  assetCategory: 'vehicle',
   driverId: null,
   driverName: '',
   maintenanceType: 'repair',
@@ -174,6 +185,7 @@ const initialFormState: MaintenanceLogFormData = {
   status: 'pending',
   notes: '',
   odometerReading: undefined,
+  engineHours: undefined,
   nextServiceKm: undefined,
   nextServiceHours: undefined,
   nextServiceDays: undefined,
@@ -224,18 +236,23 @@ export function MaintenanceLogModal({
     if (!id) return null;
     return units.find((u) => u.id === id || String(u.wialonId) === id) || null;
   }, [selectedUnit, formData.vehicleId, units]);
-  const stationary = isStationaryUnit(matchedUnit);
+  const assetCategory = resolveWorkshopAssetCategory(matchedUnit, formData.assetCategory);
+  const stationary = isStationaryUnit(matchedUnit) || assetCategory !== 'vehicle';
+  const assetLabel = workshopAssetLabel(assetCategory);
+  const operatorLabel = workshopOperatorLabel(assetCategory);
   const handleClose = useCallback(() => {
     if (!isSubmitting) onOpenChange(false);
   }, [onOpenChange, isSubmitting]);
 
   const handleUnitChange = (unitId: string, unit: FleetUnit) => {
     setSelectedUnit(unit);
+    const category = resolveWorkshopAssetCategory(unit);
     setFormData((prev) => ({
       ...prev,
       vehicleId: unitId,
       vehicleName: unit.name,
       vehiclePlate: unit.plate || '',
+      assetCategory: category,
       unit,
     }));
   };
@@ -293,7 +310,11 @@ export function MaintenanceLogModal({
     if (!isFormValid) return;
     setIsSubmitting(true);
     try {
-      await onSave({ ...formData, unit: selectedUnit ?? matchedUnit });
+      await onSave({
+        ...formData,
+        assetCategory,
+        unit: selectedUnit ?? matchedUnit,
+      });
       handleClose();
     } finally {
       setIsSubmitting(false);
@@ -318,10 +339,13 @@ export function MaintenanceLogModal({
               </DialogTitle>
               <DialogDescription>
                 {isEditMode
-                  ? 'Update maintenance details, parts, and costs'
-                  : 'Record maintenance work, parts used, and costs'}
+                  ? `Update ${assetLabel.toLowerCase()} maintenance details, parts, and costs`
+                  : `Record ${assetLabel.toLowerCase()} maintenance work, parts used, and costs`}
               </DialogDescription>
             </div>
+            <Badge variant="outline" className="capitalize shrink-0 ml-auto">
+              {assetCategory}
+            </Badge>
           </div>
         </DialogHeader>
 
@@ -329,7 +353,7 @@ export function MaintenanceLogModal({
           <div className="p-6 space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Vehicle *</Label>
+                <Label>Asset *</Label>
                 <FleetUnitSelect
                   value={selectedUnit?.id || (isEditMode ? undefined : formData.vehicleId) || undefined}
                   onValueChange={handleUnitChange}
@@ -343,14 +367,14 @@ export function MaintenanceLogModal({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="driver">Driver</Label>
+                <Label htmlFor="driver">{operatorLabel}</Label>
                 <Select
                   value={formData.driverId || ''}
                   onValueChange={handleDriverChange}
                   disabled={isSubmitting}
                 >
                   <SelectTrigger id="driver">
-                    <SelectValue placeholder="Select driver" />
+                    <SelectValue placeholder={`Select ${operatorLabel.toLowerCase()}`} />
                   </SelectTrigger>
                   <SelectContent>
                     {drivers.map((d) => (
@@ -458,7 +482,7 @@ export function MaintenanceLogModal({
                   {!stationary && (
                     <>
                       <div className="space-y-2">
-                        <Label htmlFor="odometerReading">Current Odometer (km)</Label>
+                        <Label htmlFor="odometerReading">{workshopMeterLabel('vehicle')}</Label>
                         <div className="relative">
                           <Input
                             id="odometerReading"
@@ -500,6 +524,30 @@ export function MaintenanceLogModal({
                         </div>
                       </div>
                     </>
+                  )}
+                  {stationary && (
+                    <div className="space-y-2">
+                      <Label htmlFor="engineHours">{workshopMeterLabel(assetCategory)}</Label>
+                      <div className="relative">
+                        <Input
+                          id="engineHours"
+                          type="number"
+                          min={0}
+                          step={0.1}
+                          placeholder="e.g., 1245.5"
+                          value={formData.engineHours || ''}
+                          onChange={(e) =>
+                            setFormData((prev) => ({
+                              ...prev,
+                              engineHours: parseFloat(e.target.value) || undefined,
+                            }))
+                          }
+                          className="pl-9"
+                          disabled={isSubmitting}
+                        />
+                        <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      </div>
+                    </div>
                   )}
                   <div className="space-y-2">
                     <Label htmlFor="nextServiceHours">Next Service (hours)</Label>

@@ -1,9 +1,14 @@
 /**
  * Workshop & Maintenance Type Definitions
- * 
- * Types for vehicle inspections, maintenance logs, breakdowns, and cost tracking.
- * Fleet-centric approach: vehicles are the primary entity with maintenance history attached.
+ *
+ * Supports vehicles, generators, and machinery with category-aware checklists.
  */
+
+// ============================================================================
+// Asset category
+// ============================================================================
+
+export type WorkshopAssetCategory = 'vehicle' | 'generator' | 'machinery';
 
 // ============================================================================
 // Inspection Types
@@ -17,23 +22,36 @@ export type ChecklistItemStatus = 'ok' | 'issue' | 'na';
 export interface ChecklistItem {
   id: string;
   name: string;
-  category: 'truck-head' | 'trailer' | 'safety' | 'general';
+  /** Free-form section key (truck-head, engine, hydraulics, …) */
+  category: string;
   status: ChecklistItemStatus;
   comment?: string;
 }
 
-/** Pre/Post Trip Vehicle Inspection */
+/** Named section of a category-specific inspection checklist */
+export interface ChecklistSection {
+  id: string;
+  title: string;
+  items: ChecklistItem[];
+}
+
+/** Pre/Post Trip / Pre-delivery Inspection */
 export interface VehicleInspection {
   id: string;
   vehicleId: string;
   vehicleName: string;
   vehiclePlate: string;
+  assetCategory?: WorkshopAssetCategory;
   driverId: string | null;
   driverName: string | null;
   inspectionType: InspectionType;
   inspectionDate: string; // ISO date
   odometerReading: number;
+  engineHours?: number | null;
   nextServiceMileage?: number;
+  /** Preferred storage for category-aware checklists */
+  checklistSections?: ChecklistSection[];
+  /** Legacy dual-write fields (first two sections flattened) */
   truckHeadChecklist: ChecklistItem[];
   trailerChecklist: ChecklistItem[];
   overallStatus: InspectionStatus;
@@ -66,10 +84,11 @@ export interface MaintenanceLog {
   vehicleId: string;
   vehicleName: string;
   vehiclePlate: string;
+  assetCategory?: WorkshopAssetCategory;
   driverId?: string | null;
   driverName?: string;
-  inspectionId?: string; // If triggered by inspection
-  breakdownId?: string; // If triggered by breakdown
+  inspectionId?: string;
+  breakdownId?: string;
   maintenanceType: MaintenanceType;
   priority: MaintenancePriority;
   description: string;
@@ -83,8 +102,8 @@ export interface MaintenanceLog {
   partsUsed: MaintenancePart[];
   status: MaintenanceStatus;
   notes?: string;
-  // Scheduled service fields (only for maintenanceType === 'scheduled')
   odometerReading?: number;
+  engineHours?: number | null;
   nextServiceKm?: number;
   nextServiceHours?: number;
   nextServiceDays?: number;
@@ -104,6 +123,8 @@ export interface BreakdownReport {
   vehicleId: string;
   vehicleName: string;
   vehiclePlate: string;
+  assetCategory?: WorkshopAssetCategory;
+  failureSystem?: string | null;
   driverId: string | null;
   driverName: string | null;
   tripId?: string;
@@ -122,7 +143,7 @@ export interface BreakdownReport {
   towingCost: number;
   repairCost: number;
   totalCost: number;
-  maintenanceLogId?: string; // Link to resulting maintenance
+  maintenanceLogId?: string;
   createdAt: string;
 }
 
@@ -136,15 +157,14 @@ export interface Mechanic {
   phone: string;
   specialization?: string;
   hourlyRate: number;
-  isExternal: boolean; // Internal vs external mechanic
-  workshopName?: string; // For external mechanics
+  isExternal: boolean;
+  workshopName?: string;
 }
 
 // ============================================================================
-// Fleet Maintenance Summary (Vehicle-centric view)
+// Fleet Maintenance Summary
 // ============================================================================
 
-/** Maintenance summary for a single vehicle */
 export interface VehicleMaintenanceSummary {
   vehicleId: string;
   vehicleName: string;
@@ -152,13 +172,13 @@ export interface VehicleMaintenanceSummary {
   vehicleType: string;
   lastInspectionDate: string | null;
   lastInspectionStatus: InspectionStatus | null;
-  nextServiceDue: number | null; // Mileage
+  nextServiceDue: number | null;
   currentMileage: number;
   totalMaintenanceCost: number;
   pendingMaintenanceCount: number;
   breakdownCount: number;
-  avgRepairTime: number; // Hours
-  healthScore: number; // 0-100
+  avgRepairTime: number;
+  healthScore: number;
 }
 
 /** Workshop KPIs */
@@ -171,4 +191,3 @@ export interface WorkshopKpis {
   inspectionPassRate: number;
   fleetHealthScore: number;
 }
-
