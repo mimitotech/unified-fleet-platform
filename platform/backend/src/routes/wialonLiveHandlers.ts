@@ -18,9 +18,13 @@ function parseRouteId(req: Request): number | null {
 }
 
 function parseInterval(req: Request): { from: Date; to: Date } {
-  const fromMs = req.query.from ? parseInt(String(req.query.from), 10) : Date.now() - 24 * 3600_000;
-  const toMs = req.query.to ? parseInt(String(req.query.to), 10) : Date.now();
-  return { from: new Date(fromMs), to: new Date(toMs) };
+  const rawFrom = req.query.from ? parseInt(String(req.query.from), 10) : NaN;
+  const rawTo = req.query.to ? parseInt(String(req.query.to), 10) : NaN;
+  // Accept seconds or milliseconds (values before year ~2001 in ms are treated as seconds).
+  const toMs = (n: number) => (Number.isFinite(n) && n > 0 && n < 1e12 ? n * 1000 : n);
+  const fromMs = Number.isFinite(rawFrom) ? toMs(rawFrom) : Date.now() - 24 * 3600_000;
+  const toMsVal = Number.isFinite(rawTo) ? toMs(rawTo) : Date.now();
+  return { from: new Date(fromMs), to: new Date(toMsVal) };
 }
 
 async function resolveAssetUnitId(tenantId: string, assetId: string): Promise<number> {

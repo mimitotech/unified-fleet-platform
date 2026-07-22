@@ -43,6 +43,8 @@ export type WialonTrackHistory = {
   end: TrackPoint | null;
   isLoading: boolean;
   isFetching: boolean;
+  isError: boolean;
+  errorMessage: string | null;
   pointCount: number;
   stopCount: number;
   refetch: () => void;
@@ -76,18 +78,26 @@ export function useWialonTrackHistory(
     enabled: enabled && unitId != null,
     staleTime: live ? LIVE_POLL.unitTrack : 20_000,
     refetchInterval: enabled && live && resolved.liveOk ? pollWhenVisible(LIVE_POLL.unitTrack) : false,
-    placeholderData: (prev) => prev,
+    // Don't keep a previous unit/period's empty result while the next fetch runs.
+    placeholderData: undefined,
     queryFn: async () => {
       // Re-resolve relative ranges at fetch time so live refresh advances
       const fresh = resolveRange(range);
-      const [track, tripsRes] = await Promise.all([
-        clientApi.getWialonUnitTrack(unitId!, fresh.from, fresh.to),
-        clientApi.getWialonUnitTrips(unitId!, fresh.from, fresh.to),
-      ]);
+
+      // Track is required. Trips are optional — a trips failure must NOT wipe GPS points
+      // (Wialon unit/get_trips is easy to break and used to blank the whole Track tab).
+      const track = await clientApi.getWialonUnitTrack(unitId!, fresh.from, fresh.to);
+      let trips: Array<Record<string, unknown>> = [];
+      try {
+        const tripsRes = await clientApi.getWialonUnitTrips(unitId!, fresh.from, fresh.to);
+        trips = safeArray<Record<string, unknown>>(tripsRes.trips);
+      } catch {
+        trips = [];
+      }
+
       const points = safeArray<TrackPoint>(track.points).filter(
         (p) => p.lat != null && p.lng != null && !(p.lat === 0 && p.lng === 0),
       );
-      const trips = safeArray<Record<string, unknown>>(tripsRes.trips);
       return { points, trips, from: fresh.from, to: fresh.to };
     },
   });
@@ -123,10 +133,19 @@ export function useWialonTrackHistory(
     };
   }, [query.data]);
 
+  const errorMessage =
+    query.error instanceof Error
+      ? query.error.message
+      : query.isError
+        ? 'Failed to load track history'
+        : null;
+
   return {
     ...analysis,
     isLoading: query.isLoading,
     isFetching: query.isFetching,
+    isError: query.isError,
+    errorMessage,
     pointCount: analysis.summary.pointCount,
     stopCount: analysis.summary.stopCount,
     refetch: query.refetch,

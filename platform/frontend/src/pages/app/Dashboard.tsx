@@ -223,7 +223,11 @@ export default function Dashboard() {
 
   const { units, counts, statuses, live, isLoading: fleetLoading } = useFleetUnits();
   const { connected, configured, ctx } = useWialonContext();
-  const { data: alerts, isError: alertsError, refetch: refetchAlerts } = useAlerts(200, hasAlerts, {
+  const {
+    data: alerts,
+    isError: alertsError,
+    refetch: refetchAlerts,
+  } = useAlerts(2000, hasAlerts, {
     from: alertFromIso,
     to: alertToIso,
   });
@@ -234,6 +238,7 @@ export default function Dashboard() {
     type?: string;
     timestamp?: string;
     acknowledged?: boolean;
+    assetId?: string;
   }>(alerts);
 
   const {
@@ -245,7 +250,7 @@ export default function Dashboard() {
     from: applied.from,
     to: applied.to,
   });
-  const { data: fuelTransactions = [] } = useFuelTransactions(hasFuel, {
+  const { data: fuelTransactions = [], isFetched: fuelTxsFetched } = useFuelTransactions(hasFuel, {
     from: applied.from,
     to: applied.to,
   });
@@ -257,7 +262,7 @@ export default function Dashboard() {
   const { data: geofencesLive } = useWialonGeofencesLive(hasGeofencing && connected);
   const { data: trips } = useQuery({
     queryKey: ['trips', 'dashboard', applied.from, applied.to],
-    queryFn: () => clientApi.getTrips(40),
+    queryFn: () => clientApi.getTrips(200, { from: applied.from, to: applied.to }),
     enabled: hasRoutes,
     staleTime: 90_000,
   });
@@ -386,26 +391,36 @@ export default function Dashboard() {
   );
 
   const batteryBars = useMemo(() => {
+    // Battery % only — do not mix with internal voltage (pwr_int).
     const rows = (units ?? [])
       .map((u) => {
-        const v = unitParam(u, 'battery', 'battery_voltage', 'pwr_int');
-        return v != null && v > 0
-          ? { name: shortName(u.name), value: Math.round(v * 10) / 10, fill: brand }
-          : null;
+        const v = unitParam(u, 'battery');
+        if (v == null || v <= 0 || v > 100) return null;
+        return {
+          name: shortName(u.name),
+          fullName: u.name,
+          value: Math.round(v * 10) / 10,
+          fill: brand,
+        };
       })
-      .filter(Boolean) as Array<{ name: string; value: number; fill: string }>;
+      .filter(Boolean) as Array<{ name: string; fullName: string; value: number; fill: string }>;
     return rows.sort((a, b) => a.value - b.value).slice(0, 8);
   }, [units, brand]);
 
   const voltageBars = useMemo(() => {
+    // External / supply / internal voltage sensors (volts) — separate from battery %.
     const rows = (units ?? [])
       .map((u) => {
-        const v = unitParam(u, 'pwr_ext', 'voltage', 'ext_voltage', 'external_voltage');
-        return v != null && v > 0
-          ? { name: shortName(u.name), value: Math.round(v * 10) / 10, fill: accent }
-          : null;
+        const v = unitParam(u, 'pwr_ext', 'ext_voltage', 'external_voltage', 'battery_voltage', 'pwr_int');
+        if (v == null || v <= 0) return null;
+        return {
+          name: shortName(u.name),
+          fullName: u.name,
+          value: Math.round(v * 10) / 10,
+          fill: accent,
+        };
       })
-      .filter(Boolean) as Array<{ name: string; value: number; fill: string }>;
+      .filter(Boolean) as Array<{ name: string; fullName: string; value: number; fill: string }>;
     return rows.sort((a, b) => a.value - b.value).slice(0, 8);
   }, [units, accent]);
 
@@ -440,14 +455,30 @@ export default function Dashboard() {
 
   const alertTimeline = useMemo(() => {
     const days = new Map<string, { critical: number; warning: number; info: number }>();
-    const start = new Date(`${applied.from}T12:00:00`);
-    const end = new Date(`${applied.to}T12:00:00`);
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      days.set(d.toISOString().slice(0, 10), { critical: 0, warning: 0, info: 0 });
+    const localDay = (iso: string) => {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return '';
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
+    // Seed calendar days from YYYY-MM-DD strings (local calendar, no UTC shift).
+    const [fy, fm, fd] = applied.from.split('-').map(Number);
+    const [ty, tm, td] = applied.to.split('-').map(Number);
+    if (fy && fm && fd && ty && tm && td) {
+      const cur = new Date(fy, fm - 1, fd);
+      const end = new Date(ty, tm - 1, td);
+      while (cur <= end) {
+        const key = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`;
+        days.set(key, { critical: 0, warning: 0, info: 0 });
+        cur.setDate(cur.getDate() + 1);
+      }
     }
+
     for (const a of alertList) {
       if (!a.timestamp) continue;
-      const day = new Date(a.timestamp).toISOString().slice(0, 10);
+      const day = localDay(a.timestamp);
       const bucket = days.get(day);
       if (!bucket) continue;
       const s = String(a.severity || 'info').toLowerCase();
@@ -455,24 +486,30 @@ export default function Dashboard() {
       else if (s === 'warning') bucket.warning += 1;
       else bucket.info += 1;
     }
-    return [...days.entries()].map(([day, v]) => ({ name: day.slice(5), ...v }));
+    return [...days.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([day, v]) => ({ name: day.slice(5), ...v }));
   }, [alertList, applied.from, applied.to]);
 
   const alertTypeBars = useMemo(() => {
-    const byType = new Map<string, number>();
+    const byType = new Map<string, { full: string; value: number }>();
     for (const a of alertList) {
       const raw = String(a.type || a.title || 'event')
         .replace(/^wialon[_-]?/i, '')
         .replace(/_/g, ' ')
         .trim();
-      const t = raw.split(/\s+/).slice(0, 3).join(' ') || 'event';
-      byType.set(t, (byType.get(t) ?? 0) + 1);
+      const full = raw.split(/\s+/).slice(0, 4).join(' ') || 'event';
+      const key = full.toLowerCase();
+      const cur = byType.get(key) ?? { full, value: 0 };
+      cur.value += 1;
+      byType.set(key, cur);
     }
     const palette = [ALERT_SEVERITY.critical, ALERT_SEVERITY.warning, accent, brand, '#0284c7'];
-    return [...byType.entries()]
-      .map(([name, value], i) => ({
-        name: shortName(name, 16),
-        value,
+    return [...byType.values()]
+      .map((row, i) => ({
+        name: shortName(row.full, 16),
+        fullName: row.full,
+        value: row.value,
         fill: palette[i % palette.length],
       }))
       .sort((a, b) => b.value - a.value)
@@ -480,73 +517,86 @@ export default function Dashboard() {
   }, [alertList, accent, brand]);
 
   const speedingBars = useMemo(() => {
-    const byUnit = new Map<string, number>();
+    const nameById = new Map((units ?? []).map((u) => [u.id, u.name]));
+    const byUnit = new Map<string, { fullName: string; value: number }>();
     for (const a of alertList) {
       const t = String(a.type || a.title || '').toLowerCase();
       if (!/speed/.test(t)) continue;
-      const name = shortName(String(a.title || a.type || 'Speeding').replace(/^wialon[_-]?/i, ''), 16);
-      byUnit.set(name, (byUnit.get(name) ?? 0) + 1);
+      const fullName =
+        (a.assetId && nameById.get(a.assetId)) ||
+        String(a.title || a.type || 'Speeding').replace(/^wialon[_-]?/i, '').trim() ||
+        'Speeding';
+      const key = a.assetId || fullName.toLowerCase();
+      const cur = byUnit.get(key) ?? { fullName, value: 0 };
+      cur.value += 1;
+      byUnit.set(key, cur);
     }
-    return [...byUnit.entries()]
-      .map(([name, value], i) => ({
-        name,
-        value,
+    return [...byUnit.values()]
+      .map((row, i) => ({
+        name: shortName(row.fullName, 16),
+        fullName: row.fullName,
+        value: row.value,
         fill: i % 2 === 0 ? ALERT_SEVERITY.critical : ALERT_SEVERITY.warning,
       }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 8);
-  }, [alertList]);
+  }, [alertList, units]);
 
   const notificationBars = useMemo(() => {
-    const recent = [...alertList]
-      .filter((a) => a.timestamp)
-      .sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)))
+    // Count by alert type in period — equal-height fake bars were misleading.
+    const byType = new Map<string, { full: string; value: number; severity: string }>();
+    for (const a of alertList) {
+      const full = String(a.type || a.title || 'Alert')
+        .replace(/^wialon[_-]?/i, '')
+        .replace(/_/g, ' ')
+        .trim() || 'Alert';
+      const key = full.toLowerCase();
+      const cur = byType.get(key) ?? { full, value: 0, severity: String(a.severity || 'info') };
+      cur.value += 1;
+      byType.set(key, cur);
+    }
+    return [...byType.values()]
+      .map((row, i) => {
+        const s = row.severity.toLowerCase();
+        const fill =
+          s === 'critical' || s === 'emergency'
+            ? ALERT_SEVERITY.critical
+            : s === 'warning'
+              ? ALERT_SEVERITY.warning
+              : i % 2 === 0
+                ? accent
+                : brand;
+        return {
+          name: shortName(row.full, 16),
+          fullName: row.full,
+          value: row.value,
+          fill,
+        };
+      })
+      .sort((a, b) => b.value - a.value)
       .slice(0, 8);
-    return recent.map((a, i) => {
-      const s = String(a.severity || 'info').toLowerCase();
-      const fill =
-        s === 'critical' || s === 'emergency'
-          ? ALERT_SEVERITY.critical
-          : s === 'warning'
-            ? ALERT_SEVERITY.warning
-            : accent;
-      return {
-        name: shortName(String(a.title || a.type || 'Alert'), 16),
-        value: 1,
-        fill: i % 2 === 0 ? fill : brand,
-      };
-    });
   }, [alertList, accent, brand]);
 
   /* —— Fuel —— */
-  // Prefer period KPIs computed from the same transactions as per-asset charts
-  // so fleet totals cannot show 0 L while asset bars have real litres.
+  // Prefer period KPIs from the same transactions as per-asset charts.
+  // Fall back to API KPIs only while transactions are still loading.
   const periodFuelKpis = useMemo(
     () => computePeriodFuelKpis(fuelTransactions, applied.from, applied.to),
     [fuelTransactions, applied.from, applied.to],
   );
+  const txsReady = fuelTxsFetched;
+  const apiKpis = fuelKpis as Record<string, number> | undefined;
 
-  const fuelFilled = Math.max(
-    num(periodFuelKpis.totalFilled),
-    num((fuelKpis as Record<string, number> | undefined)?.totalFilled),
-  );
-  const fuelUsed = Math.max(
-    num(periodFuelKpis.totalConsumed),
-    num((fuelKpis as Record<string, number> | undefined)?.totalConsumed),
-  );
-  const fuelTheftLiters = Math.max(
-    num(periodFuelKpis.theftVolume),
-    num(
-      (fuelKpis as Record<string, number> | undefined)?.totalTheftLiters
-        ?? (fuelKpis as Record<string, number> | undefined)?.theftLiters,
-    ),
-  );
-  const fuelTracked = Math.max(
-    num(periodFuelKpis.vehiclesTracked),
-    num((fuelKpis as Record<string, number> | undefined)?.vehiclesTracked),
-  );
+  const fuelFilled = txsReady ? num(periodFuelKpis.totalFilled) : num(apiKpis?.totalFilled);
+  const fuelUsed = txsReady ? num(periodFuelKpis.totalConsumed) : num(apiKpis?.totalConsumed);
+  const fuelTheftLiters = txsReady
+    ? num(periodFuelKpis.theftVolume)
+    : num(apiKpis?.totalTheftLiters ?? apiKpis?.theftLiters);
+  const fuelTracked = txsReady
+    ? num(periodFuelKpis.vehiclesTracked)
+    : num(apiKpis?.vehiclesTracked);
   const avgConsumption = num(
-    periodFuelKpis.avgConsumption || (fuelKpis as Record<string, number> | undefined)?.avgConsumption,
+    (txsReady ? periodFuelKpis.avgConsumption : 0) || apiKpis?.avgConsumption,
   );
   const fuelCost = Math.round(fuelUsed * fuelPrice);
 
@@ -1021,7 +1071,7 @@ export default function Dashboard() {
               {show('health_check') && (
                 <DashboardWidget
                   title="Health check status"
-                  subtitle="Connection · freshness · fuel risk"
+                  subtitle="Live connection · freshness · fuel risk"
                   href="/app/monitoring"
                   brandColor={brand}
                   tone="primary"
@@ -1041,7 +1091,7 @@ export default function Dashboard() {
               {show('connection_status') && (
                 <DashboardWidget
                   title="Connection status"
-                  subtitle="Online vs offline"
+                  subtitle="Live online vs offline"
                   href="/app/monitoring"
                   brandColor={brand}
                   tone="teal"
@@ -1057,7 +1107,7 @@ export default function Dashboard() {
               {show('motion_state') && (
                 <DashboardWidget
                   title="Motion state"
-                  subtitle="Wialon-style motion × ignition"
+                  subtitle="Live motion × ignition · not period-filtered"
                   href="/app/monitoring"
                   brandColor={accent}
                   tone="accent"
@@ -1092,7 +1142,7 @@ export default function Dashboard() {
               {show('fleet_status') && (
                 <DashboardWidget
                   title="Fleet status"
-                  subtitle="Live partition of the whole fleet"
+                  subtitle="Live partition · not period-filtered"
                   href="/app/monitoring"
                   brandColor={brand}
                   tone="primary"
@@ -1106,7 +1156,7 @@ export default function Dashboard() {
               {show('mileage') && (
                 <DashboardWidget
                   title="Mileage"
-                  subtitle="Fleet odometer total"
+                  subtitle="Live odometer total · not period-filtered"
                   href="/app/monitoring?view=list"
                   brandColor={accent}
                   tone="accent"
@@ -1128,7 +1178,7 @@ export default function Dashboard() {
               {show('top_mileage') && mileageLeaders.length > 0 && (
                 <DashboardWidget
                   title="Top units by mileage"
-                  subtitle="Highest recorded odometer"
+                  subtitle="Live odometer leaders · not period-filtered"
                   href="/app/monitoring?view=list"
                   brandColor={brand}
                   tone="teal"
@@ -1141,7 +1191,7 @@ export default function Dashboard() {
               {show('fleet_utilization') && (
                 <DashboardWidget
                   title="Fleet utilization"
-                  subtitle="Moving + idle share of all assets"
+                  subtitle="Live moving + idle share · not period-filtered"
                   brandColor={accent}
                   tone="accent"
                   insight={`${counts.moving + counts.idle} of ${counts.total} assets are active (${utilization}%)`}
@@ -1153,7 +1203,7 @@ export default function Dashboard() {
               {show('geofences') && hasGeofencing && (
                 <DashboardWidget
                   title="Geofences"
-                  subtitle="Configured zones"
+                  subtitle="Configured zones · not period-filtered"
                   href="/app/geofencing"
                   brandColor={secondary}
                   tone="secondary"
@@ -1180,24 +1230,24 @@ export default function Dashboard() {
               {show('device_battery') && batteryBars.length > 0 && (
                 <DashboardWidget
                   title="Device battery level"
-                  subtitle="Lowest reported battery / internal power"
+                  subtitle="Live battery % · not period-filtered"
                   href="/app/monitoring"
                   brandColor={ALERT_SEVERITY.warning}
                   tone="amber"
-                  insight={`Lowest: ${batteryBars[0].name} · ${batteryBars[0].value}`}
+                  insight={`Lowest: ${batteryBars[0].fullName || batteryBars[0].name} · ${batteryBars[0].value}%`}
                 >
-                  <CompactBars data={batteryBars} horizontal unit="V" color={brand} />
+                  <CompactBars data={batteryBars} horizontal unit="%" color={brand} />
                 </DashboardWidget>
               )}
 
               {show('voltage_level') && voltageBars.length > 0 && (
                 <DashboardWidget
                   title="Voltage level"
-                  subtitle="External / supply voltage"
+                  subtitle="Live supply / internal voltage · not period-filtered"
                   href="/app/monitoring"
                   brandColor={brand}
                   tone="sky"
-                  insight={`Lowest: ${voltageBars[0].name} · ${voltageBars[0].value} V`}
+                  insight={`Lowest: ${voltageBars[0].fullName || voltageBars[0].name} · ${voltageBars[0].value} V`}
                 >
                   <CompactBars data={voltageBars} horizontal unit="V" color={accent} />
                 </DashboardWidget>
@@ -1246,7 +1296,7 @@ export default function Dashboard() {
               {show('alerts_ack') && (
                 <DashboardWidget
                   title="Open vs acknowledged"
-                  subtitle="Response state of loaded alerts"
+                  subtitle={`Response state in ${periodLabel}`}
                   href="/app/alerts"
                   brandColor={brand}
                   tone="primary"
@@ -1303,13 +1353,13 @@ export default function Dashboard() {
                 <DashboardWidget
                   className="md:col-span-2"
                   title="Top alert types"
-                  subtitle="Most frequent categories in the loaded set"
+                  subtitle={`Most frequent categories in ${periodLabel}`}
                   href="/app/alerts"
                   brandColor={accent}
                   tone="accent"
                   insight={
                     alertTypeBars[0]
-                      ? `Leading type: ${alertTypeBars[0].name} (${alertTypeBars[0].value})`
+                      ? `Leading type: ${alertTypeBars[0].fullName || alertTypeBars[0].name} (${alertTypeBars[0].value})`
                       : 'No typed alerts yet'
                   }
                 >
@@ -1328,13 +1378,13 @@ export default function Dashboard() {
               {show('notifications') && (
                 <DashboardWidget
                   title="Notifications"
-                  subtitle="Latest events in period"
+                  subtitle={`Alert types in ${periodLabel}`}
                   href="/app/alerts"
                   brandColor={ALERT_SEVERITY.warning}
                   tone="amber"
                   insight={
                     notificationBars.length
-                      ? `${notificationBars.length} most recent notifications`
+                      ? `${notificationBars.reduce((s, r) => s + r.value, 0)} events across ${notificationBars.length} types`
                       : 'No notifications in this period'
                   }
                 >
@@ -1427,18 +1477,24 @@ export default function Dashboard() {
               {show('consumed_by_fls') && (
                 <DashboardWidget
                   title="Consumed by FLS"
-                  subtitle="Fuel level sensor consumption"
+                  subtitle={
+                    fuelFilled > 0
+                      ? `Used / filled in ${periodLabel}`
+                      : `Consumed volume in ${periodLabel}`
+                  }
                   href="/app/fuel"
                   brandColor={brand}
                   tone="primary"
                   insight={
                     fuelTracked > 0
                       ? `${fuelTracked} assets tracked · avg ${avgConsumption || 0} L/100`
-                      : `${fmt(fuelUsed, 1)} L consumed in period`
+                      : fuelFilled > 0
+                        ? `${pct(fuelUsed, fuelFilled)}% of filled was consumed`
+                        : `${fmt(fuelUsed, 1)} L consumed in period`
                   }
                 >
                   <CompactRadial
-                    value={fuelFilled > 0 ? pct(fuelUsed, fuelFilled) : Math.min(100, Math.round(fuelUsed) ? 64 : 0)}
+                    value={fuelFilled > 0 ? pct(fuelUsed, fuelFilled) : 0}
                     label={`${fmt(fuelUsed, 1)} L`}
                     color={brand}
                   />
@@ -1627,16 +1683,17 @@ export default function Dashboard() {
               )}
             </div>
 
-            {tankRiskBars.rows.length > 0 && (show('tank_risk') || show('burn_vs_fill')) && (
+            {(tankRiskBars.rows.length > 0 && show('tank_risk')) ||
+            (show('burn_vs_fill') && (fuelFilled > 0 || fuelUsed > 0)) ? (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {show('tank_risk') && (
+                {show('tank_risk') && tankRiskBars.rows.length > 0 && (
                   <DashboardWidget
                     className="md:col-span-2"
                     title={tankRiskBars.kind === 'pct' ? 'Tank risk — lowest levels' : 'Live tank litres'}
                     subtitle={
                       tankRiskBars.kind === 'pct'
-                        ? 'Assets with live fuel % (lowest first)'
-                        : 'Assets reporting live tank litres'
+                        ? 'Live fuel % (lowest first) · not period-filtered'
+                        : 'Live tank litres · not period-filtered'
                     }
                     href="/app/fuel"
                     brandColor={ALERT_SEVERITY.warning}
@@ -1657,27 +1714,27 @@ export default function Dashboard() {
                   </DashboardWidget>
                 )}
 
-                {show('burn_vs_fill') && (
+                {show('burn_vs_fill') && (fuelFilled > 0 || fuelUsed > 0) && (
                   <DashboardWidget
                     title="Burn vs fill"
-                    subtitle="Consumed as share of filled"
+                    subtitle={`Consumed as share of filled · ${periodLabel}`}
                     brandColor={brand}
                     tone="teal"
                     insight={
                       fuelFilled > 0
                         ? `${pct(fuelUsed, fuelFilled)}% of filled volume was consumed`
-                        : 'No fill volume in KPI window'
+                        : `${fmt(fuelUsed, 1)} L consumed with no fill volume in period`
                     }
                   >
                     <CompactRadial
                       value={fuelFilled > 0 ? pct(fuelUsed, fuelFilled) : 0}
-                      label="used / filled"
+                      label={fuelFilled > 0 ? `${pct(fuelUsed, fuelFilled)}%` : `${fmt(fuelUsed, 1)} L`}
                       color={brand}
                     />
                   </DashboardWidget>
                 )}
               </div>
-            )}
+            ) : null}
           </div>
         )}
 
@@ -1688,23 +1745,34 @@ export default function Dashboard() {
               {show('trip_performance') && tripRows.length > 0 && (
                 <DashboardWidget
                   title="Trip performance"
-                  subtitle="Distance with fuel used"
+                  subtitle={`Distance + fuel in ${periodLabel}`}
                   href="/app/routes"
                   brandColor={brand}
                   tone="sky"
                   insight={`${tripRows.length} assets with trip data`}
                 >
-                  <CompactComposed
+                  <CompactDualAxis
                     data={tripRows}
-                    bars={[{ key: 'distance', label: 'Distance (km)', color: brand }]}
-                    lines={[{ key: 'fuel', label: 'Fuel (L)', color: accent }]}
+                    leftKey="distance"
+                    rightKey="fuel"
+                    leftLabel="Distance (km)"
+                    rightLabel="Fuel (L)"
+                    leftColor={brand}
+                    rightColor={accent}
+                    height={188}
+                  />
+                  <LegendDots
+                    items={[
+                      { label: 'Distance (km)', color: brand },
+                      { label: 'Fuel (L)', color: accent },
+                    ]}
                   />
                 </DashboardWidget>
               )}
               {show('route_pipeline') && routeStages.length > 0 && (
                 <DashboardWidget
                   title="Route pipeline"
-                  subtitle="Scheduled → in progress → done"
+                  subtitle="Current route statuses · not period-filtered"
                   href="/app/routes"
                   brandColor={accent}
                   tone="accent"
@@ -1716,7 +1784,7 @@ export default function Dashboard() {
               {show('driver_duty') && driverSlices.length > 0 && (
                 <DashboardWidget
                   title="Driver duty"
-                  subtitle="Roster availability"
+                  subtitle="Live roster · not period-filtered"
                   href="/app/drivers"
                   brandColor={brand}
                   tone="teal"
@@ -1735,7 +1803,7 @@ export default function Dashboard() {
               {show('workshop_load') && workshopBars.length > 0 && (
                 <DashboardWidget
                   title="Workshop load"
-                  subtitle="Jobs and inspections"
+                  subtitle="Open jobs · not period-filtered"
                   href="/app/workshop"
                   brandColor={ALERT_SEVERITY.warning}
                   tone="amber"

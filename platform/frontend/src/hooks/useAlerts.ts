@@ -59,18 +59,20 @@ export function useAlerts(
   const primed = useRef(false);
   const from = opts?.from;
   const to = opts?.to;
+  // Period dashboards need the full window — don't silently truncate to a small slice.
+  const fetchLimit = from || to ? Math.max(limit, 2000) : Math.max(limit, 300);
+  const keepLimit = from || to ? Math.max(limit, 2000) : limit;
 
   const query = useQuery({
-    queryKey: ['alerts', getTenantSlug() || 'default', from || 'all', to || 'all'],
+    queryKey: ['alerts', getTenantSlug() || 'default', from || 'all', to || 'all', keepLimit],
     queryFn: async () => {
-      const raw = await clientApi.getAlerts(Math.max(limit, 300), { from, to });
+      const raw = await clientApi.getAlerts(fetchLimit, { from, to });
       return safeArray(raw).map((a) => normalizeAlert(a as Record<string, unknown>));
     },
     enabled,
     refetchInterval: enabled ? pollWhenVisible(LIVE_POLL.alerts) : false,
     staleTime: 3_000,
-    placeholderData: (prev) => prev,
-    select: (data) => data.slice(0, limit),
+    select: (data) => data.slice(0, keepLimit),
   });
 
   useEffect(() => {

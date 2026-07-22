@@ -54,7 +54,6 @@ export function useFuelTransactions(
     },
     enabled,
     staleTime: 60_000,
-    placeholderData: (prev) => prev,
   });
 }
 
@@ -76,7 +75,6 @@ export function useFuelKpis(
     enabled,
     refetchInterval: enabled ? pollWhenVisible(LIVE_POLL.fuel) : false,
     staleTime: 60_000,
-    placeholderData: (prev) => prev,
   });
 }
 

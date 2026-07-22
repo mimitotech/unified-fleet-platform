@@ -549,7 +549,12 @@ export const clientApi = {
   getRoutes: (status?: string) =>
     api<FleetRoute[]>(`/api/client/routes${status ? `?status=${status}` : ''}`),
   getRouteStats: () => api<RouteStats>('/api/client/routes/stats'),
-  getTrips: (limit = 50) => api<TripSummary[]>(`/api/client/routes/trips?limit=${limit}`),
+  getTrips: (limit = 50, opts?: { from?: string; to?: string }) => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (opts?.from) q.set('from', opts.from);
+    if (opts?.to) q.set('to', opts.to);
+    return api<TripSummary[]>(`/api/client/routes/trips?${q}`);
+  },
   createRoute: (data: Partial<FleetRoute>) =>
     api<FleetRoute>('/api/client/routes', { method: 'POST', body: JSON.stringify(data) }),
   updateRoute: (id: string, data: Partial<FleetRoute>) =>
@@ -1107,7 +1112,14 @@ export const clientApi = {
   getWialonUnitTrack: (unitId: number, from: number, to: number) =>
     api<{
       unitId: number;
-      points: Array<{ lat: number; lng: number; speed: number; course?: number; time: number }>;
+      points: Array<{
+        lat: number;
+        lng: number;
+        speed: number;
+        course?: number;
+        time: number;
+        params?: Record<string, string | number>;
+      }>;
       count: number;
     }>(`/api/client/wialon/units/${unitId}/track?from=${from}&to=${to}`),
   getWialonFuelLive: () =>

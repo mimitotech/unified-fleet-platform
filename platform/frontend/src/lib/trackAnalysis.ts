@@ -1,4 +1,12 @@
-export type TrackPoint = { lat: number; lng: number; speed: number; course?: number; time: number };
+export type TrackPoint = {
+  lat: number;
+  lng: number;
+  speed: number;
+  course?: number;
+  time: number;
+  /** Raw message parameters from Wialon (updates during track playback). */
+  params?: Record<string, string | number>;
+};
 
 export type TrackMotionStatus = 'moving' | 'idle' | 'stopped';
 
@@ -33,15 +41,15 @@ export type TrackDirectionMarker = {
   color?: string;
 };
 
-/** Primary route line — Wialon-style blue track. */
-export const ROUTE_LINE_COLOR = '#2563eb';
+/** Primary route line — Wialon Hosting-style purple track. */
+export const ROUTE_LINE_COLOR = '#7c3aed';
 
 /** Alternating trip colors (Wialon-style multi-trip tracks). */
 export const TRIP_LINE_COLORS = [
   ROUTE_LINE_COLOR,
   '#16a34a',
   '#dc2626',
-  '#9333ea',
+  '#2563eb',
   '#ea580c',
   '#0891b2',
   '#ca8a04',
@@ -78,10 +86,25 @@ export function formatTrackDuration(sec: number): string {
 }
 
 function tripWindow(trip: Record<string, unknown>): { from: number; to: number; endLat?: number; endLng?: number } | null {
-  const from = Number(trip.t1 ?? trip.tm ?? trip.begin ?? trip.time_begin ?? trip.from);
-  const to = Number(trip.t2 ?? trip.end ?? trip.time_end);
+  const fromBlock = trip.from as Record<string, unknown> | undefined;
+  const toBlock = trip.to as Record<string, unknown> | undefined;
+  const from = Number(
+    trip.t1 ??
+      fromBlock?.t ??
+      trip.tm ??
+      trip.begin ??
+      trip.time_begin ??
+      (typeof trip.from === 'number' ? trip.from : NaN),
+  );
+  const to = Number(
+    trip.t2 ??
+      toBlock?.t ??
+      trip.end ??
+      trip.time_end ??
+      (typeof trip.to === 'number' ? trip.to : NaN),
+  );
   if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return null;
-  const endPos = trip.to ?? trip.end_pos ?? trip.pos_end;
+  const endPos = toBlock ?? trip.end_pos ?? trip.pos_end;
   let endLat: number | undefined;
   let endLng: number | undefined;
   if (endPos && typeof endPos === 'object') {
@@ -268,17 +291,11 @@ export function preferTrackSegments(
   points: TrackPoint[],
   trips: Array<Record<string, unknown>>,
   tripSegments: TrackColoredSegment[],
-  statusSegments: TrackStatusSegment[],
+  _statusSegments: TrackStatusSegment[],
 ): TrackColoredSegment[] {
+  // Wialon Hosting draws one continuous track (purple) — trip colors only when trips resolve.
   if (trips.length > 0 && tripSegments.some((s) => s.positions.length > 1)) {
     return tripSegments;
-  }
-  if (statusSegments.length) {
-    return statusSegments.map((s, i) => ({
-      tripIndex: i,
-      color: s.color,
-      positions: s.positions,
-    }));
   }
   if (points.length > 1) {
     return [

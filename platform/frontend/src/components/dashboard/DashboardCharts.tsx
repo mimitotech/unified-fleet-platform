@@ -226,7 +226,7 @@ export function CompactDualAxis({
 }) {
   if (!data.length) return <EmptyChart height={height} />;
   const has = data.some((r) => num(r[leftKey]) > 0 || num(r[rightKey]) > 0);
-  if (!has) return <EmptyChart height={height} message="No fuel totals in this period" />;
+  if (!has) return <EmptyChart height={height} message="No data in this period" />;
 
   return (
     <div className={cn('w-full', className)} style={{ height }}>

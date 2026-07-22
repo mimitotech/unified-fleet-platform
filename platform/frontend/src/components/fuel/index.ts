@@ -5,6 +5,7 @@ export { FuelDrainAlerts } from './FuelDrainAlerts';
 export { FuelTrendChart } from './FuelTrendChart';
 export { FuelLiveStrip } from './FuelLiveStrip';
 export { FuelAssetCharts } from './FuelAssetCharts';
+export { FuelLevelChart } from './FuelLevelChart';
 export { FuelCostingPanel } from './FuelCostingPanel';
 export { FuelModuleReports } from './FuelModuleReports';
 export { FuelReportsTab } from './FuelReportsTab';

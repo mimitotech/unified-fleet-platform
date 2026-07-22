@@ -3,7 +3,7 @@ import { format } from 'date-fns';
 import { FleetTrackMap, trackPeriodToMinutes, type TrackPeriod } from '@/components/fleet/FleetTrackMap';
 import { UnitDetailPanel } from '@/components/fleet/UnitDetailPanel';
 import { formatFuelDisplay, type FleetUnit } from '@/lib/fleetUnits';
-import { formatTrackDuration, TRIP_LINE_COLORS } from '@/lib/trackAnalysis';
+import { formatTrackDuration, TRIP_LINE_COLORS, ROUTE_LINE_COLOR } from '@/lib/trackAnalysis';
 import { useWialonTrackHistory, type TrackTimeRange } from '@/hooks/useWialonTrackHistory';
 import { useWialonContext } from '@/hooks/useWialon';
 import { Input } from '@/components/ui/input';
@@ -28,16 +28,23 @@ const PERIODS: { id: TrackPeriod; label: string; unit: string }[] = [
   { id: 'month', label: 'Months', unit: 'month(s)' },
 ];
 
-const SPEEDS = [1, 2, 4, 8] as const;
+const SPEEDS = [1, 2, 4, 8, 16, 32, 100] as const;
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 function shiftDays(iso: string, days: number) {
   const d = new Date(`${iso}T12:00:00`);
   d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 type Props = {
@@ -98,7 +105,8 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
     liveRecent,
   );
 
-  const { stops, summary, isLoading, isFetching, pointCount, points, trips, useTripColors } = history;
+  const { stops, summary, isLoading, isFetching, isError, errorMessage, pointCount, points, trips, useTripColors, refetch } =
+    history;
 
   useEffect(() => {
     setPlaying(false);
@@ -124,19 +132,34 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
 
   const tripRows = useMemo(() => {
     return trips.slice(0, 24).map((t, i) => {
-      const from = Number(t.t1 ?? t.from ?? t.begin ?? 0);
-      const to = Number(t.t2 ?? t.to ?? t.end ?? 0);
-      const mileage = Number(t.mileage ?? t.distance ?? t.mileage_counter ?? 0);
+      const fromBlock = t.from as Record<string, unknown> | undefined;
+      const toBlock = t.to as Record<string, unknown> | undefined;
+      const from = Number(t.t1 ?? fromBlock?.t ?? t.begin ?? 0);
+      const to = Number(t.t2 ?? toBlock?.t ?? t.end ?? 0);
+      const mileage = Number(t.mileage ?? t.distance ?? t.m ?? 0);
+      const mileageKm = mileage > 500 ? mileage / 1000 : mileage;
       return {
         i,
         color: TRIP_LINE_COLORS[i % TRIP_LINE_COLORS.length],
         from,
         to,
-        mileage,
+        mileage: mileageKm,
         label: `Trip ${i + 1}`,
       };
     });
   }, [trips]);
+
+  const playheadParams = useMemo(() => {
+    const raw = playhead?.params;
+    if (!raw) return [] as Array<{ key: string; value: string }>;
+    return Object.entries(raw)
+      .filter(([, v]) => v !== '' && v != null)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, value]) => ({
+        key,
+        value: typeof value === 'number' ? String(Math.round(value * 1000) / 1000) : String(value),
+      }));
+  }, [playhead]);
 
   const jumpToTrip = useCallback(
     (fromTs: number) => {
@@ -259,6 +282,25 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
               onChange={(e) => setQ(e.target.value)}
               className="h-8 text-xs"
             />
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 w-full text-xs"
+              disabled={!selected || !connected || trackLoading}
+              onClick={() => refetch()}
+            >
+              {trackLoading ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                  Loading track…
+                </>
+              ) : (
+                'Show track'
+              )}
+            </Button>
+            {!connected && (
+              <p className="text-[10px] text-amber-700">Wialon link idle — connect in Admin to load GPS history.</p>
+            )}
           </div>
 
           <ul className="max-h-[22%] lg:max-h-[28%] overflow-auto p-1.5 space-y-0.5 shrink-0 border-b border-border/60">
@@ -358,12 +400,23 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
                 Analysing route…
               </div>
             )}
-            {!trackLoading && selected && pointCount === 0 && (
+            {isError && selected && (
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 px-2 py-2 text-xs space-y-1">
+                <p className="font-medium text-destructive">Could not load track</p>
+                <p className="text-muted-foreground break-words">{errorMessage || 'Wialon request failed'}</p>
+                <Button type="button" size="sm" variant="outline" className="h-7 w-full text-[11px]" onClick={() => refetch()}>
+                  Retry
+                </Button>
+              </div>
+            )}
+
+            {!isError && !trackLoading && selected && pointCount === 0 && (
               <p className="text-xs text-muted-foreground py-4 text-center">
-                No GPS data for this period. Try a longer range.
+                No GPS data for this period. Try a longer range, or click Show track again after Wialon syncs.
               </p>
             )}
             {!trackLoading &&
+              !isError &&
               stops.map((stop, i) => (
                 <button
                   key={`${stop.from}-${i}`}
@@ -494,20 +547,48 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
         </div>
 
         <div className="hidden lg:flex lg:col-span-3 flex-col h-full min-h-0 overflow-hidden">
-          <UnitDetailPanel
-            unit={selected}
-            live
-            showControls
-            className="h-full border-0 rounded-none shadow-none"
-          />
-          {playhead && (
-            <div className="shrink-0 border-t border-border/60 px-3 py-2 text-[10px] space-y-0.5 bg-muted/30">
-              <p className="font-semibold text-primary uppercase tracking-wide">Playback</p>
-              <p className="tabular-nums">{format(new Date(playhead.time * 1000), 'PPpp')}</p>
-              <p className="text-muted-foreground tabular-nums">
-                {Math.round(playhead.speed)} km/h · course {Math.round(playhead.course ?? 0)}°
-              </p>
+          {pointCount > 0 && playhead ? (
+            <div className="flex flex-col h-full min-h-0">
+              <div className="shrink-0 border-b border-border/60 px-3 py-2.5 space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ background: ROUTE_LINE_COLOR }} />
+                  <p className="text-sm font-semibold truncate">{selected?.name}</p>
+                </div>
+                <p className="text-[11px] text-muted-foreground tabular-nums">
+                  {format(new Date(playhead.time * 1000), 'dd.MM.yyyy HH:mm:ss')} ·{' '}
+                  {Math.round(playhead.speed)} km/h
+                </p>
+              </div>
+              <div className="flex-1 min-h-0 overflow-auto px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">
+                  Parameters
+                </p>
+                {playheadParams.length > 0 ? (
+                  <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 text-[11px] font-mono">
+                    {playheadParams.map((row) => (
+                      <div key={row.key} className="contents">
+                        <span className="text-muted-foreground truncate">{row.key}</span>
+                        <span className="tabular-nums text-right text-foreground">{row.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    No message parameters on this GPS point. Play the track to scrub through points that include sensor IO.
+                  </p>
+                )}
+              </div>
+              <div className="shrink-0 border-t border-border/60 px-3 py-2 text-[10px] text-muted-foreground">
+                Point {playIndex + 1} / {points.length} · use player controls to move the unit on the map
+              </div>
             </div>
+          ) : (
+            <UnitDetailPanel
+              unit={selected}
+              live
+              showControls
+              className="h-full border-0 rounded-none shadow-none"
+            />
           )}
         </div>
       </div>

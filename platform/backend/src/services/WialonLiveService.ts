@@ -697,13 +697,69 @@ export class WialonLiveService {
     to: Date
   ) {
     return withWialonClient(credentials, async (client) => {
-      const result = await client.request<{ trips?: Array<Record<string, unknown>> }>('unit/get_trips', {
-        itemId: unitId,
-        timeFrom: Math.floor(from.getTime() / 1000),
-        timeTo: Math.floor(to.getTime() / 1000),
-        msgsSource: 0,
-      });
-      return result.trips || [];
+      const timeFrom = Math.floor(from.getTime() / 1000);
+      const timeTo = Math.floor(to.getTime() / 1000);
+
+      // unit/get_trips with msgsSource:1 requires messages/load_interval on the same session.
+      let loadCount = 0;
+      try {
+        const load = await client.request<{ count?: number }>('messages/load_interval', {
+          itemId: unitId,
+          timeFrom,
+          timeTo,
+          flags: 1,
+          flagsMask: 65281,
+          loadCount: 1,
+        });
+        loadCount = load.count ?? 0;
+      } catch (e) {
+        const msg = (e as Error).message || '';
+        // 1001 = no messages for interval
+        if (/1001|No messages/i.test(msg)) return [];
+        throw e;
+      }
+
+      if (!loadCount) {
+        await client.request('messages/unload', {}).catch(() => undefined);
+        return [];
+      }
+
+      try {
+        const result = await client.request<
+          Array<Record<string, unknown>> | { trips?: Array<Record<string, unknown>> }
+        >('unit/get_trips', {
+          itemId: unitId,
+          timeFrom,
+          timeTo,
+          msgsSource: 1,
+        });
+        const raw = Array.isArray(result) ? result : result.trips ?? [];
+        return raw.map((trip) => {
+          const fromBlock = trip.from as Record<string, unknown> | undefined;
+          const toBlock = trip.to as Record<string, unknown> | undefined;
+          const t1 = Number(fromBlock?.t ?? trip.t1 ?? trip.tm ?? trip.begin ?? 0);
+          const t2 = Number(toBlock?.t ?? trip.t2 ?? trip.end ?? 0);
+          const meters = Number(trip.m ?? trip.distance ?? trip.mileage ?? 0);
+          const mileageKm =
+            Number.isFinite(meters) && meters > 0
+              ? meters > 500
+                ? meters / 1000
+                : meters
+              : 0;
+          return {
+            ...trip,
+            t1: Number.isFinite(t1) ? t1 : 0,
+            t2: Number.isFinite(t2) ? t2 : 0,
+            mileage: Math.round(mileageKm * 100) / 100,
+          };
+        });
+      } catch (e) {
+        const msg = (e as Error).message || '';
+        if (/1001|No messages/i.test(msg)) return [];
+        throw e;
+      } finally {
+        await client.request('messages/unload', {}).catch(() => undefined);
+      }
     });
   }
 
@@ -719,25 +775,60 @@ export class WialonLiveService {
       const timeFrom = Math.floor(from.getTime() / 1000);
       const timeTo = Math.floor(to.getTime() / 1000);
 
-      const load = await client.request<{ count?: number }>('messages/load_interval', {
-        itemId: unitId,
-        timeFrom,
-        timeTo,
-        flags: 1,
-        flagsMask: 65281,
-        loadCount: batchSize,
-      });
+      type Msg = {
+        pos?: { x: number; y: number; s: number; c?: number };
+        t: number;
+        p?: Record<string, unknown>;
+      };
+
+      const loadMessages = async (flags: number, flagsMask: number) => {
+        try {
+          return await client.request<{ count?: number }>('messages/load_interval', {
+            itemId: unitId,
+            timeFrom,
+            timeTo,
+            flags,
+            flagsMask,
+            loadCount: batchSize,
+          });
+        } catch (e) {
+          const msg = (e as Error).message || '';
+          if (/1001|No messages/i.test(msg)) return { count: 0 };
+          throw e;
+        }
+      };
+
+      // Prefer GPS-position data messages; fall back to unfiltered if Hosting-style layer is empty.
+      let load = await loadMessages(1, 65281);
+      if (!(load.count ?? 0)) {
+        await client.request('messages/unload', {}).catch(() => undefined);
+        load = await loadMessages(1, 0);
+      }
+      if (!(load.count ?? 0)) {
+        await client.request('messages/unload', {}).catch(() => undefined);
+        load = await loadMessages(0, 0);
+      }
 
       const count = load.count ?? 0;
-      if (!count) return [];
+      if (!count) {
+        await client.request('messages/unload', {}).catch(() => undefined);
+        return [];
+      }
 
-      type Msg = { pos?: { x: number; y: number; s: number; c?: number }; t: number };
+      const asMessages = (raw: unknown): Msg[] => {
+        if (Array.isArray(raw)) return raw as Msg[];
+        if (raw && typeof raw === 'object' && Array.isArray((raw as { messages?: Msg[] }).messages)) {
+          return (raw as { messages: Msg[] }).messages;
+        }
+        return [];
+      };
+
       const fetchRange = async (indexFrom: number, indexTo: number): Promise<Msg[]> => {
-        const batch = await client.request<{ messages?: Msg[] }>('messages/get_messages', {
+        const batch = await client.request<unknown>('messages/get_messages', {
           indexFrom,
           indexTo,
         });
-        return batch.messages ?? [];
+        return asMessages(batch);
       };
 
       const allMessages: Msg[] = [];
@@ -776,7 +867,6 @@ export class WialonLiveService {
             const indexTo = Math.min(indexFrom + batchSize - 1, range.to);
             const batch = await fetchRange(indexFrom, indexTo);
             if (batch.length) {
-              // Keep only sampled indices within this batch window.
               for (let i = 0; i < batch.length; i++) {
                 const absIdx = indexFrom + i;
                 if (picked.has(absIdx)) allMessages.push(batch[i]);
@@ -791,13 +881,25 @@ export class WialonLiveService {
 
       return allMessages
         .filter((m) => m.pos && m.pos.y != null && m.pos.x != null)
-        .map((m) => ({
-          lat: m.pos!.y,
-          lng: m.pos!.x,
-          speed: m.pos!.s ?? 0,
-          course: m.pos!.c,
-          time: m.t,
-        }));
+        .map((m) => {
+          const params: Record<string, string | number> = {};
+          if (m.p && typeof m.p === 'object') {
+            for (const [k, v] of Object.entries(m.p)) {
+              if (v == null || v === '') continue;
+              if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') {
+                params[k] = typeof v === 'boolean' ? Number(v) : v;
+              }
+            }
+          }
+          return {
+            lat: m.pos!.y,
+            lng: m.pos!.x,
+            speed: m.pos!.s ?? 0,
+            course: m.pos!.c,
+            time: m.t,
+            params: Object.keys(params).length ? params : undefined,
+          };
+        });
     });
   }
 

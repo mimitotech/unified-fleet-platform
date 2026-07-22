@@ -14,14 +14,26 @@ async function fetchUnitTrips(
   toTs: number
 ): Promise<Array<Record<string, unknown>>> {
   try {
-    const result = await client.request<{ trips?: Array<Record<string, unknown>> }>('unit/get_trips', {
+    await client.request('messages/load_interval', {
+      itemId: unitId,
+      timeFrom: fromTs,
+      timeTo: toTs,
+      flags: 1,
+      flagsMask: 65281,
+      loadCount: 1,
+    });
+    const result = await client.request<
+      Array<Record<string, unknown>> | { trips?: Array<Record<string, unknown>> }
+    >('unit/get_trips', {
       itemId: unitId,
       timeFrom: fromTs,
       timeTo: toTs,
       msgsSource: 1,
     });
-    return result.trips ?? [];
+    await client.request('messages/unload', {}).catch(() => undefined);
+    return Array.isArray(result) ? result : result.trips ?? [];
   } catch {
+    await client.request('messages/unload', {}).catch(() => undefined);
     return [];
   }
 }

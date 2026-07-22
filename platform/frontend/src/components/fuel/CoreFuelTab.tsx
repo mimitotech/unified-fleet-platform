@@ -11,6 +11,7 @@ import {
 } from '@/components/fuel';
 import { FuelLiveStrip } from './FuelLiveStrip';
 import { FuelAssetCharts } from './FuelAssetCharts';
+import { FuelLevelChart } from './FuelLevelChart';
 import { FuelCostingPanel } from './FuelCostingPanel';
 import { computePeriodFuelKpis } from '@/components/fuel/fuelColumnMetrics';
 import { filterFuelTransactionsByDate, isWialonGroupSummary } from '@/components/fuel/fuelTransactionFilters';
@@ -295,6 +296,17 @@ export function CoreFuelTab({
         onFromDateChange={onFromDateChange}
         onToDateChange={onToDateChange}
         visibleColumns={visibleColumns}
+      />
+
+      <FuelLevelChart
+        transactions={filteredFuelTransactions}
+        vehicles={(units ?? []).map((u) => ({ name: u.name }))}
+        vehicleFuelLevels={unitFuelMapByName}
+        isLoading={isFuelLoading}
+        error={fuelError}
+        fromDate={fromDate}
+        toDate={toDate}
+        unitLabel={labels.unit}
       />
 
       <FuelAssetCharts

@@ -13,6 +13,7 @@ import type { FleetUnit } from '@/lib/fleetUnits';
 import { formatFuelDisplay } from '@/lib/fleetUnits';
 import {
   formatTrackDuration,
+  ROUTE_LINE_COLOR,
   TRACK_STATUS_COLORS,
   TRIP_LINE_COLORS,
   type TrackStopEvent,
@@ -352,6 +353,9 @@ export function FleetTrackMap({
         ) : (
           <>
             <span className="flex items-center gap-1">
+              <span className="w-4 h-1 rounded" style={{ background: ROUTE_LINE_COLOR }} /> Track
+            </span>
+            <span className="flex items-center gap-1">
               <span className="w-2.5 h-2.5 rounded-full" style={{ background: TRACK_STATUS_COLORS.moving }} /> Moving
             </span>
             <span className="flex items-center gap-1">
@@ -453,7 +457,7 @@ export function FleetTrackMap({
           <CircleMarker
             center={[playhead.lat, playhead.lng]}
             radius={10}
-            pathOptions={{ color: '#fff', fillColor: '#2563eb', fillOpacity: 1, weight: 3 }}
+            pathOptions={{ color: '#fff', fillColor: ROUTE_LINE_COLOR, fillOpacity: 1, weight: 3 }}
           >
             <Popup>
               <div className="text-xs space-y-0.5">

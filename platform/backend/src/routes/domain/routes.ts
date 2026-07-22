@@ -36,11 +36,26 @@ router.get('/stats', requireTenant, mod, async (req: TenantRequest, res) => {
 });
 
 router.get('/trips', requireTenant, mod, async (req: TenantRequest, res) => {
-  const limit = parseInt(String(req.query.limit || '50'), 10);
-  const { rows } = await query(
-    `SELECT * FROM trip_summaries WHERE tenant_id = $1 ORDER BY departure_time DESC LIMIT $2`,
-    [req.tenantId, limit]
-  );
+  const limit = Math.min(500, Math.max(1, parseInt(String(req.query.limit || '50'), 10) || 50));
+  const from = req.query.from ? String(req.query.from) : undefined;
+  const to = req.query.to ? String(req.query.to) : undefined;
+
+  const params: unknown[] = [req.tenantId];
+  let sql = `SELECT * FROM trip_summaries WHERE tenant_id = $1`;
+
+  if (from && /^\d{4}-\d{2}-\d{2}$/.test(from)) {
+    params.push(`${from} 00:00:00`);
+    sql += ` AND departure_time >= $${params.length}`;
+  }
+  if (to && /^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    params.push(`${to} 23:59:59`);
+    sql += ` AND departure_time <= $${params.length}`;
+  }
+
+  params.push(limit);
+  sql += ` ORDER BY departure_time DESC LIMIT $${params.length}`;
+
+  const { rows } = await query(sql, params);
   return success(res, toCamelRows(rows));
 });
 
