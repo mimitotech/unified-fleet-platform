@@ -459,20 +459,75 @@ export class WialonLiveService {
           });
         }
 
-        // Fuel and other Wialon reports often include charts alongside tables — fetch both.
-        for (let chartIndex = 0; chartIndex < 4; chartIndex++) {
+        // Wialon report charts (fuel volume graphs, etc.) — use official get_result_chart params.
+        // Do not stop on the first miss; some templates leave sparse attachment indices.
+        const attachments = (result.reportResult?.attachments ??
+          result.attachments ??
+          []) as Array<Record<string, unknown>>;
+        const chartAttachmentIndexes = attachments
+          .map((a, i) => {
+            const type = String(a.type ?? a.t ?? a.n ?? '').toLowerCase();
+            const name = String(a.name ?? a.nm ?? a.label ?? '');
+            const looksChart =
+              type.includes('chart') ||
+              /chart|graph|fuel|volume/i.test(name) ||
+              Number(a.type) === 2;
+            return looksChart ? { index: i, name: name || `Chart ${i + 1}` } : null;
+          })
+          .filter(Boolean) as Array<{ index: number; name: string }>;
+
+        const indexesToTry =
+          chartAttachmentIndexes.length > 0
+            ? chartAttachmentIndexes
+            : Array.from({ length: 8 }, (_, i) => ({ index: i, name: `Chart ${i + 1}` }));
+
+        for (const att of indexesToTry) {
           try {
-            const chart = await client.request<unknown>('report/get_result_chart', { chartIndex });
-            if (chart == null || (typeof chart === 'object' && !Object.keys(chart as object).length)) {
-              break;
+            const chart = await client.request<unknown>('report/get_result_chart', {
+              attachmentIndex: att.index,
+              action: 1,
+              width: 900,
+              height: 360,
+              autoScaleY: 1,
+              pixelFrom: 0,
+              pixelTo: 0,
+              flags: 0,
+            });
+            if (chart == null) continue;
+            if (typeof chart === 'object' && !Array.isArray(chart) && !Object.keys(chart as object).length) {
+              continue;
             }
+
+            let data: unknown = chart;
+            if (typeof chart === 'string') {
+              const s = chart.trim();
+              data = s.startsWith('data:image/')
+                ? { image: s }
+                : { image: `data:image/png;base64,${s.replace(/\s+/g, '')}` };
+            } else if (Buffer.isBuffer(chart)) {
+              data = { image: `data:image/png;base64,${chart.toString('base64')}` };
+            } else if (typeof chart === 'object') {
+              const obj = chart as Record<string, unknown>;
+              // Normalize common Wialon PNG / base64 fields for the frontend renderer.
+              for (const key of ['image', 'png', 'base64', 'data', 'content'] as const) {
+                const v = obj[key];
+                if (typeof v === 'string' && v.length > 40 && !v.startsWith('data:image/') && !/^https?:/i.test(v)) {
+                  obj[key] = `data:image/png;base64,${v.replace(/\s+/g, '')}`;
+                }
+              }
+              if (!obj.name && att.name) obj.name = att.name;
+              data = obj;
+            }
+
             chartsOut.push({
-              index: chartIndex,
-              name: `Chart ${chartIndex + 1}`,
-              data: chart,
+              index: att.index,
+              name: String(
+                (typeof data === 'object' && data && (data as { name?: string }).name) || att.name,
+              ),
+              data,
             });
           } catch {
-            break;
+            // Skip missing attachment indices; keep probing remaining charts.
           }
         }
       } catch (e) {

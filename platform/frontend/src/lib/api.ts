@@ -1487,6 +1487,40 @@ export const adminApi = {
   getSystemSettings: () => api<Record<string, Record<string, unknown>>>('/api/admin/system/settings'),
   updateSystemSettings: (key: string, value: unknown) =>
     api(`/api/admin/system/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }),
+  listLoginSlides: () =>
+    api<{ slides: Array<{
+      id: string;
+      title: string;
+      details: string | null;
+      eyebrow: string | null;
+      imageUrl: string | null;
+      sortOrder: number;
+      isEnabled: boolean;
+    }> }>('/api/admin/login-slides'),
+  createLoginSlide: (data: {
+    title: string;
+    details?: string | null;
+    eyebrow?: string | null;
+    sortOrder?: number;
+    isEnabled?: boolean;
+    fileName?: string;
+    mimeType?: string;
+    dataBase64?: string;
+  }) => api('/api/admin/login-slides', { method: 'POST', body: JSON.stringify(data) }),
+  updateLoginSlide: (
+    id: string,
+    data: {
+      title?: string;
+      details?: string | null;
+      eyebrow?: string | null;
+      sortOrder?: number;
+      isEnabled?: boolean;
+      fileName?: string;
+      mimeType?: string;
+      dataBase64?: string;
+    },
+  ) => api(`/api/admin/login-slides/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteLoginSlide: (id: string) => api(`/api/admin/login-slides/${id}`, { method: 'DELETE' }),
   getMarketplace: () => api<unknown[]>('/api/admin/marketplace'),
   updateMarketplace: (key: string, isEnabledGlobally: boolean) =>
     api(`/api/admin/marketplace/${key}`, { method: 'PATCH', body: JSON.stringify({ isEnabledGlobally }) }),

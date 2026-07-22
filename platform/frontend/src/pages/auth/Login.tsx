@@ -1,10 +1,11 @@
 /**
- * Login — classic MAMS full-bleed background with an interactive image slideshow.
- * Auth logic unchanged (email/password → postLoginPath).
+ * Login — full-bleed slideshow. Slides come from Admin → System → Login media
+ * when configured; otherwise built-in defaults are used.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/providers/AuthProvider';
 import { LoadingButton } from '@/components/shared/LoadingButton';
 import { PasswordInput } from '@/components/shared/PasswordInput';
@@ -14,27 +15,39 @@ import { notify } from '@/lib/notify';
 import { BRAND } from '@/lib/branding';
 import { postLoginPath } from '@/lib/authRedirect';
 import { cn } from '@/lib/utils';
+import { api } from '@/lib/api';
 
-const SLIDES = [
+type Slide = {
+  id: string;
+  src: string;
+  eyebrow: string;
+  title: string;
+  caption: string;
+};
+
+const DEFAULT_SLIDES: Slide[] = [
   {
+    id: 'default-1',
     src: BRAND.landingGps,
     eyebrow: 'Real-time GPS',
     title: 'See every asset, live',
     caption: 'Track vehicles, generators, and equipment on one map.',
   },
   {
+    id: 'default-2',
     src: BRAND.landingMap,
     eyebrow: 'Operations hub',
     title: 'One dashboard for the fleet',
     caption: 'Fuel, alerts, routes, and workshop — unified for your team.',
   },
   {
+    id: 'default-3',
     src: '/gp1.png',
     eyebrow: 'Fuel intelligence',
     title: 'Protect every litre',
     caption: 'Fills, consumption, and sudden drops with clear reporting.',
   },
-] as const;
+];
 
 export default function Login() {
   const { signIn } = useAuth();
@@ -43,12 +56,45 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [slide, setSlide] = useState(0);
 
+  const { data: remote } = useQuery({
+    queryKey: ['publicLoginSlides'],
+    queryFn: () =>
+      api<{
+        slides: Array<{
+          id: string;
+          title: string;
+          details: string | null;
+          eyebrow: string | null;
+          imageUrl: string | null;
+        }>;
+      }>('/api/public/login-slides'),
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  const slides = useMemo(() => {
+    const rows = remote?.slides?.filter((s) => s.imageUrl) ?? [];
+    if (!rows.length) return DEFAULT_SLIDES;
+    return rows.map((s) => ({
+      id: s.id,
+      src: s.imageUrl!,
+      eyebrow: s.eyebrow || '',
+      title: s.title,
+      caption: s.details || '',
+    }));
+  }, [remote]);
+
   useEffect(() => {
+    setSlide(0);
+  }, [slides.length]);
+
+  useEffect(() => {
+    if (slides.length < 2) return;
     const id = window.setInterval(() => {
-      setSlide((s) => (s + 1) % SLIDES.length);
+      setSlide((s) => (s + 1) % slides.length);
     }, 6500);
     return () => window.clearInterval(id);
-  }, []);
+  }, [slides.length]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,16 +111,16 @@ export default function Login() {
     }
   };
 
-  const active = SLIDES[slide];
+  const active = slides[Math.min(slide, slides.length - 1)] ?? DEFAULT_SLIDES[0];
 
   return (
     <div className="fixed inset-0 flex items-center justify-center overflow-hidden">
-      {SLIDES.map((s, i) => (
+      {slides.map((s, i) => (
         <div
-          key={s.src}
+          key={s.id}
           className={cn(
             'absolute inset-0 bg-cover bg-center bg-no-repeat transition-opacity duration-1000 ease-in-out',
-            i === slide ? 'opacity-100' : 'opacity-0'
+            i === slide ? 'opacity-100' : 'opacity-0',
           )}
           style={{ backgroundImage: `url('${s.src}')` }}
           aria-hidden={i !== slide}
@@ -85,28 +131,34 @@ export default function Login() {
 
       <div className="absolute inset-x-0 top-0 z-10 p-6 sm:p-10 pointer-events-none">
         <div className="max-w-xl">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/70 mb-2">
-            {active.eyebrow}
-          </p>
+          {active.eyebrow ? (
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/70 mb-2">
+              {active.eyebrow}
+            </p>
+          ) : null}
           <h2 className="text-2xl sm:text-3xl font-bold text-white drop-shadow-md">{active.title}</h2>
-          <p className="mt-2 text-sm sm:text-base text-white/85 max-w-md">{active.caption}</p>
+          {active.caption ? (
+            <p className="mt-2 text-sm sm:text-base text-white/85 max-w-md">{active.caption}</p>
+          ) : null}
         </div>
       </div>
 
-      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10 flex gap-2">
-        {SLIDES.map((_, i) => (
-          <button
-            key={i}
-            type="button"
-            aria-label={`Slide ${i + 1}`}
-            onClick={() => setSlide(i)}
-            className={cn(
-              'h-2 rounded-full transition-all',
-              i === slide ? 'w-8 bg-white' : 'w-2 bg-white/40 hover:bg-white/70'
-            )}
-          />
-        ))}
-      </div>
+      {slides.length > 1 && (
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10 flex gap-2">
+          {slides.map((s, i) => (
+            <button
+              key={s.id}
+              type="button"
+              aria-label={`Slide ${i + 1}`}
+              onClick={() => setSlide(i)}
+              className={cn(
+                'h-2 rounded-full transition-all',
+                i === slide ? 'w-8 bg-white' : 'w-2 bg-white/40 hover:bg-white/70',
+              )}
+            />
+          ))}
+        </div>
+      )}
 
       <div className="relative w-full max-w-[90%] sm:max-w-sm md:max-w-md px-4 sm:px-0 z-20">
         <div className="rounded-3xl bg-white/30 backdrop-blur-md p-6 sm:p-8 shadow-2xl border border-white/20">

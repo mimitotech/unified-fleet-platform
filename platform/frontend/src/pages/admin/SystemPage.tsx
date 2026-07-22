@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { MetricCard } from '@/components/app/MetricCard';
+import { LoginSlidesAdminPanel } from '@/components/admin/LoginSlidesAdminPanel';
 import { Database, Server, Zap, Radio } from 'lucide-react';
 
 export default function AdminSystemPage() {
@@ -59,6 +60,7 @@ export default function AdminSystemPage() {
         <Tabs defaultValue="general">
           <TabsList>
             <TabsTrigger value="general">General</TabsTrigger>
+            <TabsTrigger value="login">Login media</TabsTrigger>
             <TabsTrigger value="email">Email</TabsTrigger>
             <TabsTrigger value="webhooks">Webhooks</TabsTrigger>
             <TabsTrigger value="backup">Backup</TabsTrigger>
@@ -87,6 +89,10 @@ export default function AdminSystemPage() {
                 <Button onClick={() => saveSettings.mutate({ key: 'general', value: { ...s?.general, ...general } })}>Save</Button>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="login" className="mt-4">
+            <LoginSlidesAdminPanel />
           </TabsContent>
 
           <TabsContent value="email" className="mt-4">

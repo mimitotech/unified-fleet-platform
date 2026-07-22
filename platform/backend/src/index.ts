@@ -86,6 +86,13 @@ async function main() {
         logger.warn(`Upload schema ensure skipped: ${(e as Error).message}`);
       }
       try {
+        const { LoginSlideService } = await import('./services/LoginSlideService.js');
+        await LoginSlideService.ensureSchema();
+        logger.info('Login slides schema ready');
+      } catch (e) {
+        logger.warn(`Login slides schema ensure skipped: ${(e as Error).message}`);
+      }
+      try {
         const { ensureWorkshopSchema } = await import('./services/WorkshopSchema.js');
         await ensureWorkshopSchema();
         logger.info('Workshop schema ready (rich fields)');

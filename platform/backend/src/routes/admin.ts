@@ -117,6 +117,72 @@ router.put('/system/settings/:key', async (req: AuthRequest, res) => {
   return success(res, { updated: true });
 });
 
+// ─── Login page slideshow media ──────────────────────────────────────────────
+
+router.get('/login-slides', async (_req, res) => {
+  try {
+    const { LoginSlideService } = await import('../services/LoginSlideService.js');
+    const slides = await LoginSlideService.listAll();
+    return success(res, { slides });
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
+
+router.post('/login-slides', async (req: AuthRequest, res) => {
+  try {
+    const { LoginSlideService } = await import('../services/LoginSlideService.js');
+    const slide = await LoginSlideService.create(req.body || {});
+    await AuditService.log({
+      userId: req.user?.id,
+      userEmail: req.user?.email,
+      action: 'login_slide.create',
+      resourceType: 'login_slide',
+      resourceId: slide.id,
+      details: { title: slide.title },
+    });
+    return success(res, slide, 201);
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
+
+router.patch('/login-slides/:id', async (req: AuthRequest, res) => {
+  try {
+    const { LoginSlideService } = await import('../services/LoginSlideService.js');
+    const slide = await LoginSlideService.update(String(req.params.id), req.body || {});
+    await AuditService.log({
+      userId: req.user?.id,
+      userEmail: req.user?.email,
+      action: 'login_slide.update',
+      resourceType: 'login_slide',
+      resourceId: slide.id,
+      details: { title: slide.title, isEnabled: slide.isEnabled },
+    });
+    return success(res, slide);
+  } catch (e) {
+    return error(res, (e as Error).message, /not found/i.test((e as Error).message) ? 404 : 400);
+  }
+});
+
+router.delete('/login-slides/:id', async (req: AuthRequest, res) => {
+  try {
+    const { LoginSlideService } = await import('../services/LoginSlideService.js');
+    const ok = await LoginSlideService.remove(String(req.params.id));
+    if (!ok) return error(res, 'Slide not found', 404);
+    await AuditService.log({
+      userId: req.user?.id,
+      userEmail: req.user?.email,
+      action: 'login_slide.delete',
+      resourceType: 'login_slide',
+      resourceId: String(req.params.id),
+    });
+    return success(res, { deleted: true });
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
+
 // ─── Marketplace ─────────────────────────────────────────────────────────────
 
 router.get('/marketplace', async (_req, res) => {

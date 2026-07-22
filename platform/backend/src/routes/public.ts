@@ -2,8 +2,29 @@ import { Router } from 'express';
 import { WialonVideoService } from '../services/WialonVideoService.js';
 import { VideoShareLinkService } from '../services/VideoShareLinkService.js';
 import { loadTenantWialonCreds } from '../services/tenantWialonCredentials.js';
+import { LoginSlideService } from '../services/LoginSlideService.js';
+import { success, error } from '../utils/response.js';
 
 const router = Router();
+
+/** Enabled login slideshow slides (no auth — used by /login). */
+router.get('/login-slides', async (_req, res) => {
+  try {
+    const slides = await LoginSlideService.listPublic();
+    return success(res, {
+      slides: slides.map((s) => ({
+        id: s.id,
+        title: s.title,
+        details: s.details,
+        eyebrow: s.eyebrow,
+        imageUrl: s.imageUrl,
+        sortOrder: s.sortOrder,
+      })),
+    });
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
 
 /** Public, token-gated clip playback (no tenant auth — link expires). */
 router.get('/video/:token', async (req, res) => {
