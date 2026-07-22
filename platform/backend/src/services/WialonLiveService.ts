@@ -299,8 +299,12 @@ export class WialonLiveService {
       };
 
       let result: {
-        reportResult?: { tables?: Array<Record<string, unknown>> };
+        reportResult?: {
+          tables?: Array<Record<string, unknown>>;
+          attachments?: Array<Record<string, unknown>>;
+        };
         tables?: Array<Record<string, unknown>>;
+        attachments?: Array<Record<string, unknown>>;
       } = {};
 
       // Prefer sync exec (remoteExec:0) — often finishes in one round-trip for moderate reports.

@@ -26,8 +26,10 @@ function mapEcoSeverity(
 async function resolveAssetId(tenantId: string, unitId: string): Promise<string | null> {
   if (!unitId) return null;
   const { rows } = await query<{ asset_id: string }>(
-    `SELECT asset_id FROM asset_mappings
-     WHERE tenant_id = $1 AND source_type = 'wialon' AND external_id = $2
+    `SELECT am.asset_id
+     FROM asset_mappings am
+     INNER JOIN assets a ON a.id = am.asset_id
+     WHERE a.tenant_id = $1 AND am.source_type = 'wialon' AND am.external_id = $2
      LIMIT 1`,
     [tenantId, unitId],
   );

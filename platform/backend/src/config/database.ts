@@ -198,12 +198,13 @@ export function normalizeSql(text: string): string {
   sql = sql.replace(/\bON CONFLICT\s*\(\s*key\s*\)/gi, 'ON CONFLICT (`key`)');
   sql = sql.replace(/\bON CONFLICT\s*\(\s*`key`\s*\)/gi, 'ON CONFLICT (`key`)');
 
+  // Allow whitespace/newlines between DO UPDATE and SET (common in multi-line upserts)
   sql = sql.replace(
-    /ON CONFLICT\s*\(([^)]+)\)\s*WHERE[\s\S]*?DO UPDATE SET/gi,
+    /ON CONFLICT\s*\(([^)]+)\)\s*WHERE[\s\S]*?DO UPDATE\s+SET/gi,
     'ON DUPLICATE KEY UPDATE'
   );
-  sql = sql.replace(/ON CONFLICT\s*\(([^)]+)\)\s*DO UPDATE SET/gi, 'ON DUPLICATE KEY UPDATE');
-  sql = sql.replace(/ON CONFLICT\s+ON CONSTRAINT\s+\w+\s+DO UPDATE SET/gi, 'ON DUPLICATE KEY UPDATE');
+  sql = sql.replace(/ON CONFLICT\s*\(([^)]+)\)\s*DO UPDATE\s+SET/gi, 'ON DUPLICATE KEY UPDATE');
+  sql = sql.replace(/ON CONFLICT\s+ON CONSTRAINT\s+\w+\s+DO UPDATE\s+SET/gi, 'ON DUPLICATE KEY UPDATE');
 
   if (/ON CONFLICT[\s\S]*DO NOTHING/i.test(sql)) {
     sql = sql.replace(/^\s*INSERT\s+INTO/i, 'INSERT IGNORE INTO');
