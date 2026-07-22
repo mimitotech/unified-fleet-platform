@@ -4,6 +4,7 @@
  * Shows recent breakdowns with location, cost, and resolution status.
  */
 
+import { useState } from 'react';
 import {
   AlertTriangle,
   MapPin,
@@ -25,6 +26,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import type { BreakdownReport, BreakdownSeverity } from '@/types/workshop';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -62,6 +73,8 @@ export function BreakdownAlerts({
   onResolveBreakdown,
   onDeleteBreakdown,
 }: BreakdownAlertsProps) {
+  const [pendingDelete, setPendingDelete] = useState<BreakdownReport | null>(null);
+
   // Sort by most recent first, unresolved first
   const sortedBreakdowns = [...breakdowns].sort((a, b) => {
     // Unresolved first
@@ -138,6 +151,16 @@ export function BreakdownAlerts({
                         <Badge variant="outline" className="text-xs capitalize">
                           {severityConfig.label}
                         </Badge>
+                        {breakdown.assetCategory && (
+                          <Badge variant="outline" className="text-xs capitalize">
+                            {breakdown.assetCategory}
+                          </Badge>
+                        )}
+                        {breakdown.failureSystem && (
+                          <Badge variant="secondary" className="text-xs">
+                            {breakdown.failureSystem}
+                          </Badge>
+                        )}
                       </div>
                       <div className="flex items-center gap-4 mt-1.5 text-sm text-muted-foreground flex-wrap">
                         <span className="flex items-center gap-1">
@@ -176,7 +199,7 @@ export function BreakdownAlerts({
                           </DropdownMenuItem>
                         )}
                         <DropdownMenuItem
-                          onClick={() => onDeleteBreakdown?.(breakdown.id)}
+                          onClick={() => setPendingDelete(breakdown)}
                           className="text-destructive focus:text-destructive"
                         >
                           <Trash2 className="w-4 h-4 mr-2" />
@@ -231,6 +254,31 @@ export function BreakdownAlerts({
           );
         })}
       </div>
+
+      <AlertDialog open={!!pendingDelete} onOpenChange={(open) => !open && setPendingDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete breakdown report?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove the report for{' '}
+              <span className="font-medium">{pendingDelete?.vehicleName}</span>
+              {pendingDelete?.description ? `: “${pendingDelete.description}”` : ''}.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (pendingDelete) onDeleteBreakdown?.(pendingDelete.id);
+                setPendingDelete(null);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

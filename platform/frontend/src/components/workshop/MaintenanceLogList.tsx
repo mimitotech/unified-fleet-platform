@@ -15,6 +15,8 @@ import {
   Calendar,
   MoreHorizontal,
   Filter,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -32,6 +34,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import type { MaintenanceLog, MaintenanceStatus, MaintenanceType, MaintenancePriority } from '@/types/workshop';
 import { format } from 'date-fns';
 
@@ -90,6 +102,7 @@ export function MaintenanceLogList({
 }: MaintenanceLogListProps) {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [pendingDelete, setPendingDelete] = useState<MaintenanceLog | null>(null);
 
   const filteredLogs = logs.filter((log) => {
     const matchesStatus = statusFilter === 'all' || log.status === statusFilter;
@@ -176,6 +189,11 @@ export function MaintenanceLogList({
                           <h4 className="font-medium">{log.description}</h4>
                           {getPriorityBadge(log.priority)}
                           <Badge variant="outline" className="text-xs">{getTypeLabel(log.maintenanceType)}</Badge>
+                          {log.assetCategory && (
+                            <Badge variant="outline" className="text-xs capitalize">
+                              {log.assetCategory}
+                            </Badge>
+                          )}
                         </div>
                         <div className="flex items-center gap-4 mt-1.5 text-sm text-muted-foreground flex-wrap">
                           <span className="flex items-center gap-1">
@@ -201,17 +219,20 @@ export function MaintenanceLogList({
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onClick={() => onEditLog?.(log)}>
+                            <Pencil className="w-4 h-4 mr-2" />
                             Edit Job
                           </DropdownMenuItem>
                           {log.status !== 'completed' && (
                             <DropdownMenuItem onClick={() => onCompleteLog?.(log.id)}>
+                              <CheckCircle className="w-4 h-4 mr-2" />
                               Mark Complete
                             </DropdownMenuItem>
                           )}
                           <DropdownMenuItem
-                            onClick={() => onDeleteLog?.(log.id)}
+                            onClick={() => setPendingDelete(log)}
                             className="text-destructive focus:text-destructive"
                           >
+                            <Trash2 className="w-4 h-4 mr-2" />
                             Delete Job
                           </DropdownMenuItem>
                         </DropdownMenuContent>
@@ -255,6 +276,32 @@ export function MaintenanceLogList({
           })
         )}
       </div>
+
+      <AlertDialog open={!!pendingDelete} onOpenChange={(open) => !open && setPendingDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete maintenance job?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove{' '}
+              <span className="font-medium">{pendingDelete?.description || 'this job'}</span>
+              {pendingDelete?.vehicleName ? ` for ${pendingDelete.vehicleName}` : ''}. This action
+              cannot be easily undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (pendingDelete) onDeleteLog?.(pendingDelete.id);
+                setPendingDelete(null);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -394,6 +394,8 @@ export default function Workshop() {
       await deleteInspectionMutation.mutateAsync(inspectionId);
       notify.success('Inspection deleted');
       setInspectionDetailModalOpen(false);
+      setSelectedInspection(null);
+      setEditingInspection(null);
     } catch (e) {
       notify.error('Failed to delete inspection', e instanceof Error ? e.message : undefined);
     }
@@ -473,10 +475,14 @@ export default function Workshop() {
     try {
       await deleteMaintenanceMutation.mutateAsync(logId);
       notify.success('Maintenance log deleted');
+      if (editingMaintenanceLog?.id === logId) {
+        setEditingMaintenanceLog(null);
+        setMaintenanceModalOpen(false);
+      }
     } catch (e) {
       notify.error('Failed to delete maintenance log', e instanceof Error ? e.message : undefined);
     }
-  }, [deleteMaintenanceMutation]);
+  }, [deleteMaintenanceMutation, editingMaintenanceLog?.id]);
 
   const handleSaveMaintenanceLog = useCallback(async (data: MaintenanceLogFormData) => {
     const unitPayload = resolveUnitPayload(data);
@@ -546,10 +552,14 @@ export default function Workshop() {
     try {
       await deleteBreakdownMutation.mutateAsync(breakdownId);
       notify.success('Breakdown report deleted');
+      if (editingBreakdown?.id === breakdownId) {
+        setEditingBreakdown(null);
+        setBreakdownModalOpen(false);
+      }
     } catch (e) {
       notify.error('Failed to delete breakdown report', e instanceof Error ? e.message : undefined);
     }
-  }, [deleteBreakdownMutation]);
+  }, [deleteBreakdownMutation, editingBreakdown?.id]);
 
   const handleViewBreakdownOnMap = useCallback((breakdown: BreakdownReport) => {
     const addr = breakdown.location?.address || 'location';
@@ -658,6 +668,8 @@ export default function Workshop() {
               <InspectionTimeline
                 inspections={inspections}
                 onViewDetails={handleViewInspection}
+                onEdit={handleEditInspection}
+                onDelete={handleDeleteInspection}
                 maxItems={3}
               />
             </div>
@@ -667,6 +679,8 @@ export default function Workshop() {
             <InspectionTimeline
               inspections={inspections}
               onViewDetails={handleViewInspection}
+              onEdit={handleEditInspection}
+              onDelete={handleDeleteInspection}
               maxItems={20}
               showViewAll={false}
             />
