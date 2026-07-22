@@ -40,14 +40,21 @@ export function useTrips(limit = 50) {
   return useQuery({ queryKey: ['trips', limit], queryFn: () => clientApi.getTrips(limit) });
 }
 
-export function useFuelTransactions(enabled = true) {
+export function useFuelTransactions(
+  enabled = true,
+  opts?: { from?: string; to?: string },
+) {
+  const from = opts?.from;
+  const to = opts?.to;
   return useQuery({
-    queryKey: ['fuelTransactions'],
+    queryKey: ['fuelTransactions', from || 'all', to || 'all'],
     queryFn: async () => {
-      const data = await clientApi.getFuelTransactions();
-      return data.transactions ?? [];
+      const data = await clientApi.getFuelTransactions(from, to);
+      return (data.transactions ?? []) as unknown as import('@/types/entities').FuelTransaction[];
     },
     enabled,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
   });
 }
 

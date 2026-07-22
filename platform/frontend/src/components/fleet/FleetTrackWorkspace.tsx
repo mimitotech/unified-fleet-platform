@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { FleetTrackMap, trackPeriodToMinutes, type TrackPeriod } from '@/components/fleet/FleetTrackMap';
 import { UnitDetailPanel } from '@/components/fleet/UnitDetailPanel';
 import { formatFuelDisplay, type FleetUnit } from '@/lib/fleetUnits';
-import { formatTrackDuration } from '@/lib/trackAnalysis';
-import { useWialonTrackHistory } from '@/hooks/useWialonTrackHistory';
+import { formatTrackDuration, TRIP_LINE_COLORS } from '@/lib/trackAnalysis';
+import { useWialonTrackHistory, type TrackTimeRange } from '@/hooks/useWialonTrackHistory';
 import { useWialonContext } from '@/hooks/useWialon';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Button } from '@/components/ui/button';
 import {
   Select,
   SelectContent,
@@ -18,7 +19,7 @@ import {
 import { cn } from '@/lib/utils';
 import { UnitTypeIcon } from '@/components/fleet/UnitTypeIcon';
 import { StatusBadge } from '@/components/shared/StatusBadge';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Pause, Play, SkipBack, SkipForward } from 'lucide-react';
 
 const PERIODS: { id: TrackPeriod; label: string; unit: string }[] = [
   { id: 'hour', label: 'Hours', unit: 'hour(s)' },
@@ -26,6 +27,18 @@ const PERIODS: { id: TrackPeriod; label: string; unit: string }[] = [
   { id: 'week', label: 'Weeks', unit: 'week(s)' },
   { id: 'month', label: 'Months', unit: 'month(s)' },
 ];
+
+const SPEEDS = [1, 2, 4, 8] as const;
+
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function shiftDays(iso: string, days: number) {
+  const d = new Date(`${iso}T12:00:00`);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
 
 type Props = {
   units: FleetUnit[];
@@ -36,14 +49,20 @@ type Props = {
 
 export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }: Props) {
   const { connected } = useWialonContext();
+  const [rangeMode, setRangeMode] = useState<'relative' | 'absolute'>('relative');
   const [period, setPeriod] = useState<TrackPeriod>('day');
   const [amount, setAmount] = useState(1);
+  const [fromDate, setFromDate] = useState(() => shiftDays(todayIso(), -1));
+  const [toDate, setToDate] = useState(() => todayIso());
   const [q, setQ] = useState('');
+  const [playIndex, setPlayIndex] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [playSpeed, setPlaySpeed] = useState<(typeof SPEEDS)[number]>(1);
+  const [focusStop, setFocusStop] = useState<{ lat: number; lng: number } | null>(null);
 
   const withPosition = useMemo(() => units.filter((u) => u.lat != null && u.lng != null), [units]);
   const filtered = useMemo(() => {
     const hay = q.trim().toLowerCase();
-    // Keep units without GPS in the picker so generators aren't dropped silently.
     const pool = units;
     if (!hay) return pool;
     return pool.filter((u) => `${u.name} ${u.plate || ''}`.toLowerCase().includes(hay));
@@ -55,31 +74,102 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
     null;
 
   useEffect(() => {
-    // Only auto-pick when nothing is selected and there is a GPS-capable unit.
     if (selectedId || !onSelectId) return;
     const firstWithGps = filtered.find((u) => u.lat != null && u.lng != null) || withPosition[0];
     if (firstWithGps?.id) onSelectId(firstWithGps.id);
   }, [selectedId, filtered, withPosition, onSelectId]);
 
   const minutes = trackPeriodToMinutes(period, amount);
+  const timeRange: TrackTimeRange = useMemo(() => {
+    if (rangeMode === 'absolute') {
+      const fromMs = new Date(`${fromDate}T00:00:00`).getTime();
+      const toMs = new Date(`${toDate}T23:59:59`).getTime();
+      return { mode: 'absolute', fromMs, toMs };
+    }
+    return { mode: 'relative', minutes };
+  }, [rangeMode, minutes, fromDate, toDate]);
+
   const wialonId = selected?.wialonId ?? (selected && Number.isFinite(Number(selected.id)) ? Number(selected.id) : null);
-  const liveRecent = minutes <= 24 * 60;
+  const liveRecent = rangeMode === 'relative' && minutes <= 24 * 60;
   const history = useWialonTrackHistory(
     wialonId,
     connected && wialonId != null,
-    minutes,
-    liveRecent
+    timeRange,
+    liveRecent,
   );
 
-  const { stops, summary, isLoading, isFetching, pointCount } = history;
+  const { stops, summary, isLoading, isFetching, pointCount, points, trips, useTripColors } = history;
+
+  useEffect(() => {
+    setPlaying(false);
+    setPlayIndex(0);
+    setFocusStop(null);
+  }, [selected?.id, timeRange]);
+
+  useEffect(() => {
+    if (!playing || points.length < 2) return;
+    const id = window.setInterval(() => {
+      setPlayIndex((i) => {
+        if (i >= points.length - 1) {
+          setPlaying(false);
+          return points.length - 1;
+        }
+        return i + 1;
+      });
+    }, Math.max(40, 320 / playSpeed));
+    return () => window.clearInterval(id);
+  }, [playing, points.length, playSpeed]);
+
+  const playhead = points[playIndex] ?? null;
+
+  const tripRows = useMemo(() => {
+    return trips.slice(0, 24).map((t, i) => {
+      const from = Number(t.t1 ?? t.from ?? t.begin ?? 0);
+      const to = Number(t.t2 ?? t.to ?? t.end ?? 0);
+      const mileage = Number(t.mileage ?? t.distance ?? t.mileage_counter ?? 0);
+      return {
+        i,
+        color: TRIP_LINE_COLORS[i % TRIP_LINE_COLORS.length],
+        from,
+        to,
+        mileage,
+        label: `Trip ${i + 1}`,
+      };
+    });
+  }, [trips]);
+
+  const jumpToTrip = useCallback(
+    (fromTs: number) => {
+      if (!points.length) return;
+      let best = 0;
+      let bestDiff = Infinity;
+      for (let i = 0; i < points.length; i++) {
+        const d = Math.abs(points[i].time - fromTs);
+        if (d < bestDiff) {
+          bestDiff = d;
+          best = i;
+        }
+      }
+      setPlayIndex(best);
+      setPlaying(false);
+    },
+    [points],
+  );
+
+  useEffect(() => {
+    if (!focusStop) return;
+    const t = window.setTimeout(() => setFocusStop(null), 800);
+    return () => window.clearTimeout(t);
+  }, [focusStop]);
 
   const rangeLabel = useMemo(() => {
+    if (rangeMode === 'absolute') return `${fromDate} → ${toDate}`;
     const mins = minutes;
     if (mins < 60) return `${mins} min`;
     if (mins < 1440) return `${Math.round(mins / 60)} h`;
     if (mins < 10080) return `${Math.round(mins / 1440)} d`;
     return `${Math.round(mins / 10080)} wk`;
-  }, [minutes]);
+  }, [rangeMode, fromDate, toDate, minutes]);
 
   const trackLoading = isLoading || isFetching;
 
@@ -88,34 +178,81 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
       <div className="grid h-full grid-cols-1 lg:grid-cols-12">
         <div className="lg:col-span-3 border-r border-border/60 flex flex-col h-full min-h-0 overflow-hidden">
           <div className="p-2.5 border-b border-border/60 space-y-2 shrink-0">
-            <div>
-              <Label className="text-[10px] text-muted-foreground uppercase tracking-wide">Time range</Label>
-              <div className="flex gap-1.5 mt-1">
-                <Select value={period} onValueChange={(v) => setPeriod(v as TrackPeriod)}>
-                  <SelectTrigger className="h-8 flex-1 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PERIODS.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Input
-                  type="number"
-                  min={1}
-                  max={period === 'hour' ? 72 : period === 'day' ? 90 : period === 'week' ? 52 : 24}
-                  value={amount}
-                  onChange={(e) => setAmount(Math.max(1, Number(e.target.value) || 1))}
-                  className="h-8 w-16 text-xs"
-                />
-              </div>
-              <p className="text-[10px] text-muted-foreground mt-1">
-                Last {amount} {PERIODS.find((p) => p.id === period)?.unit} (~{rangeLabel})
-              </p>
+            <div className="flex gap-1">
+              <Button
+                type="button"
+                size="sm"
+                variant={rangeMode === 'relative' ? 'default' : 'outline'}
+                className="h-7 flex-1 text-[11px]"
+                onClick={() => setRangeMode('relative')}
+              >
+                Relative
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={rangeMode === 'absolute' ? 'default' : 'outline'}
+                className="h-7 flex-1 text-[11px]"
+                onClick={() => setRangeMode('absolute')}
+              >
+                Interval
+              </Button>
             </div>
+
+            {rangeMode === 'relative' ? (
+              <div>
+                <Label className="text-[10px] text-muted-foreground uppercase tracking-wide">Time range</Label>
+                <div className="flex gap-1.5 mt-1">
+                  <Select value={period} onValueChange={(v) => setPeriod(v as TrackPeriod)}>
+                    <SelectTrigger className="h-8 flex-1 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PERIODS.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={period === 'hour' ? 72 : period === 'day' ? 90 : period === 'week' ? 52 : 24}
+                    value={amount}
+                    onChange={(e) => setAmount(Math.max(1, Number(e.target.value) || 1))}
+                    className="h-8 w-16 text-xs"
+                  />
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Last {amount} {PERIODS.find((p) => p.id === period)?.unit} (~{rangeLabel})
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-1.5">
+                <div>
+                  <Label className="text-[10px] text-muted-foreground">From</Label>
+                  <Input
+                    type="date"
+                    className="h-8 text-xs mt-0.5"
+                    value={fromDate}
+                    max={toDate}
+                    onChange={(e) => setFromDate(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label className="text-[10px] text-muted-foreground">To</Label>
+                  <Input
+                    type="date"
+                    className="h-8 text-xs mt-0.5"
+                    value={toDate}
+                    min={fromDate}
+                    onChange={(e) => setToDate(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+
             <Input
               placeholder="Search asset…"
               value={q}
@@ -124,7 +261,7 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
             />
           </div>
 
-          <ul className="max-h-[28%] lg:max-h-[35%] overflow-auto p-1.5 space-y-0.5 shrink-0 border-b border-border/60">
+          <ul className="max-h-[22%] lg:max-h-[28%] overflow-auto p-1.5 space-y-0.5 shrink-0 border-b border-border/60">
             {filtered.map((u) => (
               <li key={u.id}>
                 <button
@@ -132,7 +269,7 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
                   onClick={() => onSelectId?.(u.id)}
                   className={cn(
                     'w-full flex items-center gap-2 p-2 rounded-lg text-left hover:bg-muted/50 transition-colors',
-                    selected?.id === u.id && 'bg-primary/10 ring-1 ring-primary/25'
+                    selected?.id === u.id && 'bg-primary/10 ring-1 ring-primary/25',
                   )}
                 >
                   <UnitTypeIcon wialonId={u.wialonId} iconUgi={u.iconUgi} size="sm" title={u.name} />
@@ -160,6 +297,8 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
               <div className="rounded-lg border border-primary/20 bg-primary/5 px-2 py-2 text-[10px] space-y-1">
                 <p className="font-semibold text-primary uppercase tracking-wide">Route summary</p>
                 <div className="grid grid-cols-2 gap-1 tabular-nums">
+                  <span className="text-muted-foreground">Distance</span>
+                  <span className="font-medium text-right">{summary.distanceKm} km</span>
                   <span className="text-muted-foreground">GPS points</span>
                   <span className="font-medium text-right">{summary.pointCount}</span>
                   <span className="text-muted-foreground">Stops</span>
@@ -170,6 +309,42 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
                   <span className="font-medium text-right">{formatTrackDuration(summary.idleSec)}</span>
                   <span className="text-muted-foreground">Stopped</span>
                   <span className="font-medium text-right">{formatTrackDuration(summary.stoppedSec)}</span>
+                </div>
+              </div>
+            )}
+
+            {useTripColors && tripRows.length > 0 && (
+              <div>
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+                  Trips
+                </p>
+                <div className="space-y-1">
+                  {tripRows.map((trip) => (
+                    <button
+                      key={trip.i}
+                      type="button"
+                      onClick={() => jumpToTrip(trip.from)}
+                      className="w-full rounded-md border border-border/50 bg-muted/20 px-2 py-1.5 text-left text-xs hover:bg-muted/40"
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="inline-flex items-center gap-1.5 font-semibold">
+                          <span className="h-2 w-3 rounded-sm" style={{ background: trip.color }} />
+                          {trip.label}
+                        </span>
+                        {trip.mileage > 0 && (
+                          <span className="text-[10px] text-muted-foreground tabular-nums">
+                            {Math.round(trip.mileage * 10) / 10} km
+                          </span>
+                        )}
+                      </div>
+                      {trip.from > 0 && (
+                        <p className="text-[10px] text-muted-foreground mt-0.5">
+                          {format(new Date(trip.from * 1000), 'MMM d, HH:mm')}
+                          {trip.to > 0 ? ` – ${format(new Date(trip.to * 1000), 'HH:mm')}` : ''}
+                        </p>
+                      )}
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
@@ -190,18 +365,26 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
             )}
             {!trackLoading &&
               stops.map((stop, i) => (
-                <div
+                <button
                   key={`${stop.from}-${i}`}
-                  className="rounded-lg border border-border/50 bg-muted/20 px-2 py-1.5 mb-1.5 text-xs"
+                  type="button"
+                  onClick={() => {
+                    setFocusStop({ lat: stop.lat, lng: stop.lng });
+                    jumpToTrip(stop.from);
+                  }}
+                  className="w-full rounded-lg border border-border/50 bg-muted/20 px-2 py-1.5 mb-1.5 text-xs text-left hover:bg-muted/40"
                 >
                   <div className="flex items-center justify-between gap-1">
                     <span className="font-semibold">{stop.label}</span>
-                    <span className="text-muted-foreground tabular-nums">{formatTrackDuration(stop.durationSec)}</span>
+                    <span className="text-muted-foreground tabular-nums">
+                      {formatTrackDuration(stop.durationSec)}
+                    </span>
                   </div>
                   <p className="text-[10px] text-muted-foreground mt-0.5">
-                    {format(new Date(stop.from * 1000), 'MMM d, HH:mm')} – {format(new Date(stop.to * 1000), 'HH:mm')}
+                    {format(new Date(stop.from * 1000), 'MMM d, HH:mm')} –{' '}
+                    {format(new Date(stop.to * 1000), 'HH:mm')}
                   </p>
-                </div>
+                </button>
               ))}
             {!trackLoading && stops.length === 0 && pointCount > 0 && (
               <p className="text-xs text-muted-foreground py-2">No long stops detected in this period.</p>
@@ -209,8 +392,105 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
           </div>
         </div>
 
-        <div className="lg:col-span-6 h-full min-h-0 relative border-r border-border/60">
-          <FleetTrackMap unit={selected} history={history} liveRecent={liveRecent} height="100%" />
+        <div className="lg:col-span-6 h-full min-h-0 relative border-r border-border/60 flex flex-col">
+          <div className="flex-1 min-h-0 relative">
+            <FleetTrackMap
+              unit={selected}
+              history={history}
+              liveRecent={liveRecent}
+              height="100%"
+              playhead={playhead}
+              focusPoint={focusStop}
+            />
+          </div>
+
+          {/* Wialon-style track player */}
+          {selected && pointCount > 1 && (
+            <div className="shrink-0 border-t border-border/60 bg-card/95 px-3 py-2 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 w-7 p-0"
+                  onClick={() => setPlayIndex(0)}
+                  aria-label="Restart"
+                >
+                  <SkipBack className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  onClick={() => setPlaying((p) => !p)}
+                  aria-label={playing ? 'Pause' : 'Play'}
+                >
+                  {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 w-7 p-0"
+                  onClick={() => setPlayIndex(Math.min(points.length - 1, playIndex + 10))}
+                  aria-label="Skip forward"
+                >
+                  <SkipForward className="h-3.5 w-3.5" />
+                </Button>
+                <input
+                  type="range"
+                  min={0}
+                  max={Math.max(0, points.length - 1)}
+                  value={playIndex}
+                  onChange={(e) => {
+                    setPlaying(false);
+                    setPlayIndex(Number(e.target.value));
+                  }}
+                  className="flex-1 accent-primary h-1.5"
+                />
+                <Select
+                  value={String(playSpeed)}
+                  onValueChange={(v) => setPlaySpeed(Number(v) as (typeof SPEEDS)[number])}
+                >
+                  <SelectTrigger className="h-7 w-[68px] text-[10px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SPEEDS.map((s) => (
+                      <SelectItem key={s} value={String(s)}>
+                        {s}×
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-muted-foreground tabular-nums">
+                <span>
+                  {playhead
+                    ? format(new Date(playhead.time * 1000), 'MMM d, HH:mm:ss')
+                    : '—'}
+                </span>
+                <span>
+                  {Math.round(playhead?.speed ?? 0)} km/h · point {playIndex + 1}/{points.length}
+                </span>
+              </div>
+              {useTripColors && tripRows.length > 0 && (
+                <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  {tripRows.map((trip) => (
+                    <div
+                      key={trip.i}
+                      className="h-full"
+                      style={{
+                        background: trip.color,
+                        width: `${100 / tripRows.length}%`,
+                      }}
+                      title={trip.label}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="hidden lg:flex lg:col-span-3 flex-col h-full min-h-0 overflow-hidden">
@@ -220,6 +500,15 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
             showControls
             className="h-full border-0 rounded-none shadow-none"
           />
+          {playhead && (
+            <div className="shrink-0 border-t border-border/60 px-3 py-2 text-[10px] space-y-0.5 bg-muted/30">
+              <p className="font-semibold text-primary uppercase tracking-wide">Playback</p>
+              <p className="tabular-nums">{format(new Date(playhead.time * 1000), 'PPpp')}</p>
+              <p className="text-muted-foreground tabular-nums">
+                {Math.round(playhead.speed)} km/h · course {Math.round(playhead.course ?? 0)}°
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>

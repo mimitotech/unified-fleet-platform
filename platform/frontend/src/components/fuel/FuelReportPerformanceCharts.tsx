@@ -318,7 +318,7 @@ export function FuelReportPerformanceCharts({
           <PlotWithLegend config={barConfig} height={height}>
             <BarChart
               data={data.barRows}
-              margin={{ top: 4, right: 6, left: 2, bottom: 6 }}
+              margin={{ top: 10, right: 14, left: 12, bottom: 64 }}
               barGap={2}
               barCategoryGap="20%"
             >
@@ -329,10 +329,10 @@ export function FuelReportPerformanceCharts({
                 tickLine={false}
                 axisLine={false}
                 interval={0}
-                angle={data.barRows.length > 3 ? -30 : 0}
+                angle={data.barRows.length > 3 ? -35 : 0}
                 textAnchor={data.barRows.length > 3 ? 'end' : 'middle'}
-                height={data.barRows.length > 3 ? 38 : 24}
-                tickMargin={4}
+                height={data.barRows.length > 3 ? 64 : 28}
+                tickMargin={8}
               />
               <YAxis
                 tick={tick}
@@ -366,7 +366,7 @@ export function FuelReportPerformanceCharts({
           <PlotWithLegend config={lineConfig} height={height}>
             <LineChart
               data={data.lineRows}
-              margin={{ top: 4, right: 8, left: 2, bottom: 4 }}
+              margin={{ top: 10, right: 16, left: 10, bottom: 28 }}
             >
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
               <XAxis

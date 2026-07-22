@@ -181,10 +181,10 @@ function WialonReportChartView({ chart, primaryColor }: { chart: WialonReportCha
         </p>
         <div data-report-chart-body className="overflow-visible h-[240px] w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={series.points} margin={{ top: 8, right: 12, left: 4, bottom: 8 }}>
+            <LineChart data={series.points} margin={{ top: 12, right: 16, left: 12, bottom: 28 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-              <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} />
-              <YAxis tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} width={40} />
+              <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} tickMargin={6} height={28} />
+              <YAxis tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} width={52} tickMargin={6} />
               <Tooltip contentStyle={{ fontSize: 11 }} />
               {series.keys.map((key, i) => (
                 <Line

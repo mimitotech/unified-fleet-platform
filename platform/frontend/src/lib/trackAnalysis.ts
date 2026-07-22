@@ -30,6 +30,7 @@ export type TrackDirectionMarker = {
   lat: number;
   lng: number;
   course: number;
+  color?: string;
 };
 
 /** Primary route line — Wialon-style blue track. */
@@ -327,8 +328,12 @@ export function buildStateMarkers(points: TrackPoint[]): TrackStateMarker[] {
   return markers;
 }
 
-/** Direction chevrons spaced along the blue route. */
-export function buildDirectionMarkers(points: TrackPoint[], step = 20): TrackDirectionMarker[] {
+/** Direction chevrons spaced along the route (colored by trip index when possible). */
+export function buildDirectionMarkers(
+  points: TrackPoint[],
+  step = 20,
+  tripSegments?: TrackColoredSegment[],
+): TrackDirectionMarker[] {
   if (points.length < 2) return [];
   const sorted = [...points].sort((a, b) => a.time - b.time);
   const out: TrackDirectionMarker[] = [];
@@ -336,13 +341,35 @@ export function buildDirectionMarkers(points: TrackPoint[], step = 20): TrackDir
     const p = sorted[i];
     const prev = sorted[i - 1];
     if (motionFromSpeed(p.speed) === 'stopped') continue;
+    let color: string = TRIP_LINE_COLORS[0];
+    if (tripSegments?.length) {
+      const hit = tripSegments.find((seg) =>
+        seg.positions.some(
+          ([lat, lng]) => Math.abs(lat - p.lat) < 1e-5 && Math.abs(lng - p.lng) < 1e-5,
+        ),
+      );
+      if (hit) color = hit.color;
+      else color = TRIP_LINE_COLORS[Math.floor(i / step) % TRIP_LINE_COLORS.length];
+    }
     out.push({
       lat: p.lat,
       lng: p.lng,
       course: p.course ?? bearingDeg(prev, p),
+      color,
     });
   }
   return out;
+}
+
+function haversineKm(a: TrackPoint, b: TrackPoint): number {
+  const R = 6371;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const lat1 = (a.lat * Math.PI) / 180;
+  const lat2 = (b.lat * Math.PI) / 180;
+  const h =
+    Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
 export function summarizeTrack(points: TrackPoint[], stops: TrackStopEvent[]) {
@@ -350,13 +377,18 @@ export function summarizeTrack(points: TrackPoint[], stops: TrackStopEvent[]) {
   let movingSec = 0;
   let idleSec = 0;
   let stoppedSec = 0;
+  let distanceKm = 0;
   for (let i = 1; i < sorted.length; i++) {
     const dt = sorted[i].time - sorted[i - 1].time;
-    if (dt <= 0 || dt > 3600) continue;
-    const status = motionFromSpeed(sorted[i - 1].speed);
-    if (status === 'moving') movingSec += dt;
-    else if (status === 'idle') idleSec += dt;
-    else stoppedSec += dt;
+    if (dt > 0 && dt <= 3600) {
+      const status = motionFromSpeed(sorted[i - 1].speed);
+      if (status === 'moving') movingSec += dt;
+      else if (status === 'idle') idleSec += dt;
+      else stoppedSec += dt;
+    }
+    if (dt > 0 && dt <= 7200) {
+      distanceKm += haversineKm(sorted[i - 1], sorted[i]);
+    }
   }
   return {
     pointCount: sorted.length,
@@ -364,6 +396,7 @@ export function summarizeTrack(points: TrackPoint[], stops: TrackStopEvent[]) {
     movingSec,
     idleSec,
     stoppedSec,
+    distanceKm: Math.round(distanceKm * 10) / 10,
     from: sorted[0]?.time ?? null,
     to: sorted[sorted.length - 1]?.time ?? null,
   };

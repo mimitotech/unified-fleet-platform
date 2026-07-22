@@ -138,10 +138,10 @@ function boostChartCardsForExport(cards: HTMLElement[]): () => void {
     patchStyle(card, {
       'box-sizing': 'border-box',
       padding: '16px',
-      width: '520px',
-      'max-width': '520px',
-      'min-width': '520px',
-      'min-height': '320px',
+      width: '560px',
+      'max-width': '560px',
+      'min-width': '560px',
+      'min-height': '360px',
     });
 
     card.querySelectorAll<HTMLElement>('[data-report-chart-title] p').forEach((p, index) => {
@@ -174,9 +174,9 @@ function boostChartCardsForExport(cards: HTMLElement[]): () => void {
 
     card.querySelectorAll<HTMLElement>('[data-chart]').forEach((chart) => {
       patchStyle(chart, {
-        height: '200px',
-        'min-height': '200px',
-        'max-height': '200px',
+        height: '280px',
+        'min-height': '280px',
+        'max-height': '280px',
         width: '100%',
         'aspect-ratio': 'auto',
         overflow: 'visible',

@@ -44,12 +44,23 @@ export function trackPeriodToMinutes(period: TrackPeriod, amount: number): numbe
 function FitTrackBounds({
   track,
   point,
+  focus,
 }: {
   track: [number, number][];
   point?: { lat: number; lng: number };
+  focus?: { lat: number; lng: number } | null;
 }) {
   const map = useMap();
+  const trackKey = track.length > 1 ? `${track[0][0]},${track[0][1]}-${track.length}` : 'empty';
+
   useEffect(() => {
+    if (focus) {
+      map.flyTo([focus.lat, focus.lng], Math.max(map.getZoom(), 16), { animate: true, duration: 0.6 });
+    }
+  }, [map, focus?.lat, focus?.lng]);
+
+  useEffect(() => {
+    if (focus) return;
     if (track.length < 2) {
       if (point) map.setView([point.lat, point.lng], 15, { animate: false });
       return;
@@ -57,7 +68,21 @@ function FitTrackBounds({
     const bounds = L.latLngBounds(track);
     if (point) bounds.extend([point.lat, point.lng]);
     map.fitBounds(bounds, { padding: [48, 48], maxZoom: 17, animate: true });
-  }, [map, track, point]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-fit when track identity changes
+  }, [map, trackKey]);
+
+  return null;
+}
+
+function FlyToPlayhead({ playhead }: { playhead: { lat: number; lng: number } | null }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!playhead) return;
+    // Soft pan — keep playhead roughly in view without constant zoom fights
+    if (!map.getBounds().pad(-0.2).contains([playhead.lat, playhead.lng])) {
+      map.panTo([playhead.lat, playhead.lng], { animate: true });
+    }
+  }, [map, playhead?.lat, playhead?.lng]);
   return null;
 }
 
@@ -139,7 +164,8 @@ function StateMarker({ marker }: { marker: TrackStateMarker }) {
 }
 
 function DirectionMarker({ marker }: { marker: TrackDirectionMarker }) {
-  const html = `<div style="transform:rotate(${marker.course}deg);width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:10px solid ${TRIP_LINE_COLORS[0]};opacity:0.85;filter:drop-shadow(0 1px 1px rgba(0,0,0,.25))"></div>`;
+  const color = marker.color || TRIP_LINE_COLORS[0];
+  const html = `<div style="transform:rotate(${marker.course}deg);width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:10px solid ${color};opacity:0.85;filter:drop-shadow(0 1px 1px rgba(0,0,0,.25))"></div>`;
   const icon = L.divIcon({
     html,
     className: 'track-direction-marker',
@@ -173,9 +199,21 @@ type Props = {
   height?: string;
   liveRecent?: boolean;
   onTrackStats?: (stats: { pointCount: number; stopCount: number; loading: boolean }) => void;
+  /** Playback cursor from track player. */
+  playhead?: { lat: number; lng: number; speed?: number; time?: number; course?: number } | null;
+  /** Clicked stop — fly map here. */
+  focusPoint?: { lat: number; lng: number } | null;
 };
 
-export function FleetTrackMap({ unit, history, height = '60vh', liveRecent = false, onTrackStats }: Props) {
+export function FleetTrackMap({
+  unit,
+  history,
+  height = '60vh',
+  liveRecent = false,
+  onTrackStats,
+  playhead = null,
+  focusPoint = null,
+}: Props) {
   const { provider, view } = useMapStyle();
   const tiles = getFleetMapTiles(provider, view);
 
@@ -209,10 +247,11 @@ export function FleetTrackMap({ unit, history, height = '60vh', liveRecent = fal
   }, [unit, start, end]);
 
   const unitMarkerPos = useMemo(() => {
+    if (playhead) return { lat: playhead.lat, lng: playhead.lng };
     if (unit?.lat != null && unit?.lng != null) return { lat: unit.lat, lng: unit.lng };
     if (end) return { lat: end.lat, lng: end.lng };
     return null;
-  }, [unit, end]);
+  }, [unit, end, playhead]);
 
   const fitTrack = useMemo(() => (route.length > 1 ? route : []), [route]);
 
@@ -304,7 +343,7 @@ export function FleetTrackMap({ unit, history, height = '60vh', liveRecent = fal
         {useTripColors ? (
           <>
             <span className="text-muted-foreground font-medium">Trips</span>
-            {TRIP_LINE_COLORS.slice(0, Math.min(4, Math.max(1, segments.length))).map((color, i) => (
+            {TRIP_LINE_COLORS.slice(0, Math.min(TRIP_LINE_COLORS.length, Math.max(1, segments.length))).map((color, i) => (
               <span key={color} className="flex items-center gap-1">
                 <span className="w-4 h-1 rounded" style={{ background: color }} /> Trip {i + 1}
               </span>
@@ -337,7 +376,8 @@ export function FleetTrackMap({ unit, history, height = '60vh', liveRecent = fal
         maxZoom={tiles.maxZoom}
       >
         <FleetMapTileLayer key={`${provider}-${view}`} provider={provider} view={view} />
-        <FitTrackBounds track={fitTrack} point={unitMarkerPos ?? undefined} />
+        <FitTrackBounds track={fitTrack} point={unitMarkerPos ?? undefined} focus={focusPoint} />
+        <FlyToPlayhead playhead={playhead} />
 
         {/* White outline for contrast on any basemap */}
         {segments.map((seg, i) => (
@@ -408,6 +448,24 @@ export function FleetTrackMap({ unit, history, height = '60vh', liveRecent = fal
         {stops.map((stop, i) => (
           <StopMarker key={`stop-${stop.from}-${i}`} stop={stop} />
         ))}
+
+        {playhead && (
+          <CircleMarker
+            center={[playhead.lat, playhead.lng]}
+            radius={10}
+            pathOptions={{ color: '#fff', fillColor: '#2563eb', fillOpacity: 1, weight: 3 }}
+          >
+            <Popup>
+              <div className="text-xs space-y-0.5">
+                <p className="font-semibold">Playback</p>
+                {playhead.time != null && (
+                  <p className="text-muted-foreground">{format(new Date(playhead.time * 1000), 'PPp')}</p>
+                )}
+                <p className="tabular-nums text-muted-foreground">{Math.round(playhead.speed ?? 0)} km/h</p>
+              </div>
+            </Popup>
+          </CircleMarker>
+        )}
 
         {unitMarkerPos && <TrackUnitMarker unit={unit} lat={unitMarkerPos.lat} lng={unitMarkerPos.lng} />}
       </MapContainer>

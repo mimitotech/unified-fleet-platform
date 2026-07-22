@@ -100,6 +100,11 @@ export function CompactDonut({
   );
 }
 
+function labelWidth(rows: Array<Record<string, string | number>>, nameKey: string): number {
+  const longest = rows.reduce((m, r) => Math.max(m, String(r[nameKey] ?? '').length), 0);
+  return Math.min(148, Math.max(88, longest * 6.2));
+}
+
 export function CompactBars({
   data,
   dataKey = 'value',
@@ -124,6 +129,8 @@ export function CompactBars({
 }) {
   const usable = includeZeros ? data : data.filter((d) => num(d[dataKey]) > 0);
   if (!usable.length) return <EmptyChart height={height} />;
+  const yW = horizontal ? labelWidth(usable, nameKey) : 36;
+  const angled = !horizontal && usable.length > 4;
 
   return (
     <div className={cn('w-full', className)} style={{ height }}>
@@ -131,24 +138,51 @@ export function CompactBars({
         <BarChart
           data={usable}
           layout={horizontal ? 'vertical' : 'horizontal'}
-          margin={{ top: 6, right: 10, left: horizontal ? 2 : 0, bottom: 2 }}
+          margin={{
+            top: 8,
+            right: 12,
+            left: horizontal ? 4 : 4,
+            bottom: angled ? 48 : 8,
+          }}
         >
           <CartesianGrid strokeDasharray="3 3" vertical={!horizontal} horizontal={horizontal} stroke="#eef2f7" />
           {horizontal ? (
             <>
               <XAxis type="number" hide />
-              <YAxis type="category" dataKey={nameKey} width={72} tick={TICK} tickLine={false} axisLine={false} />
+              <YAxis
+                type="category"
+                dataKey={nameKey}
+                width={yW}
+                tick={TICK}
+                tickLine={false}
+                axisLine={false}
+                interval={0}
+              />
             </>
           ) : (
             <>
-              <XAxis dataKey={nameKey} tick={TICK} tickLine={false} axisLine={false} interval={0} />
-              <YAxis tick={TICK} tickLine={false} axisLine={false} width={28} allowDecimals={false} />
+              <XAxis
+                dataKey={nameKey}
+                tick={TICK}
+                tickLine={false}
+                axisLine={false}
+                interval={0}
+                angle={angled ? -28 : 0}
+                textAnchor={angled ? 'end' : 'middle'}
+                height={angled ? 52 : 24}
+                tickMargin={6}
+              />
+              <YAxis tick={TICK} tickLine={false} axisLine={false} width={yW} allowDecimals={false} />
             </>
           )}
           <Tooltip
             cursor={{ fill: `${color}12` }}
             contentStyle={TOOLTIP_STYLE}
             formatter={(value: number) => [unit ? `${value.toLocaleString()} ${unit}` : value.toLocaleString(), '']}
+            labelFormatter={(label, payload) => {
+              const full = payload?.[0]?.payload?.fullName;
+              return full ? String(full) : String(label);
+            }}
           />
           <Bar
             dataKey={dataKey}
@@ -163,6 +197,82 @@ export function CompactBars({
             ))}
           </Bar>
         </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/** Litres (left) + money (right) — avoids empty-looking dual-unit bars on one scale. */
+export function CompactDualAxis({
+  data,
+  leftKey,
+  rightKey,
+  leftLabel,
+  rightLabel,
+  leftColor = CHART.brand,
+  rightColor = '#f59e0b',
+  height = 188,
+  className,
+}: {
+  data: Array<Record<string, string | number>>;
+  leftKey: string;
+  rightKey: string;
+  leftLabel: string;
+  rightLabel: string;
+  leftColor?: string;
+  rightColor?: string;
+  height?: number;
+  className?: string;
+}) {
+  if (!data.length) return <EmptyChart height={height} />;
+  const has = data.some((r) => num(r[leftKey]) > 0 || num(r[rightKey]) > 0);
+  if (!has) return <EmptyChart height={height} message="No fuel totals in this period" />;
+
+  return (
+    <div className={cn('w-full', className)} style={{ height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={data} margin={{ top: 10, right: 16, left: 8, bottom: 8 }} barCategoryGap="28%">
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eef2f7" />
+          <XAxis dataKey="name" tick={TICK} tickLine={false} axisLine={false} interval={0} />
+          <YAxis
+            yAxisId="left"
+            tick={TICK}
+            tickLine={false}
+            axisLine={false}
+            width={40}
+            allowDecimals={false}
+          />
+          <YAxis
+            yAxisId="right"
+            orientation="right"
+            tick={TICK}
+            tickLine={false}
+            axisLine={false}
+            width={48}
+            allowDecimals={false}
+          />
+          <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: '#f8fafc' }} />
+          <Bar
+            yAxisId="left"
+            dataKey={leftKey}
+            name={leftLabel}
+            fill={leftColor}
+            radius={[5, 5, 0, 0]}
+            barSize={22}
+            isAnimationActive
+            animationDuration={600}
+          />
+          <Bar
+            yAxisId="right"
+            dataKey={rightKey}
+            name={rightLabel}
+            fill={rightColor}
+            radius={[5, 5, 0, 0]}
+            barSize={22}
+            isAnimationActive
+            animationDuration={600}
+          />
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   );
@@ -241,15 +351,39 @@ export function CompactComposed({
   const keys = [...bars, ...lines].map((s) => s.key);
   const hasValues = data.some((row) => keys.some((k) => num(row[k]) > 0));
   if (!hasValues) return <EmptyChart height={height} />;
+  const angled = data.length > 4;
+  const yW = Math.min(52, Math.max(36, String(Math.round(Math.max(...data.flatMap((r) => keys.map((k) => num(r[k])))))).length * 7 + 12));
 
   return (
     <div className={cn('w-full', className)} style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 2 }} barCategoryGap="24%">
+        <ComposedChart
+          data={data}
+          margin={{ top: 8, right: 10, left: 4, bottom: angled ? 52 : 8 }}
+          barCategoryGap="18%"
+        >
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eef2f7" />
-          <XAxis dataKey={xKey} tick={TICK} tickLine={false} axisLine={false} interval={0} minTickGap={4} />
-          <YAxis tick={TICK} tickLine={false} axisLine={false} width={32} />
-          <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: '#f8fafc' }} />
+          <XAxis
+            dataKey={xKey}
+            tick={TICK}
+            tickLine={false}
+            axisLine={false}
+            interval={0}
+            angle={angled ? -30 : 0}
+            textAnchor={angled ? 'end' : 'middle'}
+            height={angled ? 56 : 24}
+            tickMargin={6}
+            minTickGap={2}
+          />
+          <YAxis tick={TICK} tickLine={false} axisLine={false} width={yW} />
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE}
+            cursor={{ fill: '#f8fafc' }}
+            labelFormatter={(label, payload) => {
+              const full = payload?.[0]?.payload?.fullName;
+              return full ? String(full) : String(label);
+            }}
+          />
           {bars.map((b, i) => (
             <Bar
               key={b.key}
@@ -258,7 +392,7 @@ export function CompactComposed({
               fill={b.color}
               stackId={stacked ? 'stack' : undefined}
               radius={!stacked || i === bars.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
-              barSize={16}
+              barSize={Math.max(8, Math.min(18, Math.round(220 / Math.max(data.length, 1))))}
               isAnimationActive
               animationDuration={600}
             />

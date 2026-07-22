@@ -331,7 +331,7 @@ export function AlertsReportCharts({ rows, fromDate, toDate, primaryColor, class
         <PlotWithLegend config={volumeConfig} height={standingH}>
           <BarChart
             data={volume}
-            margin={{ top: 4, right: 6, left: 2, bottom: 4 }}
+            margin={{ top: 10, right: 14, left: 12, bottom: 64 }}
             barGap={2}
             barCategoryGap="20%"
           >
@@ -342,10 +342,10 @@ export function AlertsReportCharts({ rows, fromDate, toDate, primaryColor, class
               tickLine={false}
               axisLine={false}
               interval={0}
-              angle={-32}
+              angle={-35}
               textAnchor="end"
-              height={38}
-              tickMargin={4}
+              height={64}
+              tickMargin={8}
             />
             <YAxis
               tick={TICK}
@@ -418,7 +418,7 @@ export function AlertsReportCharts({ rows, fromDate, toDate, primaryColor, class
         empty={!hasData}
       >
         <PlotWithLegend config={responseConfig} height={standingH}>
-          <ComposedChart data={response} margin={{ top: 4, right: 4, left: 2, bottom: 4 }} barCategoryGap="24%">
+          <ComposedChart data={response} margin={{ top: 10, right: 14, left: 12, bottom: 64 }} barCategoryGap="24%">
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
             <XAxis
               dataKey="name"
@@ -426,10 +426,10 @@ export function AlertsReportCharts({ rows, fromDate, toDate, primaryColor, class
               tickLine={false}
               axisLine={false}
               interval={0}
-              angle={-32}
+              angle={-35}
               textAnchor="end"
-              height={38}
-              tickMargin={4}
+              height={64}
+              tickMargin={8}
             />
             <YAxis
               yAxisId="count"
@@ -501,7 +501,7 @@ export function AlertsReportCharts({ rows, fromDate, toDate, primaryColor, class
         empty={!hasData || lines.series.length === 0}
       >
         <PlotWithLegend config={lineConfig} height={standingH}>
-          <LineChart data={lines.data} margin={{ top: 4, right: 6, left: 2, bottom: 2 }}>
+          <LineChart data={lines.data} margin={{ top: 10, right: 16, left: 10, bottom: 28 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
             <XAxis
               dataKey="day"

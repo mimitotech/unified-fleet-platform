@@ -25,6 +25,7 @@ import {
   CompactBars,
   CompactComposed,
   CompactDonut,
+  CompactDualAxis,
   CompactMultiLine,
   CompactRadial,
   CompactStackedHBars,
@@ -33,6 +34,8 @@ import {
   alertSeveritySlices,
   fleetStatusSlices,
 } from '@/components/dashboard/DashboardCharts';
+import { aggregateUnitFuelColumns } from '@/components/fuel/fuelColumnMetrics';
+import { filterFuelTransactionsByDate } from '@/components/fuel/fuelTransactionFilters';
 import {
   DashboardQuickAccess,
   moduleEnabledSet,
@@ -48,6 +51,7 @@ import { useWialonContext } from '@/hooks/useWialon';
 import {
   useDriverStats,
   useFuelKpis,
+  useFuelTransactions,
   useFuelTrend,
   useGeofences,
   useRouteStats,
@@ -92,7 +96,7 @@ function fmtUgx(n: number): string {
   }).format(n);
 }
 
-function shortName(name: string, max = 14): string {
+function shortName(name: string, max = 18): string {
   return name.length > max ? `${name.slice(0, max - 1)}…` : name;
 }
 
@@ -214,6 +218,10 @@ export default function Dashboard() {
     refetch: refetchFuelKpis,
   } = useFuelKpis(hasFuel, { from: applied.from, to: applied.to });
   const { data: fuelTrend } = useFuelTrend(hasFuel, { from: applied.from, to: applied.to });
+  const { data: fuelTransactions = [] } = useFuelTransactions(hasFuel, {
+    from: applied.from,
+    to: applied.to,
+  });
   const { data: workshopKpis } = useWorkshopKpis(hasWorkshop);
   const { data: driverStats } = useDriverStats(hasDrivers);
   const { data: routeStats } = useRouteStats(hasRoutes);
@@ -506,14 +514,13 @@ export default function Dashboard() {
 
   const fuelMonetaryBars = useMemo(
     () => [
-      { name: 'Consumed (L)', value: Math.round(fuelUsed), fill: brand },
       {
-        name: 'Cost (k UGX)',
-        value: Math.round(fuelCost / 1000),
-        fill: accent,
+        name: 'Fleet',
+        liters: Math.round(fuelUsed * 10) / 10,
+        costK: Math.round(fuelCost / 1000),
       },
     ],
-    [fuelUsed, fuelCost, brand, accent],
+    [fuelUsed, fuelCost],
   );
 
   const fuelChangeBars = useMemo(
@@ -539,6 +546,7 @@ export default function Dashboard() {
       .filter((u) => u.fuelLevel != null && u.fuelLevel > 0 && u.fuelLevel <= 100)
       .map((u) => ({
         name: shortName(u.name),
+        fullName: u.name,
         value: Math.round(num(u.fuelLevel)),
         fill:
           num(u.fuelLevel) < 25
@@ -554,14 +562,86 @@ export default function Dashboard() {
       .filter((u) => num(u.fuelLiters) > 0)
       .map((u, i) => ({
         name: shortName(u.name),
+        fullName: u.name,
         value: Math.round(num(u.fuelLiters) * 10) / 10,
         fill: i % 2 === 0 ? accent : brand,
       }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 8);
     if (withL.length) return { kind: 'liters' as const, rows: withL };
-    return { kind: 'none' as const, rows: [] as Array<{ name: string; value: number; fill: string }> };
+    return { kind: 'none' as const, rows: [] as Array<{ name: string; fullName: string; value: number; fill: string }> };
   }, [units, brand, accent]);
+
+  const perAssetFuel = useMemo(() => {
+    const ranged = filterFuelTransactionsByDate(fuelTransactions, applied.from, applied.to);
+    const names = new Set<string>();
+    for (const t of ranged) if (t.unitName) names.add(t.unitName);
+    const rows = [...names].map((unitName) => {
+      const cols = aggregateUnitFuelColumns(
+        ranged.filter((t) => t.unitName === unitName),
+        { fromDate: applied.from, toDate: applied.to },
+      );
+      const filled = cols.filledMain + cols.filledReserve;
+      const used = cols.totalUsed;
+      const reportedCost = cols.totalCost;
+      const fillCost = reportedCost > 0 ? reportedCost : filled * fuelPrice;
+      const usedCost = used * fuelPrice;
+      return {
+        name: shortName(unitName, 16),
+        fullName: unitName,
+        filled: Math.round(filled * 10) / 10,
+        used: Math.round(used * 10) / 10,
+        fillCost: Math.round(fillCost),
+        usedCost: Math.round(usedCost),
+      };
+    });
+    return rows.filter((r) => r.filled > 0 || r.used > 0 || r.fillCost > 0 || r.usedCost > 0);
+  }, [fuelTransactions, applied.from, applied.to, fuelPrice]);
+
+  const topFuelBars = useMemo(
+    () =>
+      [...perAssetFuel]
+        .filter((r) => r.used > 0)
+        .sort((a, b) => b.used - a.used)
+        .slice(0, 10)
+        .map((r, i) => ({
+          name: r.name,
+          fullName: r.fullName,
+          value: r.used,
+          fill: i % 2 === 0 ? brand : accent,
+        })),
+    [perAssetFuel, brand, accent],
+  );
+
+  const assetMoneyBars = useMemo(
+    () =>
+      [...perAssetFuel]
+        .filter((r) => r.fillCost > 0 || r.usedCost > 0)
+        .sort((a, b) => b.usedCost + b.fillCost - (a.usedCost + a.fillCost))
+        .slice(0, 10)
+        .map((r) => ({
+          name: r.name,
+          fullName: r.fullName,
+          fillCost: r.fillCost,
+          usedCost: r.usedCost,
+        })),
+    [perAssetFuel],
+  );
+
+  const assetConsumeBars = useMemo(
+    () =>
+      [...perAssetFuel]
+        .filter((r) => r.filled > 0 || r.used > 0)
+        .sort((a, b) => b.used - a.used)
+        .slice(0, 10)
+        .map((r) => ({
+          name: r.name,
+          fullName: r.fullName,
+          filled: r.filled,
+          used: r.used,
+        })),
+    [perAssetFuel],
+  );
 
   /* —— Ops —— */
 
@@ -579,6 +659,7 @@ export default function Dashboard() {
     return [...byUnit.entries()]
       .map(([name, v]) => ({
         name: shortName(name),
+        fullName: name,
         distance: Math.round(v.distance),
         fuel: Math.round(v.fuel * 10) / 10,
       }))
@@ -586,20 +667,6 @@ export default function Dashboard() {
       .sort((a, b) => b.distance - a.distance)
       .slice(0, 8);
   }, [trips]);
-
-  const topFuelBars = useMemo(
-    () =>
-      [...tripRows]
-        .filter((r) => r.fuel > 0)
-        .sort((a, b) => b.fuel - a.fuel)
-        .slice(0, 8)
-        .map((r, i) => ({
-          name: r.name,
-          value: r.fuel,
-          fill: i % 2 === 0 ? brand : accent,
-        })),
-    [tripRows, brand, accent],
-  );
 
   const routeStages = useMemo(() => {
     if (!routeStats || num(routeStats.total) <= 0) return [];
@@ -694,7 +761,8 @@ export default function Dashboard() {
 
   if (showLoader) {
     return (
-      <AppLayout title="Dashboard" subtitle="Operations command center" actions={toolbar}>
+      <AppLayout title="Dashboard" subtitle="Operations command center">
+        <div className="mb-4">{toolbar}</div>
         <PageLoader />
       </AppLayout>
     );
@@ -746,8 +814,11 @@ export default function Dashboard() {
     <AppLayout
       title="Dashboard"
       subtitle="Live operational picture across your enabled modules"
-      actions={toolbar}
     >
+      <div className="mb-1">{toolbar}</div>
+      <p className="text-[11px] text-muted-foreground -mt-1 mb-3 tabular-nums">
+        Showing {periodLabel}
+      </p>
       {(fuelKpisError || alertsError) && (
         <QueryErrorBanner
           message="Some dashboard widgets could not load."
@@ -1221,24 +1292,46 @@ export default function Dashboard() {
         {showFuelSection && (
           <div className={SECTION}>
             <DashboardSectionLabel color={brand}>Fuel</DashboardSectionLabel>
+
+            {/* Fleet totals — litres & money on separate scales */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {show('fuel_consumed_monetary') && (
                 <DashboardWidget
                   className="md:col-span-2"
                   title="Fuel consumed + monetary"
-                  subtitle={`Period KPIs × ${fmt(fuelPrice)} UGX/L`}
+                  subtitle={`Period KPIs × ${fmt(fuelPrice)} UGX/L · dual axis`}
                   href="/app/fuel"
                   brandColor={ALERT_SEVERITY.critical}
                   tone="rose"
-                  insight={`${fmt(fuelUsed)} L consumed ≈ ${fmtUgx(fuelCost)}`}
+                  insight={`${fmt(fuelUsed, 1)} L consumed ≈ ${fmtUgx(fuelCost)}`}
                 >
-                  <CompactBars data={fuelMonetaryBars} includeZeros color={brand} height={180} />
-                  <LegendDots
-                    items={[
-                      { label: 'Consumed (L)', color: brand, value: Math.round(fuelUsed) },
-                      { label: 'Est. cost', color: accent, value: fmtUgx(fuelCost) },
-                    ]}
-                  />
+                  {fuelUsed > 0 || fuelCost > 0 ? (
+                    <>
+                      <CompactDualAxis
+                        data={fuelMonetaryBars}
+                        leftKey="liters"
+                        rightKey="costK"
+                        leftLabel="Consumed (L)"
+                        rightLabel="Cost (k UGX)"
+                        leftColor={brand}
+                        rightColor={accent}
+                        height={188}
+                      />
+                      <LegendDots
+                        items={[
+                          { label: 'Consumed (L)', color: brand, value: fmt(fuelUsed, 1) },
+                          { label: 'Est. cost', color: accent, value: fmtUgx(fuelCost) },
+                        ]}
+                      />
+                    </>
+                  ) : (
+                    <CompactBars
+                      data={[{ name: 'No data', value: 0, fill: '#e2e8f0' }]}
+                      includeZeros
+                      color="#e2e8f0"
+                      height={188}
+                    />
+                  )}
                 </DashboardWidget>
               )}
 
@@ -1252,12 +1345,12 @@ export default function Dashboard() {
                   insight={
                     fuelTracked > 0
                       ? `${fuelTracked} assets tracked · avg ${avgConsumption || 0} L/100`
-                      : `${fmt(fuelUsed)} L consumed in period`
+                      : `${fmt(fuelUsed, 1)} L consumed in period`
                   }
                 >
                   <CompactRadial
                     value={fuelFilled > 0 ? pct(fuelUsed, fuelFilled) : Math.min(100, Math.round(fuelUsed) ? 64 : 0)}
-                    label={`${fmt(fuelUsed)} L`}
+                    label={`${fmt(fuelUsed, 1)} L`}
                     color={brand}
                   />
                 </DashboardWidget>
@@ -1273,7 +1366,7 @@ export default function Dashboard() {
                   insight={
                     fuelTracked > 0
                       ? `${fuelTracked} assets tracked · avg ${avgConsumption || 0} L/100`
-                      : `${fmt(fuelFilled)} L filled · ${fmt(fuelUsed)} L consumed`
+                      : `${fmt(fuelFilled, 1)} L filled · ${fmt(fuelUsed, 1)} L consumed`
                   }
                 >
                   <CompactBars data={fuelKpiBars} includeZeros color={brand} />
@@ -1286,7 +1379,94 @@ export default function Dashboard() {
                   />
                 </DashboardWidget>
               )}
+            </div>
 
+            {/* Per-asset consumption & money — period-filtered fuel transactions */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {show('top_fuel_consumption') && (
+                <DashboardWidget
+                  title="Assets vs fuel consumption"
+                  subtitle="Filled vs used (L) from fuel reports in period"
+                  href="/app/fuel"
+                  brandColor={accent}
+                  tone="accent"
+                  insight={
+                    assetConsumeBars.length
+                      ? `Top: ${assetConsumeBars[0].fullName} · ${assetConsumeBars[0].used} L used`
+                      : 'No consumption rows in this period — run Execute after fuel sync'
+                  }
+                >
+                  {assetConsumeBars.length ? (
+                    <>
+                      <CompactComposed
+                        data={assetConsumeBars}
+                        bars={[
+                          { key: 'filled', label: 'Filled (L)', color: brand },
+                          { key: 'used', label: 'Used (L)', color: accent },
+                        ]}
+                        height={200}
+                      />
+                      <LegendDots
+                        items={[
+                          { label: 'Filled (L)', color: brand },
+                          { label: 'Used (L)', color: accent },
+                        ]}
+                      />
+                    </>
+                  ) : (
+                    <CompactBars
+                      data={[{ name: 'No data', value: 0, fill: '#e2e8f0' }]}
+                      includeZeros
+                      color="#e2e8f0"
+                      height={200}
+                    />
+                  )}
+                </DashboardWidget>
+              )}
+
+              {show('fuel_consumed_monetary') && (
+                <DashboardWidget
+                  title="Assets vs fuel money"
+                  subtitle={`Fill & use cost @ ${fmt(fuelPrice)} UGX/L`}
+                  href="/app/fuel"
+                  brandColor={ALERT_SEVERITY.warning}
+                  tone="amber"
+                  insight={
+                    assetMoneyBars.length
+                      ? `Highest spend: ${assetMoneyBars[0].fullName}`
+                      : 'No costable fuel events in this period'
+                  }
+                >
+                  {assetMoneyBars.length ? (
+                    <>
+                      <CompactComposed
+                        data={assetMoneyBars}
+                        bars={[
+                          { key: 'fillCost', label: 'Fill cost', color: brand },
+                          { key: 'usedCost', label: 'Use cost', color: accent },
+                        ]}
+                        height={200}
+                      />
+                      <LegendDots
+                        items={[
+                          { label: 'Fill cost', color: brand },
+                          { label: 'Use cost', color: accent },
+                        ]}
+                      />
+                    </>
+                  ) : (
+                    <CompactBars
+                      data={[{ name: 'No data', value: 0, fill: '#e2e8f0' }]}
+                      includeZeros
+                      color="#e2e8f0"
+                      height={200}
+                    />
+                  )}
+                </DashboardWidget>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {show('fuel_trend') && (
                 <DashboardWidget
                   className="md:col-span-2"
@@ -1329,7 +1509,7 @@ export default function Dashboard() {
                   href="/app/fuel"
                   brandColor={ALERT_SEVERITY.warning}
                   tone="amber"
-                  insight={`${fmt(fuelFilled)} L filled · ${fmt(fuelTheftLiters)} L loss`}
+                  insight={`${fmt(fuelFilled, 1)} L filled · ${fmt(fuelTheftLiters, 1)} L loss`}
                 >
                   <CompactBars data={fuelChangeBars} includeZeros color={brand} />
                 </DashboardWidget>
@@ -1337,14 +1517,14 @@ export default function Dashboard() {
 
               {show('top_fuel_consumption') && topFuelBars.length > 0 && (
                 <DashboardWidget
-                  title="Top units by fuel consumption"
-                  subtitle="Highest burn from trip data"
+                  title="Top units by consumption"
+                  subtitle="Highest burn from fuel reports (period)"
                   href="/app/fuel"
                   brandColor={accent}
                   tone="accent"
-                  insight={`Top: ${topFuelBars[0].name} · ${topFuelBars[0].value} L`}
+                  insight={`Top: ${topFuelBars[0].fullName || topFuelBars[0].name} · ${topFuelBars[0].value} L`}
                 >
-                  <CompactBars data={topFuelBars} horizontal unit="L" color={accent} />
+                  <CompactBars data={topFuelBars} horizontal unit="L" color={accent} height={200} />
                 </DashboardWidget>
               )}
             </div>

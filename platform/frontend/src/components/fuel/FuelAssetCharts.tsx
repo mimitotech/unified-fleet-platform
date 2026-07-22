@@ -20,6 +20,7 @@ import type { FuelAssetCategory } from '@/lib/fuelTypes';
 import { aggregateUnitFuelColumns } from './fuelColumnMetrics';
 import { filterFuelTransactionsByDate, isSyntheticFuelRow, isWialonGroupSummary } from './fuelTransactionFilters';
 import { PeriodAssetControls } from '@/components/shared/PeriodAssetControls';
+import { resolveDashboardFuelPrice } from '@/lib/dashboardWidgetPrefs';
 
 type LiveMap = Map<string, number>;
 
@@ -319,6 +320,12 @@ export function FuelAssetCharts({
   }
 
   const tip = (v: number, label: string) => [`${v} L`, label] as [string, string];
+  const fuelPrice = resolveDashboardFuelPrice();
+  const moneyRows = rows.map((r) => ({
+    ...r,
+    fillCost: r.cost > 0 ? r.cost : Math.round(r.filled * fuelPrice),
+    usedCost: Math.round(r.used * fuelPrice),
+  }));
 
   return (
     <section className="space-y-3">
@@ -354,10 +361,10 @@ export function FuelAssetCharts({
           empty={!hasBars && !rows.some((r) => r.level > 0)}
         >
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={rows} margin={{ top: 8, right: 8, left: 0, bottom: 52 }} barCategoryGap="12%">
+            <BarChart data={rows} margin={{ top: 12, right: 12, left: 8, bottom: 64 }} barCategoryGap="12%">
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
-              <XAxis dataKey="name" angle={-35} textAnchor="end" interval={0} height={58} tick={{ fontSize: 9 }} />
-              <YAxis tick={{ fontSize: 10 }} width={36} />
+              <XAxis dataKey="name" angle={-35} textAnchor="end" interval={0} height={64} tickMargin={8} tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} width={44} tickMargin={6} />
               <Tooltip
                 formatter={(v: number) => tip(v, 'Level')}
                 labelFormatter={(_, payload) => (payload?.[0]?.payload as ChartRow | undefined)?.fullName || ''}
@@ -375,10 +382,10 @@ export function FuelAssetCharts({
           empty={!rows.some((r) => r.filled > 0)}
         >
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={rows} margin={{ top: 8, right: 8, left: 0, bottom: 52 }} barCategoryGap="12%">
+            <BarChart data={rows} margin={{ top: 12, right: 12, left: 8, bottom: 64 }} barCategoryGap="12%">
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
-              <XAxis dataKey="name" angle={-35} textAnchor="end" interval={0} height={58} tick={{ fontSize: 9 }} />
-              <YAxis tick={{ fontSize: 10 }} width={36} />
+              <XAxis dataKey="name" angle={-35} textAnchor="end" interval={0} height={64} tickMargin={8} tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} width={44} tickMargin={6} />
               <Tooltip
                 formatter={(v: number) => tip(v, 'Filled')}
                 labelFormatter={(_, payload) => (payload?.[0]?.payload as ChartRow | undefined)?.fullName || ''}
@@ -396,15 +403,41 @@ export function FuelAssetCharts({
           empty={!rows.some((r) => r.used > 0)}
         >
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={rows} margin={{ top: 8, right: 8, left: 0, bottom: 52 }} barCategoryGap="12%">
+            <BarChart data={rows} margin={{ top: 12, right: 12, left: 8, bottom: 64 }} barCategoryGap="12%">
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
-              <XAxis dataKey="name" angle={-35} textAnchor="end" interval={0} height={58} tick={{ fontSize: 9 }} />
-              <YAxis tick={{ fontSize: 10 }} width={36} />
+              <XAxis dataKey="name" angle={-35} textAnchor="end" interval={0} height={64} tickMargin={8} tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} width={44} tickMargin={6} />
               <Tooltip
                 formatter={(v: number) => tip(v, 'Used')}
                 labelFormatter={(_, payload) => (payload?.[0]?.payload as ChartRow | undefined)?.fullName || ''}
               />
               <Bar dataKey="used" name="Used (L)" fill="#f59e0b" radius={[2, 2, 0, 0]} maxBarSize={barSize(rows.length)} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        <ChartCard
+          title={`Money by ${unitLabel}`}
+          description="Fill & use cost from reported totals or price × liters"
+          filename={`fuel-money-${fromDate}-${toDate}`}
+          minWidth={Math.max(420, rows.length * barGap(rows.length))}
+          empty={!rows.some((r) => r.cost > 0 || r.filled > 0 || r.used > 0)}
+        >
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+              data={moneyRows}
+              margin={{ top: 12, right: 12, left: 8, bottom: 64 }}
+              barCategoryGap="12%"
+            >
+              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
+              <XAxis dataKey="name" angle={-35} textAnchor="end" interval={0} height={64} tickMargin={8} tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} width={52} tickMargin={6} />
+              <Tooltip
+                labelFormatter={(_, payload) => (payload?.[0]?.payload as ChartRow | undefined)?.fullName || ''}
+              />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar dataKey="fillCost" name="Fill cost" fill="#0ea5e9" radius={[2, 2, 0, 0]} maxBarSize={barSize(rows.length)} />
+              <Bar dataKey="usedCost" name="Use cost" fill="#f59e0b" radius={[2, 2, 0, 0]} maxBarSize={barSize(rows.length)} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -417,10 +450,10 @@ export function FuelAssetCharts({
           empty={!hasTrend}
         >
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={daily} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
+            <LineChart data={daily} margin={{ top: 12, right: 14, left: 8, bottom: 24 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
               <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-              <YAxis tick={{ fontSize: 10 }} width={36} />
+              <YAxis tick={{ fontSize: 10 }} width={44} tickMargin={6} />
               <Tooltip />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <Line type="monotone" dataKey="filled" name="Filled" stroke="#0ea5e9" strokeWidth={2} dot={false} />
@@ -446,9 +479,9 @@ export function FuelAssetCharts({
         empty={!hasBars}
       >
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={rows} margin={{ top: 8, right: 12, left: 0, bottom: 52 }} barCategoryGap="16%">
+          <ComposedChart data={rows} margin={{ top: 12, right: 14, left: 8, bottom: 64 }} barCategoryGap="16%">
             <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
-            <XAxis dataKey="name" angle={-35} textAnchor="end" interval={0} height={58} tick={{ fontSize: 9 }} />
+            <XAxis dataKey="name" angle={-35} textAnchor="end" interval={0} height={64} tickMargin={8} tick={{ fontSize: 10 }} />
             <YAxis yAxisId="left" tick={{ fontSize: 10 }} width={36} />
             {showMileage && <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} width={36} />}
             <Tooltip

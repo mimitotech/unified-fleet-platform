@@ -17,13 +17,16 @@ import type { FuelTransaction } from '@/types/entities';
 import { aggregateUnitFuelColumns } from './fuelColumnMetrics';
 import { filterFuelTransactionsByDate } from './fuelTransactionFilters';
 import { PeriodAssetControls } from '@/components/shared/PeriodAssetControls';
+import { DEFAULT_FUEL_PRICE_UGX, resolveDashboardFuelPrice } from '@/lib/dashboardWidgetPrefs';
 
 const PRICE_KEY = 'mams.fuel.pricePerLiter';
 
 function loadPrice(): number {
+  const resolved = resolveDashboardFuelPrice();
+  if (resolved > 0) return resolved;
   const raw = localStorage.getItem(PRICE_KEY);
   const n = raw ? Number(raw) : 0;
-  return Number.isFinite(n) && n > 0 ? n : 0;
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_FUEL_PRICE_UGX;
 }
 
 export function FuelCostingPanel({
@@ -163,13 +166,25 @@ export function FuelCostingPanel({
 
         {filtered.length > 0 && price > 0 && (
           <div className="overflow-x-auto">
-            <div style={{ minWidth: chartWidth }} className="h-[280px]">
+            <div style={{ minWidth: chartWidth }} className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={filtered} margin={{ top: 8, right: 8, left: 0, bottom: 56 }} barCategoryGap="14%">
+                <BarChart data={filtered} margin={{ top: 12, right: 14, left: 10, bottom: 64 }} barCategoryGap="14%">
                   <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                  <XAxis dataKey="name" angle={-40} textAnchor="end" interval={0} height={64} tick={{ fontSize: 9 }} />
-                  <YAxis tick={{ fontSize: 10 }} width={40} />
-                  <Tooltip />
+                  <XAxis
+                    dataKey="name"
+                    angle={-40}
+                    textAnchor="end"
+                    interval={0}
+                    height={68}
+                    tickMargin={8}
+                    tick={{ fontSize: 10 }}
+                  />
+                  <YAxis tick={{ fontSize: 10 }} width={52} tickMargin={6} />
+                  <Tooltip
+                    labelFormatter={(_, payload) =>
+                      String((payload?.[0]?.payload as { fullName?: string } | undefined)?.fullName || '')
+                    }
+                  />
                   <Legend />
                   <Bar dataKey="fillCost" name="Fill cost" fill="#0ea5e9" radius={[2, 2, 0, 0]} maxBarSize={18} />
                   <Bar dataKey="usedCost" name="Use cost" fill="#f59e0b" radius={[2, 2, 0, 0]} maxBarSize={18} />
@@ -180,7 +195,9 @@ export function FuelCostingPanel({
         )}
 
         {price <= 0 && (
-          <p className="text-xs text-muted-foreground">Set a price per liter to see cost bars by {unitLabel}.</p>
+          <p className="text-xs text-muted-foreground">
+            Set a price per liter (default {DEFAULT_FUEL_PRICE_UGX.toLocaleString()} UGX) to see cost bars by {unitLabel}.
+          </p>
         )}
       </CardContent>
     </Card>

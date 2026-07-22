@@ -28,6 +28,7 @@ import {
   type DomainChartSpec,
   type DomainReportRow,
 } from '@/lib/domainReportCharts';
+import { yAxisWidth } from '@/lib/reportChartLayout';
 
 type Props = {
   rows: DomainReportRow[];
@@ -41,11 +42,6 @@ const TICK_LABEL = { fontSize: 10, fill: '#475569' } as const;
 
 const CHART_BODY_CLASS =
   '[&_.recharts-wrapper]:overflow-visible [&_svg]:overflow-visible [&_.recharts-cartesian-axis-tick_text]:!text-[10px]';
-
-function yAxisWidth(...values: number[]): number {
-  const max = Math.max(0, ...values.filter((v) => Number.isFinite(v)));
-  return Math.max(30, String(Math.round(max)).length * 7 + 12);
-}
 
 function barSize(count: number, metricCount: number): number {
   const slots = Math.max(1, count * metricCount);
@@ -150,7 +146,7 @@ function ChartShell({
  */
 export function DomainReportCharts({ rows, spec, primaryColor, className }: Props) {
   const brand = primaryColor || CHART.brand;
-  const height = 184;
+  const height = 248;
 
   const barMetrics = useMemo(
     () => metricColors(spec.bar.metrics, brand),
@@ -249,7 +245,7 @@ export function DomainReportCharts({ rows, spec, primaryColor, className }: Prop
           <PlotWithLegend config={barConfig} height={height}>
             <BarChart
               data={barRows}
-              margin={{ top: 4, right: 6, left: 2, bottom: 6 }}
+              margin={{ top: 10, right: 14, left: 12, bottom: 64 }}
               barGap={2}
               barCategoryGap="20%"
             >
@@ -260,10 +256,10 @@ export function DomainReportCharts({ rows, spec, primaryColor, className }: Prop
                 tickLine={false}
                 axisLine={false}
                 interval={0}
-                angle={barRows.length > 3 ? -30 : 0}
+                angle={barRows.length > 3 ? -35 : 0}
                 textAnchor={barRows.length > 3 ? 'end' : 'middle'}
-                height={barRows.length > 3 ? 38 : 24}
-                tickMargin={4}
+                height={barRows.length > 3 ? 64 : 28}
+                tickMargin={8}
               />
               <YAxis
                 tick={TICK}
@@ -296,7 +292,7 @@ export function DomainReportCharts({ rows, spec, primaryColor, className }: Prop
             <PlotWithLegend config={secondary.config} height={height}>
               <BarChart
                 data={secondary.data}
-                margin={{ top: 4, right: 6, left: 2, bottom: 6 }}
+                margin={{ top: 10, right: 14, left: 12, bottom: 64 }}
                 barGap={2}
                 barCategoryGap="20%"
               >
@@ -307,10 +303,10 @@ export function DomainReportCharts({ rows, spec, primaryColor, className }: Prop
                   tickLine={false}
                   axisLine={false}
                   interval={0}
-                  angle={secondary.data.length > 3 ? -30 : 0}
+                  angle={secondary.data.length > 3 ? -35 : 0}
                   textAnchor={secondary.data.length > 3 ? 'end' : 'middle'}
-                  height={secondary.data.length > 3 ? 38 : 24}
-                  tickMargin={4}
+                  height={secondary.data.length > 3 ? 64 : 28}
+                  tickMargin={8}
                 />
                 <YAxis
                   tick={TICK}
@@ -340,7 +336,7 @@ export function DomainReportCharts({ rows, spec, primaryColor, className }: Prop
         {secondary.kind === 'categoryBars' && (
           <ChartShell title={secondary.title} subtitle={secondary.subtitle} empty={secondary.data.length === 0}>
             <PlotWithLegend config={secondary.config} height={height}>
-              <BarChart data={secondary.data} margin={{ top: 4, right: 6, left: 2, bottom: 6 }} barCategoryGap="24%">
+              <BarChart data={secondary.data} margin={{ top: 10, right: 14, left: 12, bottom: 64 }} barCategoryGap="24%">
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                 <XAxis
                   dataKey="name"
@@ -348,10 +344,10 @@ export function DomainReportCharts({ rows, spec, primaryColor, className }: Prop
                   tickLine={false}
                   axisLine={false}
                   interval={0}
-                  angle={secondary.data.length > 3 ? -28 : 0}
+                  angle={secondary.data.length > 3 ? -35 : 0}
                   textAnchor={secondary.data.length > 3 ? 'end' : 'middle'}
-                  height={secondary.data.length > 3 ? 36 : 24}
-                  tickMargin={4}
+                  height={secondary.data.length > 3 ? 64 : 28}
+                  tickMargin={8}
                 />
                 <YAxis
                   tick={TICK}
@@ -404,7 +400,7 @@ export function DomainReportCharts({ rows, spec, primaryColor, className }: Prop
             empty={secondary.data.length === 0 || secondary.series.length === 0}
           >
             <PlotWithLegend config={secondary.config} height={height}>
-              <LineChart data={secondary.data} margin={{ top: 4, right: 8, left: 2, bottom: 4 }}>
+              <LineChart data={secondary.data} margin={{ top: 10, right: 16, left: 10, bottom: 28 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                 <XAxis
                   dataKey="day"
