@@ -26,6 +26,13 @@ const MACHINERY_NAME_RE =
 const GENERATOR_NAME_RE =
   /pearl\s*bank|genset|generator|\bdg\s*set\b|\bgen\s*set\b|\bkva\b|standby\s*power|power\s*pack|bowser|fuel\s*tanker/i;
 
+/** Fuel bowser / tanker — level drops are usually dispensed fuel, not theft. */
+const BOWSER_NAME_RE = /\bbowser\b|fuel\s*tanker|fuel\s*truck|fuel\s*trailer/i;
+
+export function isFuelBowserName(name: string): boolean {
+  return BOWSER_NAME_RE.test(String(name || ''));
+}
+
 const ENGINE_SENSOR_RE = /\bengine\b|genset|generator|run\s*time|operating\s*hours|\beh\b/i;
 
 function readExplicitCategory(customFields: Record<string, string>, flds?: Record<string, { n?: string; v?: string }>): FuelAssetCategory | null {

@@ -2,7 +2,11 @@ import { useMemo } from 'react';
 import type { FuelTransaction } from '@/types/entities';
 import type { FuelTableUnit, VehicleGroup, FuelTableFilters } from './types';
 import { aggregateUnitFuelColumns } from '../fuelColumnMetrics';
-import { filterFuelTransactionsByDate, isWialonGroupSummary } from '../fuelTransactionFilters';
+import {
+  filterFuelTransactionsByDate,
+  hasMeaningfulFuelLeaf,
+  isWialonGroupSummary,
+} from '../fuelTransactionFilters';
 import { filterPlausibleFuelEvents } from '../fuelEventPlausibility';
 
 interface UseFuelTableDataProps {
@@ -63,8 +67,10 @@ export function useFuelTableData({
       groups.push({
         unitName,
         driverName,
-        // Expanded rows match collapsed totals (no group summaries, no FLS noise).
-        transactions: plausibleTxs.filter((t) => !isWialonGroupSummary(t) && t.sensor !== 'balance'),
+        // Expanded rows match collapsed totals (no group summaries, no empty noise).
+        transactions: plausibleTxs.filter(
+          (t) => !isWialonGroupSummary(t) && t.sensor !== 'balance' && hasMeaningfulFuelLeaf(t),
+        ),
         filledMain: cols.filledMain,
         filledReserve: cols.filledReserve,
         filledStation: cols.filledStation,

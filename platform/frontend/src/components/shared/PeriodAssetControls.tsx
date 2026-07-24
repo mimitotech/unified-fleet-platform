@@ -3,14 +3,16 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
+import { localDateIso, shiftLocalDays } from '@/lib/localDate';
 
 export type PeriodPreset = 'today' | '7d' | '14d' | '30d' | 'custom';
 
+/** @deprecated prefer shiftLocalDays — kept as the public PeriodAssetControls API. */
 export function shiftDays(isoDate: string, days: number): string {
-  const d = new Date(`${isoDate}T12:00:00`);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  return shiftLocalDays(isoDate, days);
 }
+
+export { localDateIso };
 
 const PRESETS: Array<{ id: Exclude<PeriodPreset, 'custom'>; label: string }> = [
   { id: 'today', label: 'Today' },

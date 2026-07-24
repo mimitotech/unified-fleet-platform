@@ -13,6 +13,7 @@ import { filterPlausibleFuelEvents } from './fuelEventPlausibility.js';
 import { decodePeriodLocation } from './wialonFuelReport/periodMeta.js';
 import type { FuelAssetCategory } from './wialonAssetCategory.js';
 import type { FuelTransaction } from './wialonFuelReport/types.js';
+import { resolveFuelSection, reclassLevelRiseAsFill } from './wialonFuelReport/processRows.js';
 import { logger } from '../config/logger.js';
 
 const STALE_MS = 15 * 60 * 1000;
@@ -45,13 +46,15 @@ function dbRowToFuelTransaction(r: Record<string, unknown>): FuelTransaction {
   const initialLevel = Number(r.initialLevel ?? 0);
   const finalLevel = Number(r.finalLevel ?? 0);
   const suddenFuelDrop = Number(r.suddenFuelDrop ?? 0);
-  const section = r.section as FuelTransaction['section'];
+  const unitName = String(r.unitName);
+  const rawSection = r.section as FuelTransaction['section'];
+  const section = resolveFuelSection(rawSection, unitName);
   const sensor = String(r.sensor ?? 'db');
   const decoded = decodePeriodLocation(String(r.location ?? ''));
-  return {
+  return reclassLevelRiseAsFill({
     id: String(r.id),
     unitId: Number(r.unitId),
-    unitName: String(r.unitName),
+    unitName,
     section,
     tank,
     timestamp: Number(r.timestamp),
@@ -74,7 +77,7 @@ function dbRowToFuelTransaction(r: Record<string, unknown>): FuelTransaction {
     reserveTankLevel: tank === 'reserve' ? finalLevel : undefined,
     periodFromTs: decoded.periodFromTs,
     periodToTs: decoded.periodToTs,
-  };
+  });
 }
 
 async function enrichWithBalanceConsumption(

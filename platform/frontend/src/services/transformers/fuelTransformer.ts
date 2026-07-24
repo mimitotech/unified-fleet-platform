@@ -1,5 +1,6 @@
 import type { WialonFuelTransaction } from '@/lib/fuelTypes';
 import type { FuelTransaction } from '@/types';
+import { normalizeFuelTransactionSection } from '@/components/fuel/fuelTransactionFilters';
 
 const PERIOD_RE = /^__period:(\d+):(\d+)$/;
 
@@ -27,7 +28,7 @@ function decodePeriod(location: string | undefined, tx: WialonFuelTransaction): 
 
 export function wialonFuelTransactionToFuelTransaction(tx: WialonFuelTransaction): FuelTransaction {
   const period = decodePeriod(tx.location, tx);
-  return {
+  return normalizeFuelTransactionSection({
     id: tx.id,
     unitId: String(tx.unitId),
     unitName: tx.unitName,
@@ -53,7 +54,7 @@ export function wialonFuelTransactionToFuelTransaction(tx: WialonFuelTransaction
     reserveTankLevel: tx.reserveTankLevel,
     periodFromTs: period.periodFromTs,
     periodToTs: period.periodToTs,
-  };
+  });
 }
 
 export function wialonFuelTransactionsToFuelTransactions(

@@ -10,6 +10,11 @@ import {
 } from './cells.js';
 import { applySectionMetrics, deriveSuddenFuelDrop } from './metrics.js';
 import type { FuelSection, FuelTank, FuelTransaction, TankColumnMap, WialonCell } from './types.js';
+import { isFuelBowserName } from '../wialonAssetCategory.js';
+
+function finalizeTransaction(tx: FuelTransaction): FuelTransaction {
+  return reclassLevelRiseAsFill(tx);
+}
 
 function resolveTimestamp(timeStr: string, cells: WialonCell[], timeIdx: number, reportFromTs: number): number {
   let timestamp = getCellTimestamp(cells, timeIdx);
@@ -51,9 +56,7 @@ function isEmptyRow(
         : 0;
     return (
       m.fuelUsed === 0 &&
-      levelDelta === 0 &&
-      m.mileage === 0 &&
-      m.durationSeconds === 0
+      levelDelta === 0
     );
   }
   if (section === 'filling') {
@@ -68,7 +71,38 @@ function isEmptyRow(
     });
     return derived.filled === 0 && m.initialLevel === 0 && m.finalLevel === 0;
   }
+  // theft + dispensed use suddenFuelDrop for the volume column
   return m.suddenFuelDrop === 0 && m.initialLevel === 0 && m.finalLevel === 0;
+}
+
+/** Bowser "Fuel Dispensed" often arrives as Wialon unit_thefts — reclass by unit name. */
+export function resolveFuelSection(section: FuelSection, unitName: string): FuelSection {
+  if (section === 'theft' && isFuelBowserName(unitName)) return 'dispensed';
+  return section;
+}
+
+/**
+ * Level-rise rows sometimes land in consumption (fuelUsed = rise).
+ * Move them to filling so they show under Filled, not Used.
+ */
+export function reclassLevelRiseAsFill<
+  T extends {
+    section: FuelSection;
+    fuelUsed: number;
+    filled: number;
+    initialLevel: number;
+    finalLevel: number;
+  },
+>(row: T): T {
+  if (row.section !== 'consumption') return row;
+  const used = Number(row.fuelUsed) || 0;
+  const filled = Number(row.filled) || 0;
+  const initial = Number(row.initialLevel) || 0;
+  const final = Number(row.finalLevel) || 0;
+  if (used <= 0 || filled > 0 || initial <= 0 || final <= initial) return row;
+  const rise = final - initial;
+  if (Math.abs(used - rise) > 1) return row;
+  return { ...row, section: 'filling', filled: used, fuelUsed: 0 };
 }
 
 export function processAggregateStatsRow(
@@ -101,7 +135,7 @@ export function processAggregateStatsRow(
   if (isEmptyRow('consumption', metrics)) return null;
 
   const timestamp = reportToTs > 0 ? reportToTs : Math.floor(Date.now() / 1000);
-  return {
+  return finalizeTransaction({
     id: txId(unit.id, 'consumption', 'main', timestamp, 'wialon_stats'),
     unitId: unit.id,
     unitName: unit.nm,
@@ -121,7 +155,7 @@ export function processAggregateStatsRow(
     avgConsumption,
     suddenFuelDrop: 0,
     count: 0,
-  };
+  });
 }
 
 function headerIndex(headers: string[], pattern: RegExp): number {
@@ -171,13 +205,19 @@ export function processUnitGroupSummaryRow(
     filledAmountIdx >= 0 ? getCellNumber(cells, filledAmountIdx) : mappedFilled;
 
   let suddenFuelDrop = 0;
-  if (section === 'theft') {
+  const resolvedSection = resolveFuelSection(section, unitName);
+  if (resolvedSection === 'theft' || resolvedSection === 'dispensed') {
     suddenFuelDrop =
       columnMap.suddenFuelDrop != null && columnMap.suddenFuelDrop >= 0
         ? getCellNumber(cells, columnMap.suddenFuelDrop)
         : 0;
     if (suddenFuelDrop <= 0) {
-      const drainedIdx = headerIndex(headers, /^drained$|sudden fuel drop|fuel drain|drain/i);
+      const drainedIdx = headerIndex(
+        headers,
+        resolvedSection === 'dispensed'
+          ? /^dispensed$|fuel dispensed|dispensed volume|dispensed amount/i
+          : /^drained$|sudden fuel drop|fuel drain|drain/i
+      );
       if (drainedIdx >= 0) suddenFuelDrop = getCellNumber(cells, drainedIdx);
     }
     suddenFuelDrop = deriveSuddenFuelDrop(suddenFuelDrop, initialLevel, finalLevel);
@@ -195,16 +235,18 @@ export function processUnitGroupSummaryRow(
   }
 
   // Skip empty placeholder group rows (----- / Count=0).
-  if (section === 'theft' && suddenFuelDrop <= 0) return null;
+  if ((resolvedSection === 'theft' || resolvedSection === 'dispensed') && suddenFuelDrop <= 0) {
+    return null;
+  }
 
   const periodFrom = reportFromTs && reportFromTs > 0 ? reportFromTs : timestamp;
   const periodTo = reportToTs > 0 ? reportToTs : timestamp;
 
-  return {
-    id: txId(unit.id, section, 'main', periodTo, `wialon_group_summary:${section}:${periodFrom}`),
+  return finalizeTransaction({
+    id: txId(unit.id, resolvedSection, 'main', periodTo, `wialon_group_summary:${resolvedSection}:${periodFrom}`),
     unitId: unit.id,
     unitName,
-    section,
+    section: resolvedSection,
     tank: 'main',
     timestamp: periodTo,
     time: beginning,
@@ -222,7 +264,7 @@ export function processUnitGroupSummaryRow(
     count: suddenFuelDrop > 0 ? 1 : 0,
     periodFromTs: periodFrom,
     periodToTs: periodTo,
-  };
+  });
 }
 
 export function processRow(
@@ -250,7 +292,9 @@ export function processRow(
   let suddenFuelDrop = 0;
   let count = 0;
 
-  switch (section) {
+  const resolvedSection = resolveFuelSection(section, unit.nm);
+
+  switch (resolvedSection) {
     case 'consumption':
       fuelUsed = getCellNumber(cells, columnMap.fuelUsed ?? -1);
       mileage = getCellNumber(cells, columnMap.mileage ?? -1);
@@ -260,14 +304,16 @@ export function processRow(
       break;
     case 'filling':
       filled = getCellNumber(cells, columnMap.filled ?? -1);
+      count = getCellNumber(cells, columnMap.count ?? -1);
       break;
     case 'theft':
+    case 'dispensed':
       suddenFuelDrop = getCellNumber(cells, columnMap.suddenFuelDrop ?? -1);
       count = getCellNumber(cells, columnMap.count ?? -1);
       break;
   }
 
-  const metrics = applySectionMetrics(section, {
+  const metrics = applySectionMetrics(resolvedSection, {
     fuelUsed,
     filled,
     suddenFuelDrop,
@@ -282,14 +328,14 @@ export function processRow(
   initialLevel = metrics.initialLevel;
   finalLevel = metrics.finalLevel;
 
-  if (isEmptyRow(section, metrics)) return null;
+  if (isEmptyRow(resolvedSection, metrics)) return null;
 
   const timestamp = resolveTimestamp(timeStr, cells, columnMap.time ?? -1, reportFromTs);
-  return {
-    id: txId(unit.id, section, tank, timestamp, sensor),
+  return finalizeTransaction({
+    id: txId(unit.id, resolvedSection, tank, timestamp, sensor),
     unitId: unit.id,
     unitName: unit.nm,
-    section,
+    section: resolvedSection,
     tank,
     timestamp,
     time: timeStr,
@@ -307,7 +353,7 @@ export function processRow(
     count,
     latitude: locationData.lat || undefined,
     longitude: locationData.lng || undefined,
-  };
+  });
 }
 
 export function processRowWithTankMap(
@@ -349,19 +395,18 @@ export function processRowWithTankMap(
     section === 'consumption' &&
     metrics.fuelUsed === 0 &&
     initialLevel === 0 &&
-    finalLevel === 0 &&
-    mileage === 0 &&
-    durationSeconds === 0
+    finalLevel === 0
   ) {
     return null;
   }
 
   const timestamp = resolveTimestamp(timeStr, cells, columnMap.time ?? -1, reportFromTs);
-  return {
-    id: txId(unit.id, section, tank, timestamp, sensor),
+  const resolvedSection = resolveFuelSection(section, unit.nm);
+  return finalizeTransaction({
+    id: txId(unit.id, resolvedSection, tank, timestamp, sensor),
     unitId: unit.id,
     unitName: unit.nm,
-    section,
+    section: resolvedSection,
     tank,
     timestamp,
     time: timeStr,
@@ -379,5 +424,5 @@ export function processRowWithTankMap(
     count: 0,
     latitude: locationData.lat || undefined,
     longitude: locationData.lng || undefined,
-  };
+  });
 }

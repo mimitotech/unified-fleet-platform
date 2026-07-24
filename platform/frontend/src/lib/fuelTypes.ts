@@ -98,7 +98,7 @@ export type WialonFuelTransaction = {
   id: string;
   unitId: number;
   unitName: string;
-  section: 'consumption' | 'filling' | 'theft';
+  section: 'consumption' | 'filling' | 'theft' | 'dispensed';
   tank: 'main' | 'reserve' | 'unknown';
   timestamp: number;
   time: string;

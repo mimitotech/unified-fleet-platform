@@ -85,6 +85,14 @@ export function createApp() {
   });
 
   app.use('/api/auth/login', rateLimit({ windowMs: 15 * 60_000, max: 20, message: 'Too many login attempts' }));
+  app.use(
+    '/api/auth/forgot-password',
+    rateLimit({ windowMs: 15 * 60_000, max: 10, message: 'Too many password reset attempts' }),
+  );
+  app.use(
+    '/api/auth/reset-password',
+    rateLimit({ windowMs: 15 * 60_000, max: 10, message: 'Too many password reset attempts' }),
+  );
   app.use('/api/auth', authRoutes);
   app.use('/api/admin', adminRoutes);
   app.use('/api/admin', wialonAdminRoutes);

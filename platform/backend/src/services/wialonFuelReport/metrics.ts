@@ -55,7 +55,7 @@ export function applySectionMetrics(
     next.fuelUsed = deriveFuelUsed(next.fuelUsed, next.initialLevel, next.finalLevel);
   } else if (section === 'filling') {
     next.filled = deriveFilled(next.filled, next.initialLevel, next.finalLevel);
-  } else if (section === 'theft') {
+  } else if (section === 'theft' || section === 'dispensed') {
     next.suddenFuelDrop = deriveSuddenFuelDrop(
       next.suddenFuelDrop,
       next.initialLevel,
@@ -77,6 +77,12 @@ export function effectiveConsumed(r: FuelTransaction): number {
 
 export function effectiveTheft(r: FuelTransaction): number {
   if (r.section !== 'theft') return 0;
+  return deriveSuddenFuelDrop(r.suddenFuelDrop, r.initialLevel, r.finalLevel);
+}
+
+/** Liters dispensed from a bowser/tanker (not theft). */
+export function effectiveDispensed(r: FuelTransaction): number {
+  if (r.section !== 'dispensed') return 0;
   return deriveSuddenFuelDrop(r.suddenFuelDrop, r.initialLevel, r.finalLevel);
 }
 

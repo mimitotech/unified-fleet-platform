@@ -67,6 +67,7 @@ export function FuelReportsTab(_props: FuelTabDateRangeProps & {
     useRunEndpoint: true;
     module?: string;
     objectKind: 'unit' | 'group';
+    maxRowsPerTable?: number;
   } | null>(null);
 
   const moduleOptions = useMemo(() => {
@@ -148,7 +149,7 @@ export function FuelReportsTab(_props: FuelTabDateRangeProps & {
       module: selected.module,
       objectKind: selected.isGroupReport ? 'group' : 'unit',
       // Keep previews responsive for large fleets; CSV remains available for the shown table.
-      maxRowsPerTable: selected.isGroupReport ? 1200 : 2000,
+      maxRowsPerTable: selected.isGroupReport ? 5000 : 8000,
     });
   };
 

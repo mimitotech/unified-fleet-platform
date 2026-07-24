@@ -277,7 +277,7 @@ export class UfpFleetService implements IFleetService {
     const { from, to } = defaultFuelRange();
     const txs = await this.getFuelTransactions({ startDate: from, endDate: to, includeGenerators: true, includeMachinery: true });
     return txs
-      .filter((t) => t.suddenFuelDrop > 0 && t.timestamp * 1000 >= since)
+      .filter((t) => t.section === 'theft' && t.suddenFuelDrop > 0 && t.timestamp * 1000 >= since)
       .map((t) => ({
         type: 'theft' as const,
         unitId: String(t.unitId),
@@ -319,7 +319,7 @@ export class UfpFleetService implements IFleetService {
             const match = categoryAssets.find(
               (a) => a.name.trim().toLowerCase() === t.unitName.trim().toLowerCase(),
             );
-            if (match) return { ...t, unitId: Number(match.unitId) || t.unitId };
+            if (match) return { ...t, unitId: String(match.unitId || t.unitId) };
             return t;
           })
           .filter(

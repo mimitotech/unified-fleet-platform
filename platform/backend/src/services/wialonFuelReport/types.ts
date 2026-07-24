@@ -1,4 +1,4 @@
-export type FuelSection = 'consumption' | 'filling' | 'theft';
+export type FuelSection = 'consumption' | 'filling' | 'theft' | 'dispensed';
 export type FuelTank = 'main' | 'reserve' | 'unknown';
 
 export type FuelTransaction = {

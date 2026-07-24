@@ -227,7 +227,7 @@ function ReportTableView({
 
   const trends = useMemo(() => numericColumns(table), [table]);
   const minWidth = Math.max(960, cols.length * 140);
-  const previewRows = branded ? table.rows : table.rows.slice(0, 400);
+  const previewRows = table.rows;
 
   return (
     <div className="space-y-3 min-w-0" style={{ marginTop: 8 }}>
@@ -297,10 +297,9 @@ function ReportTableView({
           </tbody>
         </table>
       </div>
-      {(table.totalRows > table.rows.length || (!branded && table.rows.length > previewRows.length)) && (
+      {(table.totalRows > table.rows.length) && (
         <p className="text-[11px] text-muted-foreground">
-          Showing {previewRows.length} of {table.totalRows} rows
-          {table.totalRows > table.rows.length ? ' (report limit applied)' : ' (preview trimmed for speed)'}
+          Showing {previewRows.length} of {table.totalRows} rows (report limit applied)
         </p>
       )}
     </div>

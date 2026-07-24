@@ -1,4 +1,49 @@
 import type { FuelTransaction } from '@/types/entities';
+import { localDateFromTs } from '@/lib/localDate';
+
+/** Bowser / tanker — level drops are usually dispensed fuel, not theft. */
+const BOWSER_NAME_RE = /\bbowser\b|fuel\s*tanker|fuel\s*truck|fuel\s*trailer/i;
+
+export function isFuelBowserName(name: string): boolean {
+  return BOWSER_NAME_RE.test(String(name || ''));
+}
+
+/** Reclass bowser "theft" rows as dispensed (matches backend resolveFuelSection). */
+export function normalizeFuelTransactionSection<
+  T extends {
+    section: string;
+    unitName: string;
+    fuelUsed?: number;
+    filled?: number;
+    initialLevel?: number;
+    finalLevel?: number;
+  },
+>(t: T): T {
+  let next: T = t;
+  if (t.section === 'theft' && isFuelBowserName(t.unitName)) {
+    next = { ...next, section: 'dispensed' };
+  }
+  // Level-rise stored as consumption → filling (Filled column, not Used).
+  if (next.section === 'consumption') {
+    const used = Number(next.fuelUsed) || 0;
+    const filled = Number(next.filled) || 0;
+    const initial = Number(next.initialLevel) || 0;
+    const final = Number(next.finalLevel) || 0;
+    if (used > 0 && filled <= 0 && initial > 0 && final > initial) {
+      const rise = final - initial;
+      if (Math.abs(used - rise) <= 1) {
+        next = { ...next, section: 'filling', filled: used, fuelUsed: 0 };
+      }
+    }
+  }
+  return next;
+}
+
+export function normalizeFuelTransactions<T extends { section: string; unitName: string }>(
+  list: T[],
+): T[] {
+  return list.map(normalizeFuelTransactionSection);
+}
 
 /** Wialon Fuel Report(Group) per-vehicle period summary row. */
 export function isWialonGroupSummary(t: FuelTransaction): boolean {
@@ -6,9 +51,9 @@ export function isWialonGroupSummary(t: FuelTransaction): boolean {
 }
 
 function monthBoundsFromTs(ts: number): { start: string; end: string } {
-  const yyyyMm = new Date(ts * 1000).toISOString().slice(0, 7);
+  const yyyyMm = localDateFromTs(ts).slice(0, 7);
   const [y, m] = yyyyMm.split('-').map(Number);
-  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const lastDay = new Date(y, m, 0).getDate();
   return {
     start: `${yyyyMm}-01`,
     end: `${yyyyMm}-${String(lastDay).padStart(2, '0')}`,
@@ -16,7 +61,7 @@ function monthBoundsFromTs(ts: number): { start: string; end: string } {
 }
 
 function dateFromTs(ts: number): string {
-  return new Date(ts * 1000).toISOString().slice(0, 10);
+  return localDateFromTs(ts);
 }
 
 export function isCompleteMonthSpan(fromDate: string, toDate: string): boolean {
@@ -101,7 +146,7 @@ export function filterFuelTransactionsByDate(
 ): FuelTransaction[] {
   const from = fromDate ?? '';
   const to = toDate ?? '';
-  return transactions.filter((t) => {
+  return normalizeFuelTransactions(transactions).filter((t) => {
     if (isWialonGroupSummary(t)) {
       if (!from || !to) return true;
       if (summaryCoversSelectedRange(t, from, to)) return true;
@@ -110,7 +155,7 @@ export function filterFuelTransactionsByDate(
       return false;
     }
     if (!t.timestamp) return true;
-    const txDateStr = new Date(t.timestamp * 1000).toISOString().split('T')[0];
+    const txDateStr = localDateFromTs(t.timestamp);
     if (fromDate && txDateStr < fromDate) return false;
     if (toDate && txDateStr > toDate) return false;
     return true;
@@ -192,6 +237,7 @@ export function summaryProvidesDrop(
   return transactions.some(
     (t) =>
       isWialonGroupSummary(t) &&
+      t.section === 'theft' &&
       String(t.unitId) === String(unitId) &&
       (t.suddenFuelDrop ?? 0) > 0 &&
       (!fromDate || !toDate || summaryCoversSelectedRange(t, fromDate, toDate)),
@@ -201,4 +247,33 @@ export function summaryProvidesDrop(
 /** Synthetic rows produced by balance enrichment — not shown as line items. */
 export function isSyntheticFuelRow(t: FuelTransaction): boolean {
   return isWialonGroupSummary(t) || t.sensor === 'balance';
+}
+
+/**
+ * Hide interval / placeholder leaf rows with no fill, use, theft, or level change.
+ * Dispensed (bowser) rows are kept when they carry a dispensed volume.
+ */
+export function hasMeaningfulFuelLeaf(t: FuelTransaction): boolean {
+  if (isSyntheticFuelRow(t)) return false;
+  const filled = Number(t.filled) || 0;
+  const used = Number(t.fuelUsed) || 0;
+  const drop = Number(t.suddenFuelDrop) || 0;
+  const initial = Number(t.initialLevel) || 0;
+  const final = Number(t.finalLevel) || 0;
+  if (t.section === 'filling') {
+    if (filled > 0) return true;
+    if (initial > 0 && final > initial) return true;
+    return false;
+  }
+  if (t.section === 'consumption') {
+    if (used > 0) return true;
+    if (initial > 0 && final >= 0 && initial > final) return true;
+    return false;
+  }
+  if (t.section === 'theft' || t.section === 'dispensed') {
+    if (drop > 0) return true;
+    if (initial > 0 && final >= 0 && initial > final) return true;
+    return false;
+  }
+  return filled > 0 || used > 0 || drop > 0;
 }

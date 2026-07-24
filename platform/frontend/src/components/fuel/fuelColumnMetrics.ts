@@ -9,13 +9,14 @@ import { derivePeriodFuelUsed } from './derivePeriodFuelUsed';
 import { filterPlausibleFuelEvents } from './fuelEventPlausibility';
 import { effectiveSuddenDropVolume } from './fuelTheftVolume';
 import type { FuelReportKpis } from './fuelReportStats';
+import { localDateFromTs } from '@/lib/localDate';
 
 function round1(n: number) {
   return Math.round(n * 10) / 10;
 }
 
 function dateFromTs(ts: number): string {
-  return new Date(ts * 1000).toISOString().slice(0, 10);
+  return localDateFromTs(ts);
 }
 
 /** Derive fill liters from level rise when the filled column is empty (matches backend). */
@@ -157,10 +158,13 @@ export function aggregateUnitFuelColumns(
   for (const t of exactSummaries) {
     if (Number(t.filled) > summaryFilled) summaryFilled = Number(t.filled) || 0;
     if (Number(t.fuelUsed) > summaryUsed) summaryUsed = Number(t.fuelUsed) || 0;
-    const drop = effectiveSuddenDropVolume(t);
-    if (drop > summaryDrop) {
-      summaryDrop = drop;
-      summaryAlerts = Math.max(summaryAlerts, t.count > 0 ? t.count : 1);
+    // Dispensed (bowser → genset) is not theft — only Sudden Drop / theft sections.
+    if (t.section === 'theft') {
+      const drop = effectiveSuddenDropVolume(t);
+      if (drop > summaryDrop) {
+        summaryDrop = drop;
+        summaryAlerts = Math.max(summaryAlerts, t.count > 0 ? t.count : 1);
+      }
     }
     if (Number(t.finalLevel) > 0) summaryLevel = Number(t.finalLevel);
   }

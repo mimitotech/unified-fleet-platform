@@ -160,6 +160,16 @@ export const authApi = {
       method: 'POST',
       body: JSON.stringify({ currentPassword, newPassword }),
     }),
+  forgotPassword: (email: string) =>
+    api<{ resetToken: string; email: string; expiresInMinutes: number }>('/api/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+  resetPassword: (resetToken: string, newPassword: string, confirmPassword: string) =>
+    api<{ reset: boolean }>('/api/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ resetToken, newPassword, confirmPassword }),
+    }),
   acceptTerms: () =>
     api<{ termsAcceptedAt: string }>('/api/auth/accept-terms', { method: 'POST' }),
 };

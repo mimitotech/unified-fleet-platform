@@ -50,6 +50,7 @@ import { DashboardToolbar } from "@/components/dashboard/DashboardToolbar";
 import {
   type PeriodPreset,
   shiftDays,
+  localDateIso,
 } from "@/components/shared/PeriodAssetControls";
 import { useFleetUnits } from "@/hooks/useFleetUnits";
 import { useAlerts } from "@/hooks/useAlerts";
@@ -119,7 +120,8 @@ function pct(part: number, whole: number): number {
 }
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  // Local calendar day — must match Fuel module (not UTC, which lags in UTC+).
+  return localDateIso();
 }
 
 function unitParam(unit: FleetUnit, ...keys: string[]): number | null {

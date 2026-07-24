@@ -54,7 +54,7 @@ export interface FuelTransaction {
   id: string;
   unitId: string;
   unitName: string;
-  section: 'consumption' | 'filling' | 'theft';
+  section: 'consumption' | 'filling' | 'theft' | 'dispensed';
   tank: string;
   timestamp: number;
   timeStr: string;

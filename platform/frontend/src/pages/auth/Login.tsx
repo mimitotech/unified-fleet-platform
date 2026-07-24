@@ -10,12 +10,12 @@ import { useAuth } from '@/providers/AuthProvider';
 import { LoadingButton } from '@/components/shared/LoadingButton';
 import { PasswordInput } from '@/components/shared/PasswordInput';
 import { Input } from '@/components/ui/input';
-import { LogIn } from 'lucide-react';
+import { ArrowLeft, KeyRound, LogIn } from 'lucide-react';
 import { notify } from '@/lib/notify';
 import { BRAND } from '@/lib/branding';
 import { postLoginPath } from '@/lib/authRedirect';
 import { cn } from '@/lib/utils';
-import { api } from '@/lib/api';
+import { api, authApi } from '@/lib/api';
 
 type Slide = {
   id: string;
@@ -24,6 +24,8 @@ type Slide = {
   title: string;
   caption: string;
 };
+
+type AuthView = 'login' | 'forgot-email' | 'forgot-reset';
 
 const DEFAULT_SLIDES: Slide[] = [
   {
@@ -53,6 +55,10 @@ export default function Login() {
   const { signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [resetToken, setResetToken] = useState('');
+  const [view, setView] = useState<AuthView>('login');
   const [loading, setLoading] = useState(false);
   const [slide, setSlide] = useState(0);
 
@@ -111,15 +117,62 @@ export default function Login() {
     }
   };
 
+  const handleForgotEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const result = await authApi.forgotPassword(email.trim());
+      setResetToken(result.resetToken);
+      setEmail(result.email);
+      setNewPassword('');
+      setConfirmPassword('');
+      setView('forgot-reset');
+      notify.success('Account found', 'Choose a new password to continue.');
+    } catch (err) {
+      notify.error('Reset unavailable', (err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPassword !== confirmPassword) {
+      notify.error('Passwords do not match');
+      return;
+    }
+    setLoading(true);
+    try {
+      await authApi.resetPassword(resetToken, newPassword, confirmPassword);
+      notify.success('Password updated', 'Sign in with your new password.');
+      setPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setResetToken('');
+      setView('login');
+    } catch (err) {
+      notify.error('Could not reset password', (err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const goLogin = () => {
+    setView('login');
+    setResetToken('');
+    setNewPassword('');
+    setConfirmPassword('');
+  };
+
   const active = slides[Math.min(slide, slides.length - 1)] ?? DEFAULT_SLIDES[0];
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center overflow-hidden">
+    <div className="fixed inset-0 flex items-center justify-center overflow-hidden bg-neutral-950">
       {slides.map((s, i) => (
         <div
           key={s.id}
           className={cn(
-            'absolute inset-0 bg-neutral-950 transition-opacity duration-1000 ease-in-out',
+            'absolute inset-0 transition-opacity duration-1000 ease-in-out',
             i === slide ? 'opacity-100' : 'opacity-0',
           )}
           aria-hidden={i !== slide}
@@ -127,13 +180,13 @@ export default function Login() {
           <img
             src={s.src}
             alt=""
-            className="absolute inset-0 h-full w-full object-contain object-center"
+            className="absolute inset-0 h-full w-full min-h-full min-w-full object-cover object-center"
             draggable={false}
           />
         </div>
       ))}
 
-      <div className="absolute inset-0 bg-gradient-to-br from-black/50 via-black/35 to-primary/35 pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-br from-black/55 via-black/40 to-primary/35 pointer-events-none" />
 
       <div className="absolute inset-x-0 top-0 z-10 p-6 sm:p-10 pointer-events-none">
         <div className="max-w-xl">
@@ -173,41 +226,144 @@ export default function Login() {
               <img src={BRAND.logo} alt="Logo" className="w-10 h-10 object-contain" />
             </div>
             <h1 className="text-2xl sm:text-3xl font-bold text-gray-800">{BRAND.name}</h1>
-            <p className="text-gray-900 text-xs sm:text-sm mt-1 text-center">{BRAND.fullName}</p>
+            <p className="text-gray-900 text-xs sm:text-sm mt-1 text-center">
+              {view === 'login'
+                ? BRAND.fullName
+                : view === 'forgot-email'
+                  ? 'Reset your password'
+                  : 'Choose a new password'}
+            </p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <Input
-              type="email"
-              placeholder="Email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={loading}
-              required
-              autoComplete="username"
-              autoFocus
-              className="h-12 bg-white/70 border-white/50 text-gray-800 placeholder:text-gray-500 focus:border-primary focus:ring-primary/30 rounded-xl"
-            />
-            <PasswordInput
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={loading}
-              required
-              autoComplete="current-password"
-              className="h-12 bg-white/70 border-white/50 text-gray-800 placeholder:text-gray-500 focus:border-primary focus:ring-primary/30 rounded-xl"
-            />
+          {view === 'login' && (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <Input
+                type="email"
+                placeholder="Email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={loading}
+                required
+                autoComplete="username"
+                autoFocus
+                className="h-12 bg-white/70 border-white/50 text-gray-800 placeholder:text-gray-500 focus:border-primary focus:ring-primary/30 rounded-xl"
+              />
+              <PasswordInput
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={loading}
+                required
+                autoComplete="current-password"
+                className="h-12 bg-white/70 border-white/50 text-gray-800 placeholder:text-gray-500 focus:border-primary focus:ring-primary/30 rounded-xl"
+              />
 
-            <LoadingButton
-              type="submit"
-              className="w-full h-12 bg-primary hover:bg-primary/90 text-white font-semibold text-base rounded-xl shadow-lg"
-              loading={loading}
-              loadingText="Signing In..."
-            >
-              <LogIn className="h-5 w-5 mr-2" />
-              Sign In
-            </LoadingButton>
-          </form>
+              <div className="flex justify-end -mt-1">
+                <button
+                  type="button"
+                  className="text-xs font-medium text-gray-800/90 hover:text-gray-950 underline underline-offset-2"
+                  onClick={() => setView('forgot-email')}
+                  disabled={loading}
+                >
+                  Forgot password?
+                </button>
+              </div>
+
+              <LoadingButton
+                type="submit"
+                className="w-full h-12 bg-primary hover:bg-primary/90 text-white font-semibold text-base rounded-xl shadow-lg"
+                loading={loading}
+                loadingText="Signing In..."
+              >
+                <LogIn className="h-5 w-5 mr-2" />
+                Sign In
+              </LoadingButton>
+            </form>
+          )}
+
+          {view === 'forgot-email' && (
+            <form onSubmit={handleForgotEmail} className="space-y-4">
+              <p className="text-sm text-gray-800/90 text-center -mt-2 mb-1">
+                Enter the email on your account. If it exists, you can set a new password.
+              </p>
+              <Input
+                type="email"
+                placeholder="Email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={loading}
+                required
+                autoComplete="username"
+                autoFocus
+                className="h-12 bg-white/70 border-white/50 text-gray-800 placeholder:text-gray-500 focus:border-primary focus:ring-primary/30 rounded-xl"
+              />
+              <LoadingButton
+                type="submit"
+                className="w-full h-12 bg-primary hover:bg-primary/90 text-white font-semibold text-base rounded-xl shadow-lg"
+                loading={loading}
+                loadingText="Checking..."
+              >
+                <KeyRound className="h-5 w-5 mr-2" />
+                Continue
+              </LoadingButton>
+              <button
+                type="button"
+                onClick={goLogin}
+                disabled={loading}
+                className="w-full flex items-center justify-center gap-1.5 text-sm text-gray-800/90 hover:text-gray-950"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Back to sign in
+              </button>
+            </form>
+          )}
+
+          {view === 'forgot-reset' && (
+            <form onSubmit={handleResetPassword} className="space-y-4">
+              <p className="text-sm text-gray-800/90 text-center -mt-2 mb-1 break-all">
+                Resetting password for <span className="font-semibold">{email}</span>
+              </p>
+              <PasswordInput
+                placeholder="New password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                disabled={loading}
+                required
+                minLength={8}
+                autoComplete="new-password"
+                autoFocus
+                className="h-12 bg-white/70 border-white/50 text-gray-800 placeholder:text-gray-500 focus:border-primary focus:ring-primary/30 rounded-xl"
+              />
+              <PasswordInput
+                placeholder="Confirm new password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                disabled={loading}
+                required
+                minLength={8}
+                autoComplete="new-password"
+                className="h-12 bg-white/70 border-white/50 text-gray-800 placeholder:text-gray-500 focus:border-primary focus:ring-primary/30 rounded-xl"
+              />
+              <LoadingButton
+                type="submit"
+                className="w-full h-12 bg-primary hover:bg-primary/90 text-white font-semibold text-base rounded-xl shadow-lg"
+                loading={loading}
+                loadingText="Saving..."
+              >
+                <KeyRound className="h-5 w-5 mr-2" />
+                Save new password
+              </LoadingButton>
+              <button
+                type="button"
+                onClick={goLogin}
+                disabled={loading}
+                className="w-full flex items-center justify-center gap-1.5 text-sm text-gray-800/90 hover:text-gray-950"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Back to sign in
+              </button>
+            </form>
+          )}
 
           <p className="mt-5 text-center text-xs text-white/90 drop-shadow">
             <Link to="/terms-of-use" className="underline underline-offset-2 hover:text-white">

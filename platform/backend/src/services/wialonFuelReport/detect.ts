@@ -37,11 +37,13 @@ const FUEL_TABLE_SCHEMAS: Record<
       ['fuel used', 'mileage', 'duration'],
       ['fuel consumed', 'mileage', 'duration'],
       ['consumed', 'distance', 'time'],
+      ['engine hours', 'consumed'],
+      ['consumed', 'avg litres'],
+      ['consumed', 'avg liters'],
       ['fuel used'],
       ['fuel consumed'],
       ['consumed'],
-      ['initial fuel', 'final fuel'],
-      ['initial level', 'final level'],
+      // Do NOT match on initial/final fuel alone — that steals Fillings tables.
     ],
     columnPatterns: {
       unit: ['unit', 'vehicle', 'object', 'asset', 'grouping'],
@@ -64,7 +66,18 @@ const FUEL_TABLE_SCHEMAS: Record<
       ],
       mileage: ['mileage', 'distance', 'odometer'],
       duration: ['duration', 'time spent', 'interval', 'engine hours'],
-      avgConsumption: ['avg consumption', 'average consumption', 'consumption rate', 'l/100', 'mpg', 'km/l', 'avg'],
+      avgConsumption: [
+        'avg litres/hr',
+        'avg liters/hr',
+        'avg consumption',
+        'average consumption',
+        'consumption rate',
+        'l/100',
+        'l/h',
+        'mpg',
+        'km/l',
+        'avg',
+      ],
       initialLevel: [
         'initial fuel level',
         'fuel level at the beginning',
@@ -109,11 +122,64 @@ const FUEL_TABLE_SCHEMAS: Record<
         'theft',
         'drain',
         'drop',
+        'dispensed',
       ],
       avgConsumption: ['fuel consumed', 'fuel used', 'total consumed'],
       sensor: ['unit name', 'object name', 'group name', 'driver name', 'grouping'],
       unit: ['sensor', 'driver'],
       mileage: ['time', 'duration'],
+    },
+  },
+  dispensed: {
+    requiredGroups: [
+      ['dispensed'],
+      ['dispensed', 'initial fuel level', 'final fuel level'],
+      ['fuel dispensed'],
+    ],
+    columnPatterns: {
+      unit: ['unit', 'vehicle', 'object', 'asset', 'grouping'],
+      time: ['time', 'begin', 'beginning', 'start', 'date'],
+      endTime: ['end time', 'finish', 'end'],
+      location: [
+        'final location',
+        'initial location',
+        'location',
+        'address',
+        'position',
+        'place',
+        'where',
+      ],
+      suddenFuelDrop: [
+        'dispensed',
+        'fuel dispensed',
+        'dispensed volume',
+        'dispensed amount',
+        'dispensing',
+      ],
+      count: ['count', 'times', 'events'],
+      initialLevel: [
+        'initial fuel level',
+        'initial fuel',
+        'initial level',
+        'start level',
+        'level before',
+      ],
+      finalLevel: [
+        'final fuel level',
+        'final fuel',
+        'final level',
+        'end level',
+        'level after',
+      ],
+      sensor: ['sensor name', 'fuel sensor', 'sensor', 'fls'],
+    },
+    columnExclusions: {
+      initialLevel: ['initial location'],
+      finalLevel: ['final location'],
+      suddenFuelDrop: ['count', 'filled', 'filling', 'consumed', 'used', 'level', 'initial', 'final'],
+      count: ['quantity of fuel', 'fuel quantity', 'volume'],
+      sensor: ['unit name', 'object name', 'group name', 'driver name', 'grouping'],
+      unit: ['sensor', 'driver'],
     },
   },
   filling: {
@@ -126,7 +192,6 @@ const FUEL_TABLE_SCHEMAS: Record<
       ['filled'],
       ['volume', 'start level', 'end level'],
       ['volume', 'initial', 'final'],
-      ['initial', 'final'],
     ],
     columnPatterns: {
       unit: ['unit', 'vehicle', 'object', 'asset', 'grouping'],
@@ -171,6 +236,7 @@ const FUEL_TABLE_SCHEMAS: Record<
       ],
       sensor: ['sensor name', 'fuel sensor', 'sensor', 'fls'],
       deviation: ['deviation', 'difference', 'diff'],
+      count: ['filling count', 'fillings count', 'fill count', 'charge count', 'count'],
     },
     columnExclusions: {
       initialLevel: ['initial location', 'departure'],
@@ -178,6 +244,7 @@ const FUEL_TABLE_SCHEMAS: Record<
       filled: [
         'count',
         'fillings count',
+        'filling count',
         'drains count',
         'drained',
         'consumed',
@@ -187,7 +254,9 @@ const FUEL_TABLE_SCHEMAS: Record<
         'initial',
         'final',
         'level',
+        'dispensed',
       ],
+      count: ['filled', 'volume', 'amount', 'quantity of fuel'],
       sensor: ['unit name', 'object name', 'group name', 'driver name', 'grouping'],
       unit: ['sensor', 'driver'],
     },
@@ -199,8 +268,8 @@ const FUEL_TABLE_SCHEMAS: Record<
       ['fuel drop', 'quantity'],
       ['drain', 'count'],
       ['theft'],
-      ['initial', 'final'],
       ['sudden fuel drop'],
+      ['drained'],
     ],
     columnPatterns: {
       unit: ['unit', 'vehicle', 'object', 'asset', 'grouping'],
@@ -308,13 +377,26 @@ function findBestColumnIndex(
 
 function detectTableSection(table: ReportTableMeta): FuelSection | null {
   const sysName = (table.name || '').toLowerCase().trim();
+  const label = (table.label || '').toLowerCase().trim();
+
+  // Bowser / Fuel Dispensed tables — never treat as theft (Wialon often uses unit_thefts).
+  if (/dispens/.test(label) || /bowser\s*activ/.test(label) || /dispens/.test(sysName)) {
+    return 'dispensed';
+  }
+
   if (WIALON_TABLE_SECTION[sysName]) return WIALON_TABLE_SECTION[sysName];
 
   const headers = table.header;
   if (!headers?.length) return null;
-  for (const [section, schema] of Object.entries(FUEL_TABLE_SCHEMAS)) {
+
+  // Prefer filling / dispensed / theft before consumption so Initial+Final headers
+  // on fillings tables are not stolen by the consumption schema.
+  const order: FuelSection[] = ['filling', 'dispensed', 'theft', 'consumption'];
+  for (const section of order) {
+    const schema = FUEL_TABLE_SCHEMAS[section];
+    if (!schema) continue;
     for (const requiredGroup of schema.requiredGroups) {
-      if (headersMatchGroup(headers, requiredGroup)) return section as FuelSection;
+      if (headersMatchGroup(headers, requiredGroup)) return section;
     }
   }
   return null;
@@ -360,12 +442,23 @@ function buildColumnMap(headers: string[], section: FuelSection, headerTypes?: (
     }
   }
 
-  if (section === 'theft' && columnMap.suddenFuelDrop < 0 && headerTypes?.length) {
+  if (
+    (section === 'theft' || section === 'dispensed') &&
+    columnMap.suddenFuelDrop < 0 &&
+    headerTypes?.length
+  ) {
     for (let i = 0; i < headers.length; i++) {
       const h = headers[i].toLowerCase();
       if (h.includes('initial') || h.includes('final') || h.includes('level') || h.includes('count')) continue;
       const t = Number(headerTypes[i]);
-      if (t === HEADER_TYPE_VOLUME && (h.includes('drop') || h.includes('drain') || h.includes('theft') || h.includes('stolen'))) {
+      if (
+        t === HEADER_TYPE_VOLUME &&
+        (h.includes('drop') ||
+          h.includes('drain') ||
+          h.includes('theft') ||
+          h.includes('stolen') ||
+          h.includes('dispens'))
+      ) {
         columnMap.suddenFuelDrop = i;
         break;
       }
@@ -419,7 +512,9 @@ function buildTankColumnMaps(headers: string[], _section: FuelSection): TankColu
 }
 
 function isPerUnitPeriodSummaryTable(headers: string[], section: FuelSection): boolean {
-  if (section !== 'consumption' && section !== 'filling' && section !== 'theft') return false;
+  if (section !== 'consumption' && section !== 'filling' && section !== 'theft' && section !== 'dispensed') {
+    return false;
+  }
   const norm = headers.map((h) => h.toLowerCase().trim());
   const hasUnit = norm.some(
     (h) =>

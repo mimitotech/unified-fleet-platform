@@ -295,7 +295,7 @@ export interface FuelStation {
 }
 
 /** Section types for fuel report tables */
-export type FuelSection = 'consumption' | 'filling' | 'theft';
+export type FuelSection = 'consumption' | 'filling' | 'theft' | 'dispensed';
 
 /**
  * Fuel transaction from Wialon report template
