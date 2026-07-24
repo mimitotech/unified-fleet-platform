@@ -220,6 +220,8 @@ export async function resolveCanonicalFuelSlots(
 
 const FLEET_GROUP_RE = /vehicle|truck|fleet|lorry|bus|\[veh\]|cars?/i;
 const GENSET_GROUP_RE = /generator|genset|gen\s*set|gensets?|stationary|power\s*unit|sites?|branches?/i;
+const MACHINERY_GROUP_RE =
+  /machiner|plant|excav|crane|loader|bulldozer|roller|paver|fork\s*lift|forklift|compressor|equip/i;
 const STATIONARY_GROUP_RE =
   /generator|genset|gen\s*set|bowser|machinery|plant|power|stationary|gensets?/i;
 
@@ -235,13 +237,18 @@ export async function findFleetGroups(
     // Prefer true genset groups so bowser-named groups don't replace Fuel Usage Report(Gensets).
     const gensets = all.filter((g) => GENSET_GROUP_RE.test(g.nm));
     if (gensets.length) return gensets;
-    const stationary = all.filter((g) => STATIONARY_GROUP_RE.test(g.nm));
-    return stationary.length ? stationary : all;
+    const stationary = all.filter((g) => STATIONARY_GROUP_RE.test(g.nm) && !MACHINERY_GROUP_RE.test(g.nm));
+    return stationary.length ? stationary : all.filter((g) => STATIONARY_GROUP_RE.test(g.nm));
   }
 
   if (opts?.assetCategory === 'machinery') {
-    const stationary = all.filter((g) => STATIONARY_GROUP_RE.test(g.nm));
-    return stationary.length ? stationary : all;
+    const machinery = all.filter((g) => MACHINERY_GROUP_RE.test(g.nm));
+    if (machinery.length) return machinery;
+    // Prefer non-genset stationary groups; never fall back to the whole account (mixes vehicles).
+    const stationary = all.filter(
+      (g) => STATIONARY_GROUP_RE.test(g.nm) && !GENSET_GROUP_RE.test(g.nm),
+    );
+    return stationary.length ? stationary : [];
   }
 
   if (opts?.assetCategory === 'vehicle') {

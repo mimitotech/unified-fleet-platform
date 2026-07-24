@@ -128,9 +128,23 @@ async function readTransactionsFromDb(opts: {
     WHERE tenant_id = $1 AND timestamp >= $2 AND timestamp <= $3`;
   const params: unknown[] = [opts.tenantId, opts.fromTs, opts.toTs];
 
-  // Prefer exact category. Untagged rows are backfilled on live sync with assetCategory.
+  // Prefer exact category. Untagged rows: include when the unit is tagged on assets.
   if (opts.assetCategory) {
-    sql += ` AND asset_category = $${params.length + 1}`;
+    sql += ` AND (
+      asset_category = $${params.length + 1}
+      OR (
+        (asset_category IS NULL OR asset_category = '')
+        AND EXISTS (
+          SELECT 1 FROM assets a
+          WHERE a.tenant_id = fuel_transactions.tenant_id
+            AND a.asset_category = $${params.length + 1}
+            AND (
+              (fuel_transactions.asset_id IS NOT NULL AND a.id = fuel_transactions.asset_id)
+              OR LOWER(TRIM(a.name)) = LOWER(TRIM(fuel_transactions.unit_name))
+            )
+        )
+      )
+    )`;
     params.push(opts.assetCategory);
   }
   if (opts.unitId != null) {
@@ -139,9 +153,31 @@ async function readTransactionsFromDb(opts: {
   }
 
   sql += ` ORDER BY timestamp DESC LIMIT ${opts.rowLimit}`;
-  const { rows } = await query(sql, params);
-  const mapped = toCamelRows(rows).map((r) => dbRowToFuelTransaction(r as Record<string, unknown>));
-  return enrichTankLevels(mapped);
+  try {
+    const { rows } = await query(sql, params);
+    const mapped = toCamelRows(rows).map((r) => dbRowToFuelTransaction(r as Record<string, unknown>));
+    return enrichTankLevels(mapped);
+  } catch (err) {
+    // Older DBs may lack assets.asset_category — fall back to exact fuel_transactions tag.
+    if (!opts.assetCategory) throw err;
+    logger.warn('[FuelDbRead] category join failed — falling back to exact asset_category', err);
+    let fallback = `SELECT
+      id, unit_id, unit_name, section, tank, timestamp, time_str, location,
+      latitude, longitude, initial_level, final_level, filled, fuel_used, mileage,
+      avg_consumption, sensor, duration, duration_seconds, sudden_fuel_drop, event_count
+    FROM fuel_transactions
+    WHERE tenant_id = $1 AND timestamp >= $2 AND timestamp <= $3
+      AND asset_category = $4`;
+    const fbParams: unknown[] = [opts.tenantId, opts.fromTs, opts.toTs, opts.assetCategory];
+    if (opts.unitId != null) {
+      fallback += ` AND unit_id = $5`;
+      fbParams.push(String(opts.unitId));
+    }
+    fallback += ` ORDER BY timestamp DESC LIMIT ${opts.rowLimit}`;
+    const { rows } = await query(fallback, fbParams);
+    const mapped = toCamelRows(rows).map((r) => dbRowToFuelTransaction(r as Record<string, unknown>));
+    return enrichTankLevels(mapped);
+  }
 }
 
 async function getSyncCursor(tenantId: string, cursorKey: string) {

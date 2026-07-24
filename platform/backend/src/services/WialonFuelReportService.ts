@@ -277,6 +277,19 @@ export class WialonFuelReportService {
         transactions = transactions.filter((t) => t.unitId === opts.unitId);
       }
 
+      // Keep only this category's units after group/unit harvest (group reports can mix fleets).
+      if (!opts.unitId && opts.assetCategory && targetUnits.length) {
+        const catIds = new Set(targetUnits.map((u) => u.id));
+        const catNames = new Set(
+          targetUnits.map((u) => String(u.nm || '').trim().toLowerCase()).filter(Boolean),
+        );
+        transactions = transactions.filter((t) => {
+          if (t.unitId > 0 && catIds.has(t.unitId)) return true;
+          const name = String(t.unitName || '').trim().toLowerCase();
+          return Boolean(name && catNames.has(name));
+        });
+      }
+
       patchTransactionUnitIds(transactions, unitIndex);
 
       const unitIds = opts.unitId ? [opts.unitId] : targetUnits.map((u) => u.id);

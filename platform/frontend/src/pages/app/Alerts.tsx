@@ -36,6 +36,8 @@ import { WialonNotificationsPanel } from '@/components/app/WialonLivePanels';
 import { useModules } from '@/hooks/useModules';
 import { cn } from '@/lib/utils';
 import { clientFacingText } from '@/lib/clientFacingText';
+import { isNoiseAlertTitle } from '@/lib/alertNoise';
+import { localDateIso } from '@/lib/localDate';
 
 interface AlertRow {
   id: string;
@@ -128,13 +130,13 @@ function prettySource(sourceType?: string) {
 }
 
 
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const todayStr = () => localDateIso();
 
 export default function AlertsPage() {
   const [fromDate, setFromDate] = useState(() => shiftDays(todayStr(), -6));
   const [toDate, setToDate] = useState(() => todayStr());
   const [category, setCategory] = useState('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'acked'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'acked'>('open');
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const { data: alerts, isLoading, isError, refetch, isFetching } = useAlerts(300, true, {
@@ -143,7 +145,13 @@ export default function AlertsPage() {
   });
   const acknowledge = useAcknowledgeAlert();
   const bulkAck = useBulkAcknowledge();
-  const list = (alerts ?? []) as AlertRow[];
+  const list = useMemo(
+    () =>
+      ((alerts ?? []) as AlertRow[]).filter(
+        (a) => !isNoiseAlertTitle(a.title, a.description, a.type),
+      ),
+    [alerts],
+  );
 
   const applyPreset = (p: PeriodPreset) => {
     if (p === 'today') {

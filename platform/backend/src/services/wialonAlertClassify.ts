@@ -214,12 +214,15 @@ export function mapUnitMessageToAlert(
 
   const type = classifyWialonAlertType(classificationBlob(m, [eventName]));
   const title = withUnitLabel(eventName, unitName);
-  // Stable fingerprint: unit + timestamp + Wialon task/event id (not classified type —
-  // type drift was creating duplicate rows after re-harvest).
-  const stableKey = String(
-    p.task_id ?? p.evt_id ?? p.notification_id ?? p.id ?? p.name ?? m.et ?? m.tp ?? eventName,
-  ).slice(0, 64);
-  const externalId = `${unitId ?? 'x'}-${m.t}-${stableKey}`;
+  // Stable fingerprint: unit + minute + normalized event name (not volatile task ids —
+  // task_id churn was re-inserting the same event as a new open alert after acknowledge).
+  const stableKey = String(eventName || m.et || m.tp || 'event')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_|_$/g, '')
+    .slice(0, 48) || 'event';
+  const minuteBucket = Math.floor((m.t || m.rt || 0) / 60);
+  const externalId = `${unitId ?? 'x'}-${minuteBucket}-${stableKey}`;
 
   return {
     id: `wialon-${externalId}`,
@@ -246,8 +249,11 @@ export function mapTaskMessageToAlert(
 }
 
 const NOISE_TITLE =
-  /engine\s*hours?|mileage\s*(counter)?|odometer|counter\s*(reset|update|value)|initial\s*(mileage|engine)|gprs\s*traffic|traffic\s*counter|service\s*interval\s*hours|mh\s*counter|moto\s*hours?/i;
+  /engine[\s_-]*hours?|mileage[\s_-]*(counter)?|odometer|counter[\s_-]*(reset|update|value)|initial[\s_-]*(mileage|engine)|gprs[\s_-]*traffic|traffic[\s_-]*counter|service[\s_-]*interval[\s_-]*hours|mh[\s_-]*counter|moto[\s_-]*hours?/i;
 const GENERIC_TITLE = /^(fleet alert|notification|event|evt|task|message|unknown)$/i;
+
+/** Shared with frontend — technical counter registrations are never real alerts. */
+export const ALERT_NOISE_PATTERN = NOISE_TITLE;
 
 /**
  * Drop technical counter registrations (engine hours, mileage, odometer, GPRS traffic)

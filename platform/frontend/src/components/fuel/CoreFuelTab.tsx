@@ -298,7 +298,7 @@ export function CoreFuelTab({
       />
 
       <FuelAssetCharts
-        transactions={fuelTransactions}
+        transactions={filteredFuelTransactions}
         fromDate={fromDate}
         toDate={toDate}
         todayStr={todayStr}
@@ -312,7 +312,7 @@ export function CoreFuelTab({
       />
 
       <FuelCostingPanel
-        transactions={fuelTransactions}
+        transactions={filteredFuelTransactions}
         fromDate={fromDate}
         toDate={toDate}
         todayStr={todayStr}

@@ -23,6 +23,7 @@ import {
 import { formatDistanceToNow } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { clientFacingText } from '@/lib/clientFacingText';
+import { isNoiseAlertTitle } from '@/lib/alertNoise';
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -51,10 +52,11 @@ export function AppLayout({ children, title, subtitle, actions }: AppLayoutProps
   const alertList = safeArray<ClientAlert>(alerts);
   const unackList = alertList.filter((a) => {
     if (a.acknowledged) return false;
-    // Bell only shows fresh open alerts (last 48h) — not old backlog.
+    if (isNoiseAlertTitle(a.title, a.description, a.type)) return false;
+    // Bell only shows fresh open alerts (last 24h) — acknowledged never return here.
     const t = new Date(a.timestamp).getTime();
     if (!Number.isFinite(t)) return true;
-    return Date.now() - t < 48 * 60 * 60 * 1000;
+    return Date.now() - t < 24 * 60 * 60 * 1000;
   });
   const unack = unackList.length;
   const { dataUpdatedAt, refetch: refetchFleet } = useFleetSnapshot();

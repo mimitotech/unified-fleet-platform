@@ -1,5 +1,7 @@
 import type { FleetAlert } from '@ufp/shared';
 import { query } from '../config/database.js';
+import { isNoiseAlert } from '../services/wialonAlertClassify.js';
+import { logger } from '../config/logger.js';
 
 function isUuid(value?: string | null): boolean {
   if (!value) return false;
@@ -89,21 +91,40 @@ export class AlertOrchestrator {
     params.push(limit);
 
     const { rows } = await query(sql, params);
-    return rows.map((r: Record<string, unknown>) => ({
-      id: r.id as string,
-      type: r.type as string,
-      severity: r.severity as FleetAlert['severity'],
-      title: r.title as string,
-      description: r.description as string | undefined,
-      latitude: r.latitude as number | undefined,
-      longitude: r.longitude as number | undefined,
-      timestamp: new Date(r.occurred_at as string),
-      videoUrl: r.video_url as string | undefined,
-      sourceType: r.source_type as FleetAlert['sourceType'],
-      externalId: r.external_id as string | undefined,
-      assetId: r.asset_id as string | undefined,
-      acknowledged: r.acknowledged as boolean,
-    }));
+    return rows
+      .map((r: Record<string, unknown>) => ({
+        id: r.id as string,
+        type: r.type as string,
+        severity: r.severity as FleetAlert['severity'],
+        title: r.title as string,
+        description: r.description as string | undefined,
+        latitude: r.latitude as number | undefined,
+        longitude: r.longitude as number | undefined,
+        timestamp: new Date(r.occurred_at as string),
+        videoUrl: r.video_url as string | undefined,
+        sourceType: r.source_type as FleetAlert['sourceType'],
+        externalId: r.external_id as string | undefined,
+        assetId: r.asset_id as string | undefined,
+        acknowledged: r.acknowledged as boolean,
+      }))
+      .filter((a) => !isNoiseAlert(a));
+  }
+
+  /** Wipe Engine_Hours / counter noise for every tenant (one-shot + each sync cycle). */
+  static async purgeNoiseAlertsGlobally(): Promise<number> {
+    try {
+      const { rowCount } = await query(
+        `DELETE FROM alerts
+         WHERE title REGEXP 'engine[_[:space:]-]*hours?'
+            OR description REGEXP 'engine[_[:space:]-]*hours?'
+            OR title REGEXP 'mileage|odometer|gprs[[:space:]_-]*traffic|traffic[[:space:]_-]*counter|moto[[:space:]_-]*hours?'
+            OR description REGEXP 'mileage[[:space:]_-]*counter|odometer|gprs[[:space:]_-]*traffic'`,
+      );
+      return rowCount ?? 0;
+    } catch (err) {
+      logger.warn('[AlertOrchestrator] global noise purge failed', err);
+      return 0;
+    }
   }
 
   /** Resolve Wialon numeric unit id → local asset UUID via asset_mappings. */
@@ -123,6 +144,7 @@ export class AlertOrchestrator {
   }
 
   async syncFromAdapters(): Promise<number> {
+    await AlertOrchestrator.purgeNoiseAlertsGlobally();
     const from = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
     const to = new Date();
     let count = 0;
@@ -172,15 +194,28 @@ export class AlertOrchestrator {
 
         const alerts = await adapter.getAlerts(from, to);
         for (const alert of alerts) {
+          if (isNoiseAlert(alert)) continue;
           if (!alertBelongsToTenantFleet(alert, allowedUnitIds, allowedNames)) continue;
 
           const sourceType = src.source_type as FleetAlert['sourceType'];
           const externalId = alert.externalId || alert.id;
           const { rows: existing } = await query(
-            `SELECT id FROM alerts WHERE tenant_id = $1 AND source_type = $2 AND external_id = $3`,
+            `SELECT id, acknowledged FROM alerts WHERE tenant_id = $1 AND source_type = $2 AND external_id = $3`,
             [this.tenantId, sourceType, externalId],
           );
           if (existing.length > 0) continue;
+
+          // Same event already acknowledged under another external_id — do not reopen.
+          const { rows: alreadyAcked } = await query(
+            `SELECT id FROM alerts
+             WHERE tenant_id = $1
+               AND acknowledged = true
+               AND title = $2
+               AND ABS(UNIX_TIMESTAMP(occurred_at) - UNIX_TIMESTAMP($3)) < 600
+             LIMIT 1`,
+            [this.tenantId, clientFacingCopy(alert.title) || alert.title, alert.timestamp],
+          );
+          if (alreadyAcked.length > 0) continue;
 
           const assetUuid = await this.resolveAssetUuid(alert.assetId);
           try {
@@ -272,15 +307,19 @@ export class AlertOrchestrator {
         [this.tenantId],
       );
 
-      // Purge technical counter noise (engine hours, mileage, odometer registrations).
+      // Purge technical counter noise (Engine_Hours, mileage, odometer) — including
+      // rows that have a "Unit: …" description (previous cleanup required empty desc).
       await query(
         `DELETE FROM alerts
          WHERE tenant_id = $1
-           AND source_type = 'wialon'
-           AND COALESCE(description, '') = ''
            AND (
-             title ~* '(engine\\s*hours?|mileage|odometer|gprs\\s*traffic|traffic\\s*counter|counter\\s*(reset|update|value))'
-             OR title ~* '^(fleet alert|notification|event|evt|task|message|unknown)(\\s*·.*)?$'
+             title REGEXP 'engine[_[:space:]-]*hours?'
+             OR description REGEXP 'engine[_[:space:]-]*hours?'
+             OR title REGEXP 'mileage|odometer|gprs[[:space:]_-]*traffic|traffic[[:space:]_-]*counter|moto[[:space:]_-]*hours?'
+             OR (
+               COALESCE(description, '') = ''
+               AND title REGEXP '^(fleet alert|notification|event|evt|task|message|unknown)([[:space:]]*·.*)?$'
+             )
            )`,
         [this.tenantId],
       );

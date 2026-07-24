@@ -180,7 +180,14 @@ export default function Login() {
           <img
             src={s.src}
             alt=""
-            className="absolute inset-0 h-full w-full min-h-full min-w-full object-cover object-center"
+            aria-hidden
+            className="absolute inset-0 h-full w-full scale-110 object-cover object-center blur-2xl brightness-75 saturate-125"
+            draggable={false}
+          />
+          <img
+            src={s.src}
+            alt=""
+            className="absolute inset-0 h-full w-full object-contain object-center"
             draggable={false}
           />
         </div>

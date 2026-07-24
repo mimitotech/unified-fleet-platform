@@ -306,29 +306,26 @@ export class UfpFleetService implements IFleetService {
     let transactions = wialonFuelTransactionsToFuelTransactions(data.transactions);
 
     if (filters?.assetCategory) {
+      // Backend already scoped by assetCategory — only patch missing unitIds from the
+      // fuel-assets list. Never drop rows when the client asset list is empty/mismatched
+      // (that was wiping generators/machinery tabs).
       try {
         const assets = await this.getFuelAssets();
         const categoryAssets = assets.filter((a) => a.assetType === filters.assetCategory);
-        const idSet = new Set(categoryAssets.map((a) => String(a.unitId)));
-        const nameSet = new Set(categoryAssets.map((a) => a.name.trim().toLowerCase()));
-
-        // Patch unit IDs from names, then keep only this category's assets.
-        transactions = transactions
-          .map((t) => {
+        if (categoryAssets.length) {
+          const idSet = new Set(categoryAssets.map((a) => String(a.unitId)));
+          const byName = new Map(
+            categoryAssets.map((a) => [a.name.trim().toLowerCase(), a] as const),
+          );
+          transactions = transactions.map((t) => {
             if (t.unitId && idSet.has(String(t.unitId))) return t;
-            const match = categoryAssets.find(
-              (a) => a.name.trim().toLowerCase() === t.unitName.trim().toLowerCase(),
-            );
+            const match = byName.get(t.unitName.trim().toLowerCase());
             if (match) return { ...t, unitId: String(match.unitId || t.unitId) };
             return t;
-          })
-          .filter(
-            (t) =>
-              (t.unitId != null && idSet.has(String(t.unitId))) ||
-              nameSet.has(t.unitName.trim().toLowerCase()),
-          );
+          });
+        }
       } catch {
-        // DB rows already scoped by assetCategory when possible.
+        // Keep backend-scoped rows as-is.
       }
     } else if (filters?.vehicleId) {
       transactions = transactions.filter((t) => String(t.unitId) === filters.vehicleId);

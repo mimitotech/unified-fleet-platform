@@ -99,6 +99,11 @@ async function runAlertCycle(): Promise<void> {
   }
   alertCycleRunning = true;
   try {
+    const purged = await AlertOrchestrator.purgeNoiseAlertsGlobally();
+    if (purged > 0) {
+      logger.info(`[AlertSync] purged ${purged} Engine_Hours / counter noise alerts`);
+    }
+
     const tenants = await listActiveTenants(['wialon', 'tracksolid', 'loconav']);
     let synced = 0;
     let inserted = 0;

@@ -87,11 +87,14 @@ export function useFleetData(options?: FleetDataOptions): FleetDataResult {
 
   // Core data queries - React Query shares cache automatically
   const vehiclesQuery = useVehicles(undefined, { enabled });
-  const fuelTransactionsQuery = useFuelTransactions({
-    startDate,
-    endDate,
-    assetCategory: 'vehicle',
-  });
+  const fuelTransactionsQuery = useFuelTransactions(
+    {
+      startDate,
+      endDate,
+      assetCategory: 'vehicle',
+    },
+    { enabled },
+  );
 
   const vehicles = vehiclesQuery.data ?? [];
   const fuelTransactions = fuelTransactionsQuery.data?.transactions ?? [];

@@ -665,10 +665,17 @@ function fuelTransactionsQueryOptions(
   };
 }
 
-export function useFuelTransactions(filters?: FuelTransactionFilters) {
+export function useFuelTransactions(
+  filters?: FuelTransactionFilters,
+  options?: { enabled?: boolean },
+) {
   const isReady = useFleetReady();
   return useQuery(
-    fuelTransactionsQueryOptions(fleetQueryKeys.fuelTransactionsList(filters), filters, isReady),
+    fuelTransactionsQueryOptions(
+      fleetQueryKeys.fuelTransactionsList(filters),
+      filters,
+      isReady && options?.enabled !== false,
+    ),
   );
 }
 
@@ -693,16 +700,24 @@ export function useRefreshFuelTransactions() {
       });
     },
     onSuccess: (data, variables) => {
-      const filters = variables
-        ? {
-            startDate: variables.startDate,
-            endDate: variables.endDate,
-            assetCategory: variables.assetCategory,
-          }
-        : undefined;
-      const listKey = fleetQueryKeys.fuelTransactionsList(filters);
-      queryClient.setQueryData(listKey, data);
-      // Mark related fuel caches stale without immediately refetching the list we just wrote
+      const startDate = variables?.startDate;
+      const endDate = variables?.endDate;
+      const cat = variables?.assetCategory;
+      // Keys must match how each tab's useQuery builds them (gen/mach omit assetCategory in the key object).
+      if (cat === 'generator') {
+        queryClient.setQueryData(
+          fleetQueryKeys.generatorFuelTransactionsList({ startDate, endDate }),
+          data,
+        );
+      } else if (cat === 'machinery') {
+        queryClient.setQueryData(
+          fleetQueryKeys.machineryFuelTransactionsList({ startDate, endDate }),
+          data,
+        );
+      } else {
+        const vehicleFilters = { startDate, endDate, assetCategory: 'vehicle' as const };
+        queryClient.setQueryData(fleetQueryKeys.fuelTransactionsList(vehicleFilters), data);
+      }
       void queryClient.invalidateQueries({
         queryKey: fleetQueryKeys.fuel(),
         predicate: (q) => {
@@ -713,19 +728,20 @@ export function useRefreshFuelTransactions() {
             typeof tail === 'object' &&
             'filters' in (tail as object)
           ) {
-            const f = (tail as { filters?: typeof filters }).filters;
-            return !(
-              f?.startDate === filters?.startDate &&
-              f?.endDate === filters?.endDate &&
-              f?.assetCategory === filters?.assetCategory
-            );
+            const f = (tail as { filters?: { startDate?: string; endDate?: string; assetCategory?: string } })
+              .filters;
+            const sameRange = f?.startDate === startDate && f?.endDate === endDate;
+            if (!sameRange) return true;
+            if (cat === 'generator' || cat === 'machinery') {
+              // Active gen/mach list key was just written — skip refetching it.
+              return Boolean(f?.assetCategory && f.assetCategory !== cat);
+            }
+            return f?.assetCategory !== 'vehicle' && f?.assetCategory != null;
           }
           return true;
         },
         refetchType: 'active',
       });
-      void queryClient.invalidateQueries({ queryKey: fleetQueryKeys.generatorFuelTransactions() });
-      void queryClient.invalidateQueries({ queryKey: fleetQueryKeys.machineryFuelTransactions() });
       if (data?.warming || data?.needsRefresh) {
         notify.info('Fuel sync started', 'Large fleets sync in the background. Totals update automatically.');
       }

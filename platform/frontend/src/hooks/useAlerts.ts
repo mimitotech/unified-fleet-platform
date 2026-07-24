@@ -4,6 +4,7 @@ import { clientApi, getTenantSlug } from '@/lib/api';
 import { LIVE_POLL, pollWhenVisible } from '@/lib/liveRefresh';
 import { safeArray } from '@/lib/safeArray';
 import { notify } from '@/lib/notify';
+import { isNoiseAlertTitle } from '@/lib/alertNoise';
 
 export type ClientAlert = {
   id: string;
@@ -67,7 +68,9 @@ export function useAlerts(
     queryKey: ['alerts', getTenantSlug() || 'default', from || 'all', to || 'all', keepLimit],
     queryFn: async () => {
       const raw = await clientApi.getAlerts(fetchLimit, { from, to });
-      return safeArray(raw).map((a) => normalizeAlert(a as Record<string, unknown>));
+      return safeArray(raw)
+        .map((a) => normalizeAlert(a as Record<string, unknown>))
+        .filter((a) => !isNoiseAlertTitle(a.title, a.description, a.type));
     },
     enabled,
     refetchInterval: enabled ? pollWhenVisible(LIVE_POLL.alerts) : false,
@@ -91,9 +94,7 @@ export function useAlerts(
       const t = new Date(a.timestamp).getTime();
       // Don't toast ancient re-harvested noise as "new"
       if (Number.isFinite(t) && Date.now() - t > 48 * 60 * 60 * 1000) return false;
-      if (/engine\s*hours?|mileage|odometer|gprs\s*traffic/i.test(`${a.title} ${a.description || ''}`)) {
-        return false;
-      }
+      if (isNoiseAlertTitle(a.title, a.description, a.type)) return false;
       return true;
     });
     for (const a of list) seen.add(a.id);
