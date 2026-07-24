@@ -307,6 +307,8 @@ export function CoreFuelTab({
         unitLabel={labels.unit.toLowerCase()}
         assetCategory={assetCategory}
         isLoading={isFuelLoading}
+        onFromDateChange={onFromDateChange}
+        onToDateChange={onToDateChange}
       />
 
       <FuelCostingPanel
@@ -317,6 +319,8 @@ export function CoreFuelTab({
         liveLevels={unitFuelMapByName}
         assetNames={assetNames}
         unitLabel={labels.unit.toLowerCase()}
+        onFromDateChange={onFromDateChange}
+        onToDateChange={onToDateChange}
       />
     </div>
   );

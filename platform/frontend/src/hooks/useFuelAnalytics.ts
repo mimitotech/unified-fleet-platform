@@ -1,8 +1,11 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { clientApi } from '@/lib/api';
+import { clientApi, getTenantSlug } from '@/lib/api';
 import type { FuelPeriod } from '@/lib/fuelTypes';
 import { useWialonContext } from '@/hooks/useWialon';
-import { getTenantSlug } from '@/lib/api';
+import {
+  resolveDashboardFuelPrice,
+  saveFuelPrice,
+} from '@/lib/dashboardWidgetPrefs';
 import {
   fuelAnalyticsQueryKey,
   readFuelAnalyticsSnapshot,
@@ -60,25 +63,12 @@ export function monthOptions(count = 24): Array<{ value: string; label: string }
 }
 
 export function useFuelPrice() {
-  const slug = getTenantSlug() || 'default';
-  const key = `mams_fuel_price_${slug}`;
   return {
-    get: (): number => {
-      try {
-        const v = localStorage.getItem(key);
-        return v ? Number(v) : 0;
-      } catch {
-        return 0;
-      }
-    },
+    get: (): number => resolveDashboardFuelPrice(),
     set: (price: number) => {
-      try {
-        localStorage.setItem(key, String(price));
-      } catch {
-        /* ignore */
-      }
+      saveFuelPrice(price);
     },
-    storageKey: key,
+    storageKey: `mams_fuel_price_${getTenantSlug() || 'default'}`,
   };
 }
 

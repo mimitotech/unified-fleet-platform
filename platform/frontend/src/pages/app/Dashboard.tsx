@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -340,10 +340,16 @@ export default function Dashboard() {
     staleTime: 90_000,
   });
 
-  const fuelPrice = useMemo(
-    () => resolveDashboardFuelPrice(),
-    [applied.from, applied.to],
-  );
+  const [fuelPrice, setFuelPrice] = useState(() => resolveDashboardFuelPrice());
+  useEffect(() => {
+    const sync = () => setFuelPrice(resolveDashboardFuelPrice());
+    window.addEventListener("mams:fuel-price", sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener("mams:fuel-price", sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
 
   const onlineCount = Math.max(0, counts.total - counts.offline);
 
@@ -755,6 +761,7 @@ export default function Dashboard() {
     (txsReady ? periodFuelKpis.avgConsumption : 0) || apiKpis?.avgConsumption,
   );
   const fuelCost = Math.round(fuelUsed * fuelPrice);
+  const fuelFillCost = Math.round(fuelFilled * fuelPrice);
 
   // avg L/100km is meaningless for generators/machinery (no mileage) — fall
   // back to plain consumed litres so the insight is never "avg 0 L/100".
@@ -915,8 +922,8 @@ export default function Dashboard() {
       );
       const filled = cols.filledMain + cols.filledReserve;
       const used = cols.totalUsed;
-      const reportedCost = cols.totalCost;
-      const fillCost = reportedCost > 0 ? reportedCost : filled * fuelPrice;
+      // Always price × liters — fill and use stay separate (never mixed).
+      const fillCost = filled * fuelPrice;
       const usedCost = used * fuelPrice;
       return {
         name: shortName(unitName, 16),
@@ -1316,6 +1323,15 @@ export default function Dashboard() {
           )}
           {hasFuel && (
             <MetricCard
+              title="Fuel filled"
+              value={`${fmt(fuelFilled)} L`}
+              icon={Fuel}
+              variant="success"
+              size="xxs"
+            />
+          )}
+          {hasFuel && (
+            <MetricCard
               title="Fuel used"
               value={`${fmt(fuelUsed)} L`}
               icon={Fuel}
@@ -1325,7 +1341,16 @@ export default function Dashboard() {
           )}
           {hasFuel && (
             <MetricCard
-              title="Fuel used (UGX)"
+              title="Fill cost"
+              value={fmtUgx(fuelFillCost)}
+              icon={Fuel}
+              variant="success"
+              size="xxs"
+            />
+          )}
+          {hasFuel && (
+            <MetricCard
+              title="Use cost"
               value={fmtUgx(fuelCost)}
               icon={Fuel}
               variant="warning"
@@ -2044,13 +2069,13 @@ export default function Dashboard() {
                 <DashboardArrangeItem id="fuel_assets_money">
                   <DashboardWidget
                     title="Assets vs fuel money"
-                    subtitle={`Fill & use cost @ ${fmt(fuelPrice)} UGX/L`}
+                    subtitle={`Fill cost vs use cost @ ${fmt(fuelPrice)} UGX/L · separate`}
                     href="/app/fuel"
                     brandColor={ALERT_SEVERITY.warning}
                     tone="amber"
                     insight={
                       assetMoneyBars.length
-                        ? `Highest spend: ${assetMoneyBars[0].fullName}`
+                        ? `Top use cost: ${assetMoneyBars[0].fullName} · ${fmtUgx(assetMoneyBars[0].usedCost)}`
                         : "No costable fuel events in this period"
                     }
                   >

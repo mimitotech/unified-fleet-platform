@@ -28,6 +28,11 @@ export type FuelTransaction = {
   /** Exact Wialon report interval (group period totals). Unix seconds. */
   periodFromTs?: number;
   periodToTs?: number;
+  /** Station-sheet enrich (read path) — not from Wialon FLS tables. */
+  filledStation?: number;
+  totalCost?: number;
+  cardNumber?: string;
+  fuelType?: string;
 };
 
 export type FuelReportTemplate = {

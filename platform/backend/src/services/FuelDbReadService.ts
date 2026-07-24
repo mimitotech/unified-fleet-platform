@@ -225,8 +225,14 @@ async function applyStationFilledToTransactions(
     const stationByKey = await FuelVarianceService.getStationTotalsByKey(tenantId, fromDate, toDate);
     if (!stationByKey.size) return transactions;
 
+    type Commerce = {
+      liters: number;
+      amount: number;
+      cardNumber: string | null;
+      product: string | null;
+    };
     const unitNames = [...new Set(transactions.map((t) => t.unitName).filter(Boolean))];
-    const assigned = new Map<string, number>();
+    const assigned = new Map<string, Commerce>();
     const usedKeys = new Set<string>();
     for (const unitName of unitNames) {
       const keys = [
@@ -234,13 +240,21 @@ async function applyStationFilledToTransactions(
         normalizePlateKey(unitName),
       ].filter(Boolean);
       let liters = 0;
+      let amount = 0;
+      let cardNumber: string | null = null;
+      let product: string | null = null;
       for (const key of keys) {
         const st = stationByKey.get(key);
         if (!st || usedKeys.has(key)) continue;
         liters += st.stationLiters;
+        amount += Number(st.totalAmount) || 0;
+        if (!cardNumber && st.cardNumber) cardNumber = st.cardNumber;
+        if (!product && st.product) product = st.product;
         usedKeys.add(key);
       }
-      if (liters > 0) assigned.set(unitName, liters);
+      if (liters > 0 || amount > 0 || cardNumber || product) {
+        assigned.set(unitName, { liters, amount, cardNumber, product });
+      }
     }
     if (!assigned.size) return transactions;
 
@@ -248,10 +262,16 @@ async function applyStationFilledToTransactions(
     return transactions.map((t) => {
       if (t.section !== 'filling') return t;
       if (applied.has(t.unitName)) return t;
-      const station = assigned.get(t.unitName);
-      if (!(station && station > 0)) return t;
+      const st = assigned.get(t.unitName);
+      if (!st) return t;
       applied.add(t.unitName);
-      return { ...t, filledStation: station };
+      return {
+        ...t,
+        filledStation: st.liters > 0 ? st.liters : t.filledStation,
+        totalCost: st.amount > 0 ? st.amount : t.totalCost,
+        cardNumber: st.cardNumber || t.cardNumber,
+        fuelType: st.product || t.fuelType,
+      };
     });
   } catch (err) {
     logger.debug(`[FuelDbRead] station fill enrich skipped tenant=${tenantId}`, err);
@@ -484,13 +504,14 @@ export class FuelDbReadService {
       rowLimit,
     });
 
-    // ── Offline parity: when DB empty, await live Wialon fuel reports ───────
+    // ── Cold miss: start live fetch but don't block the HTTP response forever ─
+    // Concurrent polls share liveInflight; UI stays responsive and polls until DB fills.
     if (transactions.length === 0 && allowQueue) {
       try {
         logger.info(
           `[FuelDbRead] DB empty — live Wialon fallback tenant=${tenantId} ${fromDate}→${toDate} cat=${opts.assetCategory ?? 'all'}`,
         );
-        const liveRows = await this.fetchLiveFromWialon({
+        const livePromise = this.fetchLiveFromWialon({
           tenantId,
           fromDate,
           toDate,
@@ -498,17 +519,43 @@ export class FuelDbReadService {
           unitId: opts.unitId,
           refresh: false,
         });
-        const { txs } = await finalize(liveRows, 'wialon');
+        const LIVE_WAIT_MS = 5_000;
+        const liveRows = await Promise.race([
+          livePromise,
+          new Promise<null>((resolve) => {
+            setTimeout(() => resolve(null), LIVE_WAIT_MS);
+          }),
+        ]);
+        if (liveRows && liveRows.length) {
+          const { txs } = await finalize(liveRows, 'wialon');
+          return buildResponse(
+            txs,
+            fromDate,
+            toDate,
+            fromTs,
+            toTs,
+            'wialon',
+            false,
+            false,
+            new Date().toISOString(),
+          );
+        }
+        this.queueBackgroundSync({
+          tenantId,
+          fromDate,
+          toDate,
+          assetCategory: opts.assetCategory,
+        });
         return buildResponse(
-          txs,
+          [],
           fromDate,
           toDate,
           fromTs,
           toTs,
-          txs.length ? 'wialon' : 'db',
-          false,
-          txs.length === 0,
-          txs.length ? new Date().toISOString() : cursor?.last_success_at,
+          'warming',
+          true,
+          true,
+          cursor?.last_success_at,
         );
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -516,7 +563,6 @@ export class FuelDbReadService {
         void touchSyncCursor(tenantId, cursorKey, { success: false, error: message }).catch(
           () => undefined,
         );
-        // Keep background sync for retry; return empty with warming so UI can poll
         this.queueBackgroundSync({
           tenantId,
           fromDate,

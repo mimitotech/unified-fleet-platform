@@ -99,24 +99,49 @@ function storageKey(slug?: string | null): string {
 /** Default UGX/L when tenant has not set a fuel price. */
 export const DEFAULT_FUEL_PRICE_UGX = 5200;
 
-/** Resolve fuel price from tenant prefs / FuelCosting localStorage, else default UGX/L. */
+const PRICE_KEY_LEGACY = 'mams.fuel.pricePerLiter';
+
+function analyticsPriceKey(slug?: string | null): string {
+  return `mams_fuel_price_${slug || getTenantSlug() || 'default'}`;
+}
+
+/** Resolve fuel price — one value used by Dashboard, Fuel costing, and all money charts. */
 export function resolveDashboardFuelPrice(): number {
   const slug = getTenantSlug() || 'default';
   try {
-    const fromAnalytics = localStorage.getItem(`mams_fuel_price_${slug}`);
-    if (fromAnalytics) {
-      const n = Number(fromAnalytics);
-      if (Number.isFinite(n) && n > 0) return n;
-    }
-    const fromCosting = localStorage.getItem('mams.fuel.pricePerLiter');
-    if (fromCosting) {
-      const n = Number(fromCosting);
+    const candidates = [
+      localStorage.getItem(analyticsPriceKey(slug)),
+      localStorage.getItem(PRICE_KEY_LEGACY),
+    ];
+    for (const raw of candidates) {
+      if (!raw) continue;
+      const n = Number(raw);
       if (Number.isFinite(n) && n > 0) return n;
     }
   } catch {
     /* ignore */
   }
   return DEFAULT_FUEL_PRICE_UGX;
+}
+
+/**
+ * Save fuel price once — writes both legacy keys so every monetization surface
+ * (dashboard tiles, costing panel, asset money charts) stays in sync.
+ */
+export function saveFuelPrice(pricePerLiter: number): number {
+  const n = Number(pricePerLiter);
+  const value = Number.isFinite(n) && n > 0 ? n : DEFAULT_FUEL_PRICE_UGX;
+  try {
+    const raw = String(value);
+    localStorage.setItem(analyticsPriceKey(), raw);
+    localStorage.setItem(PRICE_KEY_LEGACY, raw);
+    window.dispatchEvent(
+      new CustomEvent('mams:fuel-price', { detail: { pricePerLiter: value } }),
+    );
+  } catch {
+    /* ignore */
+  }
+  return value;
 }
 
 export function loadWidgetVisibility(slug?: string | null): DashboardWidgetVisibility {

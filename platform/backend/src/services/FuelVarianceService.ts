@@ -9,6 +9,10 @@ export type StationTotalRow = {
   unitName: string | null;
   stationLiters: number;
   fillCount: number;
+  /** Sum of sheet amounts for the period (UGX), when recorded. */
+  totalAmount?: number;
+  cardNumber?: string | null;
+  product?: string | null;
 };
 
 export type VarianceAssetRow = {
@@ -98,6 +102,9 @@ export class FuelVarianceService {
          MAX(unit_id) as unit_id,
          MAX(unit_name) as unit_name,
          COALESCE(SUM(quantity), 0)::float as station_liters,
+         COALESCE(SUM(amount), 0)::float as total_amount,
+         MAX(NULLIF(TRIM(card_number), '')) as card_number,
+         MAX(NULLIF(TRIM(product), '')) as product,
          COUNT(*)::int as fill_count
        FROM fuel_station_fills
        WHERE tenant_id = $1
@@ -118,6 +125,9 @@ export class FuelVarianceService {
         unitName: r.unit_name != null ? String(r.unit_name) : null,
         stationLiters: round1(Number(r.station_liters || 0)),
         fillCount: Number(r.fill_count || 0),
+        totalAmount: r.total_amount != null ? round1(Number(r.total_amount)) : 0,
+        cardNumber: r.card_number != null ? String(r.card_number) : null,
+        product: r.product != null ? String(r.product) : null,
       });
     }
     return map;

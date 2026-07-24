@@ -293,7 +293,7 @@ export function processRow(
     tank,
     timestamp,
     time: timeStr,
-    location: locationData.location,
+    location: locationData.location || sensor || '',
     initialLevel,
     finalLevel,
     filled,

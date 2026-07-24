@@ -131,7 +131,15 @@ const FUEL_TABLE_SCHEMAS: Record<
     columnPatterns: {
       unit: ['unit', 'vehicle', 'object', 'asset', 'grouping'],
       time: ['time', 'begin', 'start', 'date'],
-      location: ['location', 'address', 'position', 'place', 'where'],
+      location: [
+        'final location',
+        'initial location',
+        'location',
+        'address',
+        'position',
+        'place',
+        'where',
+      ],
       filled: [
         'filled amount',
         'fuel filled',
@@ -197,7 +205,16 @@ const FUEL_TABLE_SCHEMAS: Record<
     columnPatterns: {
       unit: ['unit', 'vehicle', 'object', 'asset', 'grouping'],
       time: ['time', 'begin', 'start', 'date'],
-      location: ['location', 'address', 'position', 'place', 'where'],
+      location: [
+        'final location',
+        'initial location',
+        'location',
+        'address',
+        'position',
+        'place',
+        'where',
+        'departure from',
+      ],
       suddenFuelDrop: [
         'sudden fuel drop',
         'sudden drop',
@@ -205,11 +222,12 @@ const FUEL_TABLE_SCHEMAS: Record<
         'fuel drain',
         'drained',
         'stolen',
-        'fuel drop',
         'theft volume',
+        'fuel drop',
         'drain volume',
         'theft',
         'drain',
+        'drop',
       ],
       count: ['count', 'times', 'events'],
       initialLevel: [

@@ -272,28 +272,36 @@ export type FuelAssetChartsProps = {
   unitLabel: string;
   assetCategory?: FuelAssetCategory;
   isLoading?: boolean;
+  onFromDateChange?: (v: string) => void;
+  onToDateChange?: (v: string) => void;
 };
 
 export function FuelAssetCharts({
   transactions,
-  fromDate: defaultFrom,
-  toDate: defaultTo,
+  fromDate,
+  toDate,
   todayStr,
   liveLevels,
   assetNames,
   unitLabel,
   assetCategory = 'vehicle',
   isLoading,
+  onFromDateChange,
+  onToDateChange,
 }: FuelAssetChartsProps) {
-  const [fromDate, setFromDate] = useState(defaultFrom);
-  const [toDate, setToDate] = useState(defaultTo);
   const [asset, setAsset] = useState('all');
+  const [fuelPrice, setFuelPrice] = useState(() => resolveDashboardFuelPrice());
   const showMileage = assetCategory === 'vehicle';
 
   useEffect(() => {
-    setFromDate(defaultFrom);
-    setToDate(defaultTo);
-  }, [defaultFrom, defaultTo]);
+    const sync = () => setFuelPrice(resolveDashboardFuelPrice());
+    window.addEventListener('mams:fuel-price', sync);
+    window.addEventListener('storage', sync);
+    return () => {
+      window.removeEventListener('mams:fuel-price', sync);
+      window.removeEventListener('storage', sync);
+    };
+  }, []);
 
   const names = useMemo(() => [...assetNames].sort((a, b) => a.localeCompare(b)), [assetNames]);
 
@@ -320,10 +328,10 @@ export function FuelAssetCharts({
   }
 
   const tip = (v: number, label: string) => [`${v} L`, label] as [string, string];
-  const fuelPrice = resolveDashboardFuelPrice();
+  // Fill cost and use cost are always separate — never summed for monetization.
   const moneyRows = rows.map((r) => ({
     ...r,
-    fillCost: r.cost > 0 ? r.cost : Math.round(r.filled * fuelPrice),
+    fillCost: Math.round(r.filled * fuelPrice),
     usedCost: Math.round(r.used * fuelPrice),
   }));
 
@@ -346,8 +354,8 @@ export function FuelAssetCharts({
           asset={asset}
           assetNames={names}
           assetLabel={unitLabel}
-          onFromChange={setFromDate}
-          onToChange={setToDate}
+          onFromChange={(v) => onFromDateChange?.(v)}
+          onToChange={(v) => onToDateChange?.(v)}
           onAssetChange={setAsset}
         />
       </div>
@@ -418,10 +426,10 @@ export function FuelAssetCharts({
 
         <ChartCard
           title={`Money by ${unitLabel}`}
-          description="Fill & use cost from reported totals or price × liters"
+          description={`Fill cost vs use cost @ ${fuelPrice.toLocaleString()} UGX/L · separate bars`}
           filename={`fuel-money-${fromDate}-${toDate}`}
           minWidth={Math.max(420, rows.length * barGap(rows.length))}
-          empty={!rows.some((r) => r.cost > 0 || r.filled > 0 || r.used > 0)}
+          empty={!moneyRows.some((r) => r.fillCost > 0 || r.usedCost > 0)}
         >
           <ResponsiveContainer width="100%" height="100%">
             <BarChart

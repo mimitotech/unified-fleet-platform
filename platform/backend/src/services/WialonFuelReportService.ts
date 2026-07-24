@@ -176,7 +176,7 @@ export class WialonFuelReportService {
     }
   ): Promise<FuelTransaction[]> {
     const { fromTs, toTs } = parseDateRange(opts.from, opts.to, opts.days);
-    const groupConcurrency = 1;
+    const groupConcurrency = 3;
     const creds = await loadTenantWialonCreds(tenantId);
     const scope: WialonReportScope = scopeFromCredentials(tenantId, creds);
     const rows = await withWialonClient(creds, async (client: WialonClient) => {
