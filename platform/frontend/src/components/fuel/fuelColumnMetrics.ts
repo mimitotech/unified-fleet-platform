@@ -130,8 +130,11 @@ type AggregateOpts = {
 
 /**
  * Period totals per unit.
- * Collapsed parent row = sum of the same leaf events shown when expanded.
- * Exact-range Wialon group summaries fill a metric only when leaves have nothing for it.
+ *
+ * Wialon report period totals (`wialon_group_summary` for the exact selected
+ * range) are authoritative for Filled / Used / Drop. Leaf FLS events are used
+ * only when the report has no period total for that metric — and for the
+ * expanded event list. Do not invent volumes that contradict the report.
  */
 export function aggregateUnitFuelColumns(
   transactions: FuelTransaction[],
@@ -145,9 +148,22 @@ export function aggregateUnitFuelColumns(
   const exactSummaries = exactRangeSummaries(periodTxs, opts?.fromDate, opts?.toDate);
   const latestMainTs = { value: -1 };
   const latestReserveTs = { value: -1 };
-  const hasRealUsed =
-    leaves.some((t) => effectiveUsedVol(t) > 0) ||
-    exactSummaries.some((t) => Number(t.fuelUsed ?? 0) > 0);
+
+  let summaryFilled = 0;
+  let summaryUsed = 0;
+  let summaryDrop = 0;
+  let summaryLevel = 0;
+  let summaryAlerts = 0;
+  for (const t of exactSummaries) {
+    if (Number(t.filled) > summaryFilled) summaryFilled = Number(t.filled) || 0;
+    if (Number(t.fuelUsed) > summaryUsed) summaryUsed = Number(t.fuelUsed) || 0;
+    const drop = effectiveSuddenDropVolume(t);
+    if (drop > summaryDrop) {
+      summaryDrop = drop;
+      summaryAlerts = Math.max(summaryAlerts, t.count > 0 ? t.count : 1);
+    }
+    if (Number(t.finalLevel) > 0) summaryLevel = Number(t.finalLevel);
+  }
 
   const totals: UnitFuelColumnTotals = {
     filledMain: 0,
@@ -174,23 +190,29 @@ export function aggregateUnitFuelColumns(
   let latestCard = '';
   let latestCardTs = -1;
 
+  // Leaf pass: always collect station/cost/type/levels; volumes only when the
+  // report period summary does not already provide that metric.
   for (const t of leaves) {
     const isMain = t.tank === 'main' || !t.tank;
     const isReserve = t.tank === 'reserve';
 
-    const filledVol = effectiveFilledVol(t);
-    if (filledVol > 0) {
-      if (isReserve) totals.filledReserve += filledVol;
-      else totals.filledMain += filledVol;
+    if (summaryFilled <= 0) {
+      const filledVol = effectiveFilledVol(t);
+      if (filledVol > 0) {
+        if (isReserve) totals.filledReserve += filledVol;
+        else totals.filledMain += filledVol;
+      }
     }
 
-    const usedVol = effectiveUsedVol(t);
-    if (usedVol > 0) {
-      if (isReserve) totals.usedReserve += usedVol;
-      else totals.usedMain += usedVol;
+    if (summaryUsed <= 0) {
+      const usedVol = effectiveUsedVol(t);
+      if (usedVol > 0) {
+        if (isReserve) totals.usedReserve += usedVol;
+        else totals.usedMain += usedVol;
+      }
     }
 
-    if (t.section === 'theft') {
+    if (summaryDrop <= 0 && t.section === 'theft') {
       const vol = effectiveSuddenDropVolume(t);
       if (vol > 0) {
         if (isReserve) totals.dropReserve += vol;
@@ -223,45 +245,29 @@ export function aggregateUnitFuelColumns(
     }
   }
 
-  // Exact-range summary fills gaps only — never inflate above leaf event sums.
-  if (exactSummaries.length) {
-    let summaryFilled = 0;
-    let summaryUsed = 0;
-    let summaryDrop = 0;
-    let summaryLevel = 0;
-    let summaryAlerts = 0;
-    for (const t of exactSummaries) {
-      if (t.filled > summaryFilled) summaryFilled = t.filled;
-      if (t.fuelUsed > summaryUsed) summaryUsed = t.fuelUsed;
-      const drop = effectiveSuddenDropVolume(t);
-      if (drop > summaryDrop) {
-        summaryDrop = drop;
-        summaryAlerts = Math.max(summaryAlerts, t.count > 0 ? t.count : 1);
-      }
-      if (t.finalLevel > 0) summaryLevel = t.finalLevel;
-    }
-    if (totals.filledMain <= 0 && summaryFilled > 0) totals.filledMain = summaryFilled;
-    if (totals.usedMain <= 0 && summaryUsed > 0) totals.usedMain = summaryUsed;
-    if (totals.dropMain <= 0 && summaryDrop > 0) {
-      totals.dropMain = summaryDrop;
-      totals.alertCount = Math.max(totals.alertCount, summaryAlerts);
-    }
-    if (totals.levelMain <= 0 && summaryLevel > 0) totals.levelMain = summaryLevel;
+  // Prefer exact-range Wialon report period totals when present.
+  if (summaryFilled > 0) totals.filledMain = summaryFilled;
+  if (summaryUsed > 0) totals.usedMain = summaryUsed;
+  if (summaryDrop > 0) {
+    totals.dropMain = summaryDrop;
+    totals.alertCount = Math.max(totals.alertCount, summaryAlerts);
   }
+  if (totals.levelMain <= 0 && summaryLevel > 0) totals.levelMain = summaryLevel;
 
-  // Balance-derived used when nothing else reports consumption.
-  if (!hasRealUsed && totals.usedMain <= 0 && totals.filledMain > 0) {
+  // Balance-derived used only when the report has no consumption figure at all.
+  const hasReportUsed = summaryUsed > 0 || totals.usedMain > 0 || totals.usedReserve > 0;
+  if (!hasReportUsed && totals.filledMain > 0) {
     const mainTxs = leaves.filter((t) => t.tank === 'main' || !t.tank);
     const derived = derivePeriodFuelUsed(mainTxs, totals.filledMain, totals.dropMain, opts?.liveLevel);
     if (derived > 0) totals.usedMain = derived;
   }
-  if (!hasRealUsed && totals.usedReserve <= 0 && totals.filledReserve > 0) {
+  if (!hasReportUsed && totals.filledReserve > 0 && totals.usedReserve <= 0) {
     const reserveTxs = leaves.filter((t) => t.tank === 'reserve');
     const derived = derivePeriodFuelUsed(reserveTxs, totals.filledReserve, totals.dropReserve, opts?.liveLevel);
     if (derived > 0) totals.usedReserve = derived;
   }
 
-  // Live sensor updates main tank only — keep reserve from period events.
+  // Live sensor = current tank reading for Level(Main); period end from report otherwise.
   if (opts?.liveLevel && opts.liveLevel > 0) {
     totals.levelMain = opts.liveLevel;
   }

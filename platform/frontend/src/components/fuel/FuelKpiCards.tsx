@@ -71,7 +71,7 @@ export function FuelKpiCards({
     return out.sort((a, b) => b.timestamp - a.timestamp);
   }, [fuelTransactions]);
 
-  // Prefer consolidated KPI volume (includes exact-range summary gap-fill); fall back to leaf sum
+  // Prefer consolidated KPI volume (report period totals); fall back to leaf sum
   const totalDropVolume =
     kpis.theftVolume > 0
       ? kpis.theftVolume

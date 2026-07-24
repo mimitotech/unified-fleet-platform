@@ -1,21 +1,20 @@
 import type { FuelTransaction } from '@/types/entities';
 
 /**
- * Sudden-drop volume that matches Wialon Before/After levels on the same row.
- * Prefer Initial − Final when both exist and disagree with the Sudden fuel drop column.
+ * Sudden-drop volume from the Wialon report row.
+ * Prefer the Sudden fuel drop / Drained column when present — that is the
+ * authoritative report figure. Fall back to Initial − Final only when the
+ * report column is empty.
  */
 export function effectiveSuddenDropVolume(t: Pick<FuelTransaction, 'suddenFuelDrop' | 'initialLevel' | 'finalLevel'>): number {
   const reported = Number(t.suddenFuelDrop) || 0;
+  if (reported > 0) return Math.round(reported * 10) / 10;
   const before = Number(t.initialLevel) || 0;
   const after = Number(t.finalLevel) || 0;
   if (before > 0 && after >= 0 && before > after) {
-    const fromLevels = before - after;
-    if (reported <= 0) return Math.round(fromLevels * 10) / 10;
-    if (Math.abs(reported - fromLevels) > Math.max(5, fromLevels * 0.15)) {
-      return Math.round(fromLevels * 10) / 10;
-    }
+    return Math.round((before - after) * 10) / 10;
   }
-  return Math.round(reported * 10) / 10;
+  return 0;
 }
 
 /** Dedupe key for identical sudden-drop alert rows. */

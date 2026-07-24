@@ -22,24 +22,18 @@ export function deriveFilled(filled: number, initialLevel: number, finalLevel: n
   return filled;
 }
 
-/** Derive theft/drain volume from tank levels when both bookends exist.
- * Prefer Initial − Final over the Sudden fuel drop column when they disagree —
- * Wialon sometimes puts cumulative / heuristic volume that does not match the
- * Before/After levels shown on the same row.
+/** Derive theft/drain volume from tank levels when the report column is empty.
+ * Prefer the Sudden fuel drop / Drained column when Wialon reports it —
+ * that is the authoritative report figure. Levels only fill gaps.
  */
 export function deriveSuddenFuelDrop(
   suddenFuelDrop: number,
   initialLevel: number,
   finalLevel: number
 ): number {
+  if (suddenFuelDrop > 0) return suddenFuelDrop;
   if (initialLevel > 0 && finalLevel >= 0 && initialLevel > finalLevel) {
-    const fromLevels = initialLevel - finalLevel;
-    if (suddenFuelDrop <= 0) return fromLevels;
-    // Column vs levels diverge → trust the sensor levels on this row.
-    if (Math.abs(suddenFuelDrop - fromLevels) > Math.max(5, fromLevels * 0.15)) {
-      return fromLevels;
-    }
-    return suddenFuelDrop;
+    return initialLevel - finalLevel;
   }
   return suddenFuelDrop;
 }
@@ -88,5 +82,7 @@ export function effectiveTheft(r: FuelTransaction): number {
 
 /** True when no unit has report-reported consumption (balance fill may still apply). */
 export function missingConsumption(list: FuelTransaction[]): boolean {
-  return !list.some((r) => r.section === 'consumption' && effectiveConsumed(r) > 0);
+  return !list.some(
+    (r) => Number(r.fuelUsed) > 0 || (r.section === 'consumption' && effectiveConsumed(r) > 0),
+  );
 }

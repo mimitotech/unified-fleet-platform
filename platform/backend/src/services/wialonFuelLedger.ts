@@ -234,7 +234,9 @@ export function applyBalanceConsumption(
     const plausibleRows = unitRows.filter((r) => isPlausibleFuelEvent(r, live));
 
     const hasSummary = plausibleRows.some(
-      (r) => r.section === 'consumption' && r.sensor === 'wialon_group_summary' && effectiveConsumed(r) > 0
+      (r) =>
+        r.sensor === 'wialon_group_summary' &&
+        (Number(r.fuelUsed) > 0 || (r.section === 'consumption' && effectiveConsumed(r) > 0)),
     );
     if (hasSummary) continue;
 

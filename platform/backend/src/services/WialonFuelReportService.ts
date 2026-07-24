@@ -43,7 +43,11 @@ function splitRangeByDays(fromDate: string, toDate: string, chunkDays: number) {
 }
 
 function unitHasConsumption(rows: FuelTransaction[], unitId: number): boolean {
-  return rows.some((r) => r.unitId === unitId && r.section === 'consumption' && effectiveConsumed(r) > 0);
+  return rows.some(
+    (r) =>
+      r.unitId === unitId &&
+      (Number(r.fuelUsed) > 0 || (r.section === 'consumption' && effectiveConsumed(r) > 0)),
+  );
 }
 
 const rangeCacheSvc = new CacheService();

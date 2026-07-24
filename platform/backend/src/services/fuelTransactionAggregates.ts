@@ -8,8 +8,8 @@ import {
 
 /**
  * Fleet KPIs — same policy as the Fuel UI table:
- * leaves first; exact-range Wialon group summaries fill a metric only when leaves are empty.
- * Never use wider nested month summaries for partial ranges (avoids MTD inflation).
+ * exact-range Wialon group summaries are authoritative for Filled / Used / Drop;
+ * leaf events fill a metric only when the report has no period total for it.
  */
 export function computeFuelKpis(rows: FuelTransaction[], fromDate?: string, toDate?: string) {
   const exactSummaryIds = exactRangeSummaryUnitIds(rows, fromDate, toDate);
@@ -34,41 +34,11 @@ export function computeFuelKpis(rows: FuelTransaction[], fromDate?: string, toDa
     const leaves = unitRows.filter((r) => !isWialonGroupSummary(r) && r.sensor !== 'balance');
     const exactSummaries = unitRows.filter((r) => isExactRangeSummary(r, fromDate, toDate));
 
-    let filled = 0;
-    let used = 0;
-    let drop = 0;
-
-    for (const r of leaves) {
-      if (r.section === 'filling') {
-        const v = effectiveFilled(r);
-        if (v > 0) {
-          filled += v;
-          fillingCount += 1;
-        }
-      }
-      if (r.section === 'consumption') {
-        const v = effectiveConsumed(r);
-        if (v > 0) {
-          used += v;
-          consumptionCount += 1;
-          if (r.tank !== 'reserve') totalMileage += r.mileage || 0;
-        }
-      }
-      if (r.section === 'theft') {
-        const v = effectiveTheft(r);
-        if (v > 0) {
-          drop += v;
-          theftEvents += r.count > 0 ? r.count : 1;
-        }
-      }
-    }
-
-    // Exact-range summary gap-fill only
+    let summaryFilled = 0;
+    let summaryUsed = 0;
+    let summaryDrop = 0;
+    let summaryAlerts = 0;
     if (exactSummaries.length && exactSummaryIds.has(unitId)) {
-      let summaryFilled = 0;
-      let summaryUsed = 0;
-      let summaryDrop = 0;
-      let summaryAlerts = 0;
       for (const t of exactSummaries) {
         if (t.filled > summaryFilled) summaryFilled = t.filled;
         if (t.fuelUsed > summaryUsed) summaryUsed = t.fuelUsed;
@@ -78,12 +48,44 @@ export function computeFuelKpis(rows: FuelTransaction[], fromDate?: string, toDa
           summaryAlerts = Math.max(summaryAlerts, t.count > 0 ? t.count : 1);
         }
       }
-      if (filled <= 0 && summaryFilled > 0) filled = summaryFilled;
-      if (used <= 0 && summaryUsed > 0) used = summaryUsed;
-      if (drop <= 0 && summaryDrop > 0) {
-        drop = summaryDrop;
-        theftEvents += summaryAlerts;
+    }
+
+    let filled = 0;
+    let used = 0;
+    let drop = 0;
+
+    for (const r of leaves) {
+      if (r.section === 'filling') {
+        const v = effectiveFilled(r);
+        if (v > 0) {
+          if (summaryFilled <= 0) filled += v;
+          fillingCount += 1;
+        }
       }
+      if (r.section === 'consumption') {
+        const v = effectiveConsumed(r);
+        if (v > 0) {
+          if (summaryUsed <= 0) used += v;
+          consumptionCount += 1;
+          if (r.tank !== 'reserve') totalMileage += r.mileage || 0;
+        }
+      }
+      if (r.section === 'theft') {
+        const v = effectiveTheft(r);
+        if (v > 0) {
+          if (summaryDrop <= 0) {
+            drop += v;
+            theftEvents += r.count > 0 ? r.count : 1;
+          }
+        }
+      }
+    }
+
+    if (summaryFilled > 0) filled = summaryFilled;
+    if (summaryUsed > 0) used = summaryUsed;
+    if (summaryDrop > 0) {
+      drop = summaryDrop;
+      theftEvents += summaryAlerts;
     }
 
     totalFilled += filled;

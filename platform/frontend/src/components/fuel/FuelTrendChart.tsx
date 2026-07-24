@@ -31,14 +31,14 @@ const getWeekStart = (date: Date): string => {
 
 export function FuelTrendChart({ transactions, isLoading }: FuelTrendChartProps) {
 
-  // Group transactions by week and calculate fuel volume and mileage
-  // Leaves first; group summaries only fill a week when that unit has no leaf volume that week.
+  // Group transactions by week from leaf report events only.
+  // Period summaries are full-range totals and must not enter weekly buckets.
   const chartData = useMemo(() => {
     if (!transactions.length) return [];
 
     const weeklyData: Record<
       string,
-      { fuelFilled: number; fuelConsumed: number; mileage: number; unitsWithLeafFill: Set<number>; unitsWithLeafUse: Set<number> }
+      { fuelFilled: number; fuelConsumed: number; mileage: number }
     > = {};
 
     const ensure = (weekKey: string) => {
@@ -47,14 +47,11 @@ export function FuelTrendChart({ transactions, isLoading }: FuelTrendChartProps)
           fuelFilled: 0,
           fuelConsumed: 0,
           mileage: 0,
-          unitsWithLeafFill: new Set(),
-          unitsWithLeafUse: new Set(),
         };
       }
       return weeklyData[weekKey];
     };
 
-    // Pass 1: leaf events
     for (const tx of transactions) {
       if (tx.sensor === 'wialon_group_summary' || tx.sensor?.startsWith('wialon_group_summary')) continue;
       if (tx.sensor === 'balance') continue;
@@ -64,29 +61,10 @@ export function FuelTrendChart({ transactions, isLoading }: FuelTrendChartProps)
 
       if (tx.section === 'filling' && tx.filled > 0) {
         bucket.fuelFilled += tx.filled;
-        if (tx.unitId) bucket.unitsWithLeafFill.add(tx.unitId);
       }
-      if (tx.section === 'consumption') {
+      if (tx.section === 'consumption' && (tx.fuelUsed || 0) > 0) {
         bucket.fuelConsumed += tx.fuelUsed || 0;
         bucket.mileage += tx.mileage || 0;
-        if (tx.unitId && (tx.fuelUsed || 0) > 0) bucket.unitsWithLeafUse.add(tx.unitId);
-      }
-    }
-
-    // Pass 2: exact summaries only gap-fill units without leaf volume that week
-    for (const tx of transactions) {
-      if (!(tx.sensor === 'wialon_group_summary' || tx.sensor?.startsWith('wialon_group_summary'))) continue;
-      const txDate = new Date(tx.timestamp * 1000);
-      const weekKey = getWeekStart(txDate);
-      const bucket = ensure(weekKey);
-      const uid = tx.unitId || 0;
-      if (tx.filled > 0 && !bucket.unitsWithLeafFill.has(uid)) {
-        bucket.fuelFilled += tx.filled;
-        bucket.unitsWithLeafFill.add(uid);
-      }
-      if (tx.fuelUsed > 0 && !bucket.unitsWithLeafUse.has(uid)) {
-        bucket.fuelConsumed += tx.fuelUsed;
-        bucket.unitsWithLeafUse.add(uid);
       }
     }
 

@@ -133,8 +133,9 @@ export function groupSummaryUnitIds(
 }
 
 /**
- * When a unit has any covering group-summary row, collapsed totals come only from
- * Wialon period totals — never leaf FLS events (which can be noisy).
+ * When a unit has an exact-range group-summary row, collapsed totals come from
+ * those Wialon report period totals — leaf FLS events only fill metrics the
+ * report did not provide, and still drive the expanded event list.
  */
 export function unitHasPeriodSummary(
   unitId: string | number,
