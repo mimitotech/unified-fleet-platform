@@ -37,11 +37,7 @@ import {
   aggregateUnitFuelColumns,
   computePeriodFuelKpis,
 } from "@/components/fuel/fuelColumnMetrics";
-import {
-  filterFuelTransactionsByDate,
-  isSyntheticFuelRow,
-  isWialonGroupSummary,
-} from "@/components/fuel/fuelTransactionFilters";
+import { filterFuelTransactionsByDate } from "@/components/fuel/fuelTransactionFilters";
 import {
   DashboardQuickAccess,
   moduleEnabledSet,
@@ -65,7 +61,6 @@ import {
   useDriverStats,
   useFuelKpis,
   useFuelTransactions,
-  useFuelTrend,
   useGeofences,
   useRouteStats,
   useVideoStreams,
@@ -312,10 +307,6 @@ export default function Dashboard() {
     isError: fuelKpisError,
     refetch: refetchFuelKpis,
   } = useFuelKpis(hasFuel, { from: applied.from, to: applied.to });
-  const { data: fuelTrend } = useFuelTrend(hasFuel, {
-    from: applied.from,
-    to: applied.to,
-  });
   const { data: fuelTransactions = [], isFetched: fuelTxsFetched } =
     useFuelTransactions(hasFuel, {
       from: applied.from,
@@ -710,11 +701,40 @@ export default function Dashboard() {
   }, [alertList, accent, brand]);
 
   /* —— Fuel —— */
-  // Prefer period KPIs from the same transactions as per-asset charts.
-  // Fall back to API KPIs only while transactions are still loading.
+  // Live tank litres per asset name — same signal the Fuel module feeds into
+  // its KPI aggregation so balance-derived consumption matches across modules.
+  const liveLevelsByName = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const u of units ?? []) {
+      const liters = num(u.fuelLiters);
+      if (u.name && liters > 0) m.set(u.name, liters);
+    }
+    return m;
+  }, [units]);
+
+  const allStationary = useMemo(
+    () =>
+      (units?.length ?? 0) > 0 &&
+      (units ?? []).every(
+        (u) =>
+          u.stationary === true ||
+          u.assetCategory === "generator" ||
+          u.assetCategory === "machinery",
+      ),
+    [units],
+  );
+
+  // Period KPIs from the same transactions + live levels as the Fuel module,
+  // so dashboard totals always match the Fuel page for the same date range.
   const periodFuelKpis = useMemo(
-    () => computePeriodFuelKpis(fuelTransactions, applied.from, applied.to),
-    [fuelTransactions, applied.from, applied.to],
+    () =>
+      computePeriodFuelKpis(
+        fuelTransactions,
+        applied.from,
+        applied.to,
+        liveLevelsByName,
+      ),
+    [fuelTransactions, applied.from, applied.to, liveLevelsByName],
   );
   const txsReady = fuelTxsFetched;
   const apiKpis = fuelKpis as Record<string, number> | undefined;
@@ -735,6 +755,15 @@ export default function Dashboard() {
     (txsReady ? periodFuelKpis.avgConsumption : 0) || apiKpis?.avgConsumption,
   );
   const fuelCost = Math.round(fuelUsed * fuelPrice);
+
+  // avg L/100km is meaningless for generators/machinery (no mileage) — fall
+  // back to plain consumed litres so the insight is never "avg 0 L/100".
+  const fuelTrackedInsight =
+    fuelTracked > 0
+      ? avgConsumption > 0 && !allStationary
+        ? `${fuelTracked} assets tracked · avg ${avgConsumption} L/100km`
+        : `${fuelTracked} assets tracked · ${fmt(fuelUsed, 1)} L used`
+      : "";
 
   /** Live tank volume across the fleet (current FLS litres). */
   const totalCurrentFuel = useMemo(
@@ -784,49 +813,47 @@ export default function Dashboard() {
   );
 
   const fuelTrendRows = useMemo(() => {
-    const apiRows = safeArray<{
-      month?: string;
-      filled?: number;
-      consumed?: number;
-    }>(fuelTrend);
-    const fromApi = apiRows
-      .slice(-8)
-      .map((r) => ({
-        name: String(r.month || "—").slice(2),
-        month: String(r.month || ""),
-        filled: num(r.filled),
-        consumed: num(r.consumed),
-      }))
-      .filter((r) => r.filled > 0 || r.consumed > 0);
-
-    if (fromApi.length) return fromApi;
-
-    // Fallback: bucket the same period transactions by month (leaf events only)
-    const ranged = filterFuelTransactionsByDate(
-      fuelTransactions,
-      applied.from,
-      applied.to,
-    );
-    const byMonth = new Map<string, { filled: number; consumed: number }>();
-    for (const t of ranged) {
-      if (isWialonGroupSummary(t) || isSyntheticFuelRow(t) || !t.timestamp)
-        continue;
-      const month = new Date(t.timestamp * 1000).toISOString().slice(0, 7);
-      const row = byMonth.get(month) ?? { filled: 0, consumed: 0 };
-      if (t.section === "filling") row.filled += Number(t.filled) || 0;
-      if (t.section === "consumption") row.consumed += Number(t.fuelUsed) || 0;
-      byMonth.set(month, row);
+    // Derive month buckets from the SAME aggregation as the KPI tiles so the
+    // trend always sums to the totals. (The monthly trend API double-counts
+    // nested Wialon group summaries and was producing inflated bars.)
+    const [fy, fm] = applied.from.split("-").map(Number);
+    const [ty, tm] = applied.to.split("-").map(Number);
+    if (!fy || !fm || !ty || !tm) return [];
+    const months: string[] = [];
+    let y = fy;
+    let m = fm;
+    while ((y < ty || (y === ty && m <= tm)) && months.length < 24) {
+      months.push(`${y}-${String(m).padStart(2, "0")}`);
+      m += 1;
+      if (m > 12) {
+        m = 1;
+        y += 1;
+      }
     }
-    return [...byMonth.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .slice(-8)
-      .map(([month, v]) => ({
-        name: month.slice(2),
-        month,
-        filled: Math.round(v.filled * 10) / 10,
-        consumed: Math.round(v.consumed * 10) / 10,
-      }));
-  }, [fuelTrend, fuelTransactions, applied.from, applied.to]);
+    return months
+      .map((month) => {
+        const [yy, mm] = month.split("-").map(Number);
+        const monthFirst = `${month}-01`;
+        const lastDay = new Date(yy, mm, 0).getDate();
+        const monthLast = `${month}-${String(lastDay).padStart(2, "0")}`;
+        const from = applied.from > monthFirst ? applied.from : monthFirst;
+        const to = applied.to < monthLast ? applied.to : monthLast;
+        const k = computePeriodFuelKpis(
+          fuelTransactions,
+          from,
+          to,
+          liveLevelsByName,
+        );
+        return {
+          name: month.slice(2),
+          month,
+          filled: k.totalFilled,
+          consumed: k.totalConsumed,
+        };
+      })
+      .filter((r) => r.filled > 0 || r.consumed > 0)
+      .slice(-8);
+  }, [fuelTransactions, applied.from, applied.to, liveLevelsByName]);
 
   const tankRiskBars = useMemo(() => {
     const withPct = (units ?? [])
@@ -880,7 +907,11 @@ export default function Dashboard() {
     const rows = [...names].map((unitName) => {
       const cols = aggregateUnitFuelColumns(
         ranged.filter((t) => t.unitName === unitName),
-        { fromDate: applied.from, toDate: applied.to },
+        {
+          fromDate: applied.from,
+          toDate: applied.to,
+          liveLevel: liveLevelsByName.get(unitName),
+        },
       );
       const filled = cols.filledMain + cols.filledReserve;
       const used = cols.totalUsed;
@@ -899,7 +930,7 @@ export default function Dashboard() {
     return rows.filter(
       (r) => r.filled > 0 || r.used > 0 || r.fillCost > 0 || r.usedCost > 0,
     );
-  }, [fuelTransactions, applied.from, applied.to, fuelPrice]);
+  }, [fuelTransactions, applied.from, applied.to, fuelPrice, liveLevelsByName]);
 
   const topFuelBars = useMemo(
     () =>
@@ -1489,40 +1520,44 @@ export default function Dashboard() {
                   </DashboardWidget>
                 </DashboardArrangeItem>
               )}
-              {hasMonitoring && counts.total > 0 && show("mileage") && (
-                <DashboardArrangeItem id="mileage">
-                  <DashboardWidget
-                    title="Mileage"
-                    subtitle="Live odometer total · not period-filtered"
-                    href="/app/monitoring?view=list"
-                    brandColor={accent}
-                    tone="accent"
-                    insight={`${fmt(Math.round(totalMileage))} km across ${counts.total} assets`}
-                  >
-                    {mileageLeaders.length > 0 ? (
-                      <CompactBars
-                        data={mileageLeaders.slice(0, 5)}
-                        horizontal
-                        unit="km"
-                        color={accent}
-                      />
-                    ) : (
-                      <CompactBars
-                        data={[
-                          {
-                            name: "Fleet",
-                            value: Math.round(totalMileage),
-                            fill: accent,
-                          },
-                        ]}
-                        includeZeros
-                        unit="km"
-                        color={accent}
-                      />
-                    )}
-                  </DashboardWidget>
-                </DashboardArrangeItem>
-              )}
+              {hasMonitoring &&
+                counts.total > 0 &&
+                show("mileage") &&
+                !allStationary &&
+                totalMileage > 0 && (
+                  <DashboardArrangeItem id="mileage">
+                    <DashboardWidget
+                      title="Mileage"
+                      subtitle="Live odometer total · not period-filtered"
+                      href="/app/monitoring?view=list"
+                      brandColor={accent}
+                      tone="accent"
+                      insight={`${fmt(Math.round(totalMileage))} km across ${counts.total} assets`}
+                    >
+                      {mileageLeaders.length > 0 ? (
+                        <CompactBars
+                          data={mileageLeaders.slice(0, 5)}
+                          horizontal
+                          unit="km"
+                          color={accent}
+                        />
+                      ) : (
+                        <CompactBars
+                          data={[
+                            {
+                              name: "Fleet",
+                              value: Math.round(totalMileage),
+                              fill: accent,
+                            },
+                          ]}
+                          includeZeros
+                          unit="km"
+                          color={accent}
+                        />
+                      )}
+                    </DashboardWidget>
+                  </DashboardArrangeItem>
+                )}
               {hasMonitoring &&
                 counts.total > 0 &&
                 show("top_mileage") &&
@@ -1916,7 +1951,7 @@ export default function Dashboard() {
                     tone="primary"
                     insight={
                       fuelTracked > 0
-                        ? `${fuelTracked} assets tracked · avg ${avgConsumption || 0} L/100`
+                        ? fuelTrackedInsight
                         : fuelFilled > 0
                           ? `${pct(fuelUsed, fuelFilled)}% of filled was consumed`
                           : `${fmt(fuelUsed, 1)} L consumed in period`
@@ -1940,7 +1975,7 @@ export default function Dashboard() {
                     tone="primary"
                     insight={
                       fuelTracked > 0
-                        ? `${fuelTracked} assets tracked · avg ${avgConsumption || 0} L/100`
+                        ? fuelTrackedInsight
                         : `${fmt(fuelFilled, 1)} L filled · ${fmt(fuelUsed, 1)} L consumed`
                     }
                   >
