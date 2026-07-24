@@ -123,7 +123,7 @@ export default function AdminTenantsPage() {
             <SelectTrigger className="w-36"><SelectValue placeholder="Sort" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="name">Name</SelectItem>
-              <SelectItem value="vehicles">Vehicles</SelectItem>
+              <SelectItem value="vehicles">Assets</SelectItem>
               <SelectItem value="users">Users</SelectItem>
               <SelectItem value="created">Created</SelectItem>
             </SelectContent>
@@ -147,7 +147,7 @@ export default function AdminTenantsPage() {
                     <TableHead className="w-8" />
                     <TableHead>Client</TableHead>
                     {superView && <TableHead>Manager</TableHead>}
-                    <TableHead>Vehicles</TableHead>
+                    <TableHead>Assets</TableHead>
                     <TableHead>Users</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Modules</TableHead>

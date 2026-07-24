@@ -624,7 +624,7 @@ export default function Workshop() {
   return (
     <AppLayout
       title="Workshop"
-      subtitle="Vehicle maintenance, inspections, and breakdown tracking"
+      subtitle="Asset maintenance, inspections, and breakdown tracking"
     >
       <div className="space-y-6">
         <div className="flex flex-wrap gap-3">

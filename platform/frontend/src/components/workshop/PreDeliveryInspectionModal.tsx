@@ -112,6 +112,7 @@ function ChecklistRow({ item, onChange, disabled }: ChecklistRowProps) {
             className={cn('h-8 w-8 p-0', item.status === 'ok' && 'bg-emerald-600 hover:bg-emerald-600/90')}
             onClick={() => onChange('ok', item.comment)}
             disabled={disabled}
+            title="OK"
           >
             <Check className="h-4 w-4" />
           </Button>
@@ -125,8 +126,23 @@ function ChecklistRow({ item, onChange, disabled }: ChecklistRowProps) {
               setShowComment(true);
             }}
             disabled={disabled}
+            title="Issue"
           >
             <X className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={item.status === 'na' ? 'default' : 'outline'}
+            className={cn(
+              'h-8 px-2 text-[10px] font-semibold',
+              item.status === 'na' && 'bg-slate-600 hover:bg-slate-600/90',
+            )}
+            onClick={() => onChange('na', item.comment)}
+            disabled={disabled}
+            title="Not applicable"
+          >
+            N/A
           </Button>
           <Button
             type="button"
@@ -339,9 +355,10 @@ export function PreDeliveryInspectionModal({
   };
 
   const sectionStats = useCallback((section: ChecklistSection) => {
-    const completed = section.items.filter((i) => i.status !== 'na').length;
+    const completed = section.items.filter((i) => i.status !== 'pending').length;
     const issues = section.items.filter((i) => i.status === 'issue').length;
-    return { completed, total: section.items.length, issues };
+    const na = section.items.filter((i) => i.status === 'na').length;
+    return { completed, total: section.items.length, issues, na };
   }, []);
 
   const totalIssues = useMemo(
@@ -563,7 +580,10 @@ export function PreDeliveryInspectionModal({
                         <div className="text-left">
                           <div className="font-medium">{section.title}</div>
                           <div className="text-xs text-muted-foreground">
-                            {stats.completed}/{stats.total} completed
+                            {stats.completed}/{stats.total} checked
+                            {stats.na > 0 && (
+                              <span className="text-slate-500 ml-2">• {stats.na} N/A</span>
+                            )}
                             {stats.issues > 0 && (
                               <span className="text-destructive ml-2">• {stats.issues} issues</span>
                             )}

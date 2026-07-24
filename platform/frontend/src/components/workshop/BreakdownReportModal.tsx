@@ -306,7 +306,7 @@ export function BreakdownReportModal({
                     <SelectItem value="minor">Minor - Can continue with caution</SelectItem>
                     <SelectItem value="major">Major - Requires immediate attention</SelectItem>
                     <SelectItem value="critical">
-                      Critical - {stationary ? 'Asset immobilized' : 'Vehicle immobilized'}
+                      Critical - Asset immobilized
                     </SelectItem>
                   </SelectContent>
                 </Select>

@@ -132,7 +132,7 @@ export function MaintenanceCostChart({ logs, vehicleSummaries }: MaintenanceCost
       
       <Tabs defaultValue="vehicle" className="w-full">
         <TabsList className="mb-4">
-          <TabsTrigger value="vehicle">By Vehicle</TabsTrigger>
+          <TabsTrigger value="vehicle">By Asset</TabsTrigger>
           <TabsTrigger value="type">By Type</TabsTrigger>
           <TabsTrigger value="breakdown">Parts vs Labor</TabsTrigger>
         </TabsList>

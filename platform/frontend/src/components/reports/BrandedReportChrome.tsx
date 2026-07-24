@@ -87,7 +87,7 @@ export function BrandedReportHeader({
   return (
     <header
       data-report-header
-      className={cn('border border-slate-200 bg-white/95 overflow-hidden', className)}
+      className={cn('border border-slate-200 bg-white/95 overflow-visible', className)}
     >
       <div
         data-report-header-bar
@@ -96,7 +96,7 @@ export function BrandedReportHeader({
       />
       <div
         data-report-header-body
-        className="flex flex-wrap items-center gap-x-8 gap-y-4 px-6 py-4"
+        className="flex flex-wrap items-start gap-x-6 gap-y-3 px-6 py-4"
       >
         <div data-report-brand className="flex items-center gap-4 shrink-0">
           <div
@@ -141,9 +141,14 @@ export function BrandedReportHeader({
 
         <div
           data-report-title-block
-          className="flex flex-col gap-1 min-w-0 flex-1 basis-[160px]"
+          className="flex flex-col gap-1 min-w-[12rem] flex-1 basis-[200px] shrink-0"
         >
-          <p className="text-base font-semibold text-slate-800">{reportTitle}</p>
+          <p
+            data-report-title
+            className="text-base font-semibold text-slate-800 break-words"
+          >
+            {reportTitle}
+          </p>
           {moduleLabel ? (
             <p className="text-xs text-slate-500">{moduleLabel}</p>
           ) : null}

@@ -64,6 +64,45 @@ function DetailSection({ title, children }: { title: string; children: ReactNode
   );
 }
 
+type SensorRow = { name: string; value: string | number; unit?: string; type?: string };
+
+function sensorGroup(name: string, type?: string): string {
+  const blob = `${name} ${type || ''}`.toLowerCase();
+  if (/fuel|lls|tank|litre|liter/.test(blob)) return 'Fuel';
+  if (/ignition|acc|engine\s*on|engine\s*off|rpm|moto/.test(blob)) return 'Powertrain';
+  if (/batter|voltage|pwr|power|volt|amp/.test(blob)) return 'Power / Battery';
+  if (/temp|coolant|thermo|ambient/.test(blob)) return 'Temperature';
+  if (/door|hatch|boot|trunk|cover/.test(blob)) return 'Doors / Security';
+  if (/speed|gps|sat|hdop|altitude|course|odometer|mileage/.test(blob)) return 'Location / Motion';
+  if (/hour|mh\b|counter/.test(blob)) return 'Counters';
+  return 'Other';
+}
+
+const SENSOR_GROUP_ORDER = [
+  'Fuel',
+  'Powertrain',
+  'Power / Battery',
+  'Temperature',
+  'Doors / Security',
+  'Location / Motion',
+  'Counters',
+  'Other',
+];
+
+function groupSensors(sensors: SensorRow[]): Array<{ group: string; items: SensorRow[] }> {
+  const map = new Map<string, SensorRow[]>();
+  for (const s of sensors) {
+    const g = sensorGroup(s.name, s.type);
+    const list = map.get(g) || [];
+    list.push(s);
+    map.set(g, list);
+  }
+  return SENSOR_GROUP_ORDER.filter((g) => map.has(g)).map((g) => ({
+    group: g,
+    items: map.get(g)!,
+  }));
+}
+
 function formatCounter(value?: number, unit?: 'km' | 'h'): string {
   if (value == null || !Number.isFinite(value)) return '—';
   if (unit === 'h') return `${value.toFixed(2)} h`;
@@ -132,10 +171,14 @@ export function UnitDetailPanel({
   const engineHours = detail?.counters?.engineHours ?? unit.engineHours;
   const lastAge = detail?.lastUpdateAge;
   const sensors = detail?.sensors || [];
+  const sensorGroups = useMemo(() => groupSensors(sensors as SensorRow[]), [sensors]);
   const parameters = detail?.prms || [];
   const customFields = detail?.flds || [];
   const maintenance = detail?.maintenance || [];
   const video = detail?.video;
+  const health = detail?.health as
+    | { battery?: number; satellites?: number; hdop?: number; altitude?: number }
+    | undefined;
   const engineAsset = hasEngineHoursData({ ...unit, engineHours });
   const isVideoUnit = isFleetVideoDevice(unit) || Boolean(video && Object.keys(video).length);
   const tripState =
@@ -148,7 +191,7 @@ export function UnitDetailPanel({
   });
 
   const showScrollable = showControls && (!compact || sensors.length > 0 || parameters.length > 0);
-  const sensorLimit = compact ? 6 : 20;
+  const sensorLimit = compact ? 8 : 40;
   const paramLimit = compact ? 12 : 40;
 
   return (
@@ -252,19 +295,57 @@ export function UnitDetailPanel({
       {/* Scrollable detail sections */}
       {showScrollable && (
         <div className="flex-1 overflow-auto border-t px-3 py-3 space-y-4 min-h-0">
-          {sensors.length > 0 && (
+          {(health?.battery != null ||
+            health?.satellites != null ||
+            health?.hdop != null ||
+            health?.altitude != null) && (
+            <DetailSection title="Device vitals">
+              <div className="grid grid-cols-2 gap-1.5">
+                {health?.battery != null && (
+                  <Stat icon={Radio} label="Battery" value={`${Math.round(health.battery)}%`} />
+                )}
+                {health?.satellites != null && (
+                  <Stat icon={Navigation} label="Satellites" value={String(health.satellites)} />
+                )}
+                {health?.hdop != null && (
+                  <Stat icon={Gauge} label="HDOP" value={String(health.hdop)} />
+                )}
+                {health?.altitude != null && (
+                  <Stat icon={Compass} label="Altitude" value={`${Math.round(health.altitude)} m`} />
+                )}
+              </div>
+            </DetailSection>
+          )}
+
+          {sensorGroups.length > 0 && (
             <DetailSection title="Sensors">
-              <ul className="divide-y divide-border/40 rounded-lg border border-border/40 overflow-hidden">
-                {sensors.slice(0, sensorLimit).map((s, i) => (
-                  <li key={`${s.name}-${i}`} className="flex justify-between gap-2 text-xs px-2.5 py-2 bg-card/50">
-                    <span className="text-muted-foreground min-w-0">{s.name}</span>
-                    <span className="font-semibold shrink-0 text-right">
-                      {s.value}
-                      {s.unit ? ` ${s.unit}` : ''}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <div className="space-y-3">
+                {sensorGroups.map((g) => {
+                  const items = g.items.slice(0, Math.max(2, Math.ceil(sensorLimit / sensorGroups.length)));
+                  return (
+                    <div key={g.group} className="rounded-lg border border-border/40 overflow-hidden">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground bg-muted/40 px-2.5 py-1.5 border-b border-border/40">
+                        {g.group}
+                        <span className="ml-1.5 font-normal tabular-nums">({g.items.length})</span>
+                      </p>
+                      <ul className="divide-y divide-border/40">
+                        {items.map((s, i) => (
+                          <li
+                            key={`${g.group}-${s.name}-${i}`}
+                            className="flex justify-between gap-2 text-xs px-2.5 py-2 bg-card/50"
+                          >
+                            <span className="text-muted-foreground min-w-0">{s.name}</span>
+                            <span className="font-semibold shrink-0 text-right tabular-nums">
+                              {s.value}
+                              {s.unit ? ` ${s.unit}` : ''}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })}
+              </div>
             </DetailSection>
           )}
 

@@ -114,7 +114,7 @@ export function FleetMaintenanceTable({
             Fleet Maintenance Status
           </h3>
           <p className="text-sm text-muted-foreground">
-            Vehicle-by-vehicle maintenance overview
+            Asset-by-asset maintenance overview
           </p>
         </div>
         
@@ -122,7 +122,7 @@ export function FleetMaintenanceTable({
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Search vehicles..."
+              placeholder="Search assets..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-9 w-[200px]"
@@ -135,7 +135,7 @@ export function FleetMaintenanceTable({
               <SelectValue placeholder="Filter" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Vehicles</SelectItem>
+              <SelectItem value="all">All Assets</SelectItem>
               <SelectItem value="needs-service">Needs Service</SelectItem>
               <SelectItem value="healthy">Healthy (80%+)</SelectItem>
               <SelectItem value="attention">Needs Attention</SelectItem>
@@ -160,7 +160,7 @@ export function FleetMaintenanceTable({
         <table className="w-full">
           <thead>
             <tr className="border-b border-border">
-              <th className="text-left py-3 px-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">Vehicle</th>
+              <th className="text-left py-3 px-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">Asset</th>
               <th className="text-left py-3 px-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">Last Inspection</th>
               <th className="text-left py-3 px-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">Next Service</th>
               <th className="text-left py-3 px-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">Maintenance Cost</th>
@@ -181,7 +181,7 @@ export function FleetMaintenanceTable({
             ) : filteredVehicles.length === 0 ? (
               <tr>
                 <td colSpan={7} className="py-8 text-center text-muted-foreground">
-                  No vehicles found matching your criteria
+                  No assets found matching your criteria
                 </td>
               </tr>
             ) : (

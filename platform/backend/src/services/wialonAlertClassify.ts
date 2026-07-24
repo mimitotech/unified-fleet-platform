@@ -214,7 +214,12 @@ export function mapUnitMessageToAlert(
 
   const type = classifyWialonAlertType(classificationBlob(m, [eventName]));
   const title = withUnitLabel(eventName, unitName);
-  const externalId = `${unitId ?? 'x'}-${m.t}-${type}-${String(p.task_id || p.name || m.et || m.tp || '').slice(0, 40)}`;
+  // Stable fingerprint: unit + timestamp + Wialon task/event id (not classified type —
+  // type drift was creating duplicate rows after re-harvest).
+  const stableKey = String(
+    p.task_id ?? p.evt_id ?? p.notification_id ?? p.id ?? p.name ?? m.et ?? m.tp ?? eventName,
+  ).slice(0, 64);
+  const externalId = `${unitId ?? 'x'}-${m.t}-${stableKey}`;
 
   return {
     id: `wialon-${externalId}`,
@@ -240,19 +245,22 @@ export function mapTaskMessageToAlert(
   return mapUnitMessageToAlert(m, unitNameById);
 }
 
-const NOISE_TITLE = /engine\s*hours?|mileage\s*(counter)?|odometer|counter\s*(reset|update|value)|initial\s*(mileage|engine)|gprs\s*traffic|traffic\s*counter/i;
+const NOISE_TITLE =
+  /engine\s*hours?|mileage\s*(counter)?|odometer|counter\s*(reset|update|value)|initial\s*(mileage|engine)|gprs\s*traffic|traffic\s*counter|service\s*interval\s*hours|mh\s*counter|moto\s*hours?/i;
 const GENERIC_TITLE = /^(fleet alert|notification|event|evt|task|message|unknown)$/i;
 
 /**
- * Drop technical counter registrations and empty shells that are not
- * real configured notifications (they render with no useful details).
+ * Drop technical counter registrations (engine hours, mileage, odometer, GPRS traffic)
+ * and empty shells that are not real configured notifications.
+ * Engine-hours / mileage counters are always noise — do not surface them as alerts.
  */
 export function isNoiseAlert(alert: FleetAlert): boolean {
   const title = (alert.title || '').trim();
   const desc = (alert.description || '').trim();
   const bareTitle = title.replace(/\s*·\s*[^·]+$/, '').trim();
+  const blob = `${bareTitle} ${title} ${desc} ${alert.type || ''}`.toLowerCase();
 
-  if (NOISE_TITLE.test(bareTitle) && desc.length < 12) return true;
+  if (NOISE_TITLE.test(blob)) return true;
   if (GENERIC_TITLE.test(bareTitle) && !desc) return true;
   if (!bareTitle && !desc) return true;
   return false;

@@ -42,9 +42,9 @@ export function formatFuelRowFields(unit: WialonFleetUnit, merged?: WialonFuelLi
       : null;
   const fuelPercent =
     fromCapacity ??
-    (capacity == null && unit.fuelLevel != null && unit.fuelLevel >= 0 && unit.fuelLevel <= 100
-      ? Math.round(unit.fuelLevel)
-      : null);
+    // Only use an explicit percent field — never treat raw fuelLevel ≤100 as %
+    // (those values are often litres on tanks under 100 L or mis-mapped sensors).
+    null;
 
   const fuelLive =
     fuel?.levelFormatted ||

@@ -49,7 +49,13 @@ export function AppLayout({ children, title, subtitle, actions }: AppLayoutProps
   const { data: alerts } = useAlerts(300);
   const acknowledge = useAcknowledgeAlert();
   const alertList = safeArray<ClientAlert>(alerts);
-  const unackList = alertList.filter((a) => !a.acknowledged);
+  const unackList = alertList.filter((a) => {
+    if (a.acknowledged) return false;
+    // Bell only shows fresh open alerts (last 48h) — not old backlog.
+    const t = new Date(a.timestamp).getTime();
+    if (!Number.isFinite(t)) return true;
+    return Date.now() - t < 48 * 60 * 60 * 1000;
+  });
   const unack = unackList.length;
   const { dataUpdatedAt, refetch: refetchFleet } = useFleetSnapshot();
   const [manualRefreshing, setManualRefreshing] = useState(false);

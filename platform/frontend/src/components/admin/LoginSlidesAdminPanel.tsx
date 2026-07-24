@@ -294,10 +294,11 @@ export function LoginSlidesAdminPanel() {
                   !s.isEnabled && 'opacity-60',
                 )}
               >
-                <div
-                  className="h-14 w-20 shrink-0 rounded-md bg-muted bg-cover bg-center border border-border/40"
-                  style={s.imageUrl ? { backgroundImage: `url('${s.imageUrl}')` } : undefined}
-                />
+                <div className="h-14 w-24 shrink-0 rounded-md bg-neutral-900 border border-border/40 overflow-hidden flex items-center justify-center">
+                  {s.imageUrl ? (
+                    <img src={s.imageUrl} alt="" className="max-h-full max-w-full object-contain" />
+                  ) : null}
+                </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold truncate">{s.title}</p>
                   {s.eyebrow && <p className="text-[11px] text-muted-foreground truncate">{s.eyebrow}</p>}

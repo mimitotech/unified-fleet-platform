@@ -427,10 +427,19 @@ function reportStyles(opts: {
     }
     [data-report-divider] { width: 1px; height: 48px; background: #e2e8f0; flex-shrink: 0; }
     [data-report-title-block] {
-      display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 160px;
+      display: flex; flex-direction: column; gap: 4px;
+      min-width: 12rem !important; flex: 1 1 200px; flex-shrink: 0;
+      overflow: visible !important;
     }
-    [data-report-title-block] p { margin: 0; font-size: 16px; font-weight: 600; color: #1e293b; }
+    [data-report-title],
+    [data-report-title-block] p:first-child {
+      margin: 0; font-size: 16px; font-weight: 600; color: #1e293b;
+      white-space: normal !important; word-break: break-word;
+      overflow: visible !important; max-width: none !important;
+    }
     [data-report-title-block] p + p { font-size: 12px; font-weight: 400; color: #64748b; }
+    [data-report-header] { overflow: visible !important; }
+    [data-report-header-body] { overflow: visible !important; flex-wrap: wrap !important; }
     [data-report-meta] {
       display: flex; flex-wrap: wrap; align-items: center;
       gap: 6px 18px; margin-left: auto; font-size: 11px;

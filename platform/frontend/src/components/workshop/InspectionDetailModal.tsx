@@ -71,6 +71,9 @@ function ChecklistItemRow({ item }: { item: ChecklistItem }) {
           {item.status === 'na' && (
             <Badge variant="outline" className="text-muted-foreground">N/A</Badge>
           )}
+          {(item.status === 'pending' || !item.status) && (
+            <Badge variant="outline" className="text-muted-foreground/70">Pending</Badge>
+          )}
         </div>
       </div>
       {item.comment && (

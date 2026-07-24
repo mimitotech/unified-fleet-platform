@@ -16,7 +16,7 @@ export type WorkshopAssetCategory = 'vehicle' | 'generator' | 'machinery';
 
 export type InspectionType = 'pre-trip' | 'post-trip' | 'pre-delivery' | 'scheduled';
 export type InspectionStatus = 'pass' | 'fail' | 'needs-attention';
-export type ChecklistItemStatus = 'ok' | 'issue' | 'na';
+export type ChecklistItemStatus = 'pending' | 'ok' | 'issue' | 'na';
 
 /** Individual checklist item for inspections */
 export interface ChecklistItem {

@@ -119,15 +119,21 @@ export default function Login() {
         <div
           key={s.id}
           className={cn(
-            'absolute inset-0 bg-cover bg-center bg-no-repeat transition-opacity duration-1000 ease-in-out',
+            'absolute inset-0 bg-neutral-950 transition-opacity duration-1000 ease-in-out',
             i === slide ? 'opacity-100' : 'opacity-0',
           )}
-          style={{ backgroundImage: `url('${s.src}')` }}
           aria-hidden={i !== slide}
-        />
+        >
+          <img
+            src={s.src}
+            alt=""
+            className="absolute inset-0 h-full w-full object-contain object-center"
+            draggable={false}
+          />
+        </div>
       ))}
 
-      <div className="absolute inset-0 bg-gradient-to-br from-black/55 via-black/45 to-primary/40" />
+      <div className="absolute inset-0 bg-gradient-to-br from-black/50 via-black/35 to-primary/35 pointer-events-none" />
 
       <div className="absolute inset-x-0 top-0 z-10 p-6 sm:p-10 pointer-events-none">
         <div className="max-w-xl">

@@ -67,7 +67,7 @@ export function WorkshopKpiCards({ kpis, isLoading = false }: WorkshopKpiCardsPr
       iconColor: 'text-destructive',
     },
     {
-      title: 'Vehicles Needing Service',
+      title: 'Assets Needing Service',
       value: safeKpis.vehiclesNeedingService.toString(),
       subtitle: 'Due for maintenance',
       icon: Truck,

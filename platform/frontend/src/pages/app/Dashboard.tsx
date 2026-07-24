@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   Fuel,
   Gauge,
-  Radio,
   Route,
   Truck,
   Users,
@@ -70,7 +69,6 @@ import {
   type DashboardWidgetVisibility,
 } from '@/lib/dashboardWidgetPrefs';
 import type { FleetUnit } from '@/lib/fleetUnits';
-import { lightenHex } from '@/lib/tenantBranding';
 import { LIVE_POLL, livePollLabel } from '@/lib/liveRefresh';
 import { safeArray } from '@/lib/safeArray';
 import { cn } from '@/lib/utils';
@@ -600,6 +598,16 @@ export default function Dashboard() {
   );
   const fuelCost = Math.round(fuelUsed * fuelPrice);
 
+  /** Live tank volume across the fleet (current FLS litres). */
+  const totalCurrentFuel = useMemo(
+    () =>
+      (units ?? []).reduce((sum, u) => {
+        const liters = num(u.fuelLiters);
+        return sum + (liters > 0 ? liters : 0);
+      }, 0),
+    [units],
+  );
+
   const fuelKpiBars = useMemo(
     () => [
       { name: 'Filled', value: Math.round(fuelFilled), fill: brand },
@@ -943,7 +951,7 @@ export default function Dashboard() {
       subtitle="Live operational picture across your enabled modules"
     >
       <div className="mb-1">{toolbar}</div>
-      <p className="text-[11px] text-muted-foreground -mt-1 mb-3 tabular-nums flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 -mt-1 mb-3 text-[11px] text-muted-foreground tabular-nums">
         <span>Showing {periodLabel}</span>
         {chartsUpdating && (
           <span className="inline-flex items-center gap-1.5 text-primary font-medium">
@@ -951,7 +959,47 @@ export default function Dashboard() {
             Updating charts…
           </span>
         )}
-      </p>
+        <span className="hidden sm:inline text-border">·</span>
+        <span
+          className={cn(
+            'inline-flex items-center gap-1.5',
+            live || connected ? 'text-status-moving' : '',
+          )}
+          title={
+            live
+              ? `Snapshot refreshes ${livePollLabel(LIVE_POLL.fleet)}`
+              : ctx?.accountName
+                ? String(ctx.accountName)
+                : undefined
+          }
+        >
+          <span
+            className={cn(
+              'inline-flex h-1.5 w-1.5 rounded-full',
+              live || connected ? 'bg-status-moving animate-pulse' : 'bg-muted-foreground/40',
+            )}
+          />
+          {live || connected ? 'Live' : configured ? 'Idle' : 'Offline'}
+        </span>
+        <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-medium">
+          {moduleCount} module{moduleCount === 1 ? '' : 's'}
+        </Badge>
+        {hasMonitoring && (
+          <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-medium">
+            {onlinePct}% online
+          </Badge>
+        )}
+        {hasAlerts && criticalCount > 0 && (
+          <Badge className="h-5 px-1.5 text-[10px] bg-destructive text-destructive-foreground">
+            {criticalCount} critical
+          </Badge>
+        )}
+        {connected && (
+          <Badge variant="outline" className="h-5 px-1.5 text-[10px] text-primary border-primary/30">
+            Linked
+          </Badge>
+        )}
+      </div>
       {(fuelKpisError || alertsError) && (
         <QueryErrorBanner
           message="Some dashboard widgets could not load."
@@ -966,61 +1014,11 @@ export default function Dashboard() {
       <AnimatedPage
         key={`dash-period-${applied.from}-${applied.to}-${executeFlash}`}
         className={cn(
-          'space-y-6 transition-opacity duration-300',
+          'space-y-4 transition-opacity duration-300',
           chartsUpdating && 'opacity-60 pointer-events-none',
         )}
       >
         <WialonContextBanner />
-
-        <div
-          className="flex flex-wrap items-center gap-3 py-3 px-4 rounded-xl border"
-          style={{
-            borderColor: `${brand}33`,
-            background: `linear-gradient(120deg, ${lightenHex(brand, 0.9)} 0%, #ffffff 55%, ${lightenHex(accent, 0.88)} 100%)`,
-          }}
-        >
-          <div className="flex items-center gap-2 min-w-0">
-            <span
-              className={cn(
-                'inline-flex h-2.5 w-2.5 rounded-full',
-                live || connected ? 'bg-status-moving animate-pulse' : 'bg-muted-foreground/40',
-              )}
-            />
-            <div className="min-w-0">
-              <p className="text-sm font-semibold truncate">
-                {live || connected ? 'System live' : configured ? 'Link idle' : 'Telematics not linked'}
-              </p>
-              <p className="text-[11px] text-muted-foreground truncate">
-                {live
-                  ? `Snapshot refreshes ${livePollLabel(LIVE_POLL.fleet)} · ${fmt(counts.total)} assets · period ${periodLabel}`
-                  : ctx?.accountName
-                    ? String(ctx.accountName)
-                    : 'Connect a source in Admin for live counts'}
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-1.5 ml-auto">
-            <Badge variant="outline" className="text-[10px] font-medium">
-              {moduleCount} module{moduleCount === 1 ? '' : 's'}
-            </Badge>
-            {hasMonitoring && (
-              <Badge variant="outline" className="text-[10px] font-medium">
-                {onlinePct}% online
-              </Badge>
-            )}
-            {hasAlerts && criticalCount > 0 && (
-              <Badge className="text-[10px] bg-destructive text-destructive-foreground">
-                {criticalCount} critical
-              </Badge>
-            )}
-            {connected && (
-              <Badge variant="outline" className="text-[10px] text-primary border-primary/30">
-                <Radio className="h-3 w-3 mr-1" />
-                Linked
-              </Badge>
-            )}
-          </div>
-        </div>
 
         <div className="stat-strip">
           {hasMonitoring && (
@@ -1036,7 +1034,25 @@ export default function Dashboard() {
             <MetricCard title="Open alerts" value={openCount} icon={AlertTriangle} variant="destructive" size="xxs" />
           )}
           {hasFuel && (
+            <MetricCard
+              title="Current fuel"
+              value={`${fmt(totalCurrentFuel, 1)} L`}
+              icon={Fuel}
+              variant="success"
+              size="xxs"
+            />
+          )}
+          {hasFuel && (
             <MetricCard title="Fuel used" value={`${fmt(fuelUsed)} L`} icon={Fuel} variant="info" size="xxs" />
+          )}
+          {hasFuel && (
+            <MetricCard
+              title="Fuel used (UGX)"
+              value={fmtUgx(fuelCost)}
+              icon={Fuel}
+              variant="warning"
+              size="xxs"
+            />
           )}
           {hasDrivers && num(driverStats?.total) > 0 && (
             <MetricCard title="Drivers" value={num(driverStats?.total)} icon={Users} variant="default" size="xxs" />

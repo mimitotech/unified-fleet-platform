@@ -86,7 +86,16 @@ export function useAlerts(
     }
 
     const seen = seenIds.current ?? new Set<string>();
-    const fresh = list.filter((a) => !a.acknowledged && !seen.has(a.id));
+    const fresh = list.filter((a) => {
+      if (a.acknowledged || seen.has(a.id)) return false;
+      const t = new Date(a.timestamp).getTime();
+      // Don't toast ancient re-harvested noise as "new"
+      if (Number.isFinite(t) && Date.now() - t > 48 * 60 * 60 * 1000) return false;
+      if (/engine\s*hours?|mileage|odometer|gprs\s*traffic/i.test(`${a.title} ${a.description || ''}`)) {
+        return false;
+      }
+      return true;
+    });
     for (const a of list) seen.add(a.id);
     seenIds.current = seen;
 

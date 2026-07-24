@@ -756,7 +756,7 @@ export default function TenantDetail() {
             <CardHeader><CardTitle>Limits & Usage</CardTitle></CardHeader>
             <CardContent className="grid grid-cols-3 gap-4">
               <div>
-                <Label>Max Vehicles</Label>
+                <Label>Max Assets</Label>
                 <Input type="number" value={general.maxVehicles} onChange={(e) => setGeneral({ ...general, maxVehicles: parseInt(e.target.value, 10) })} />
                 <p className="text-xs text-muted-foreground mt-1">Used: {usage.vehicles_used ?? 0}</p>
               </div>
