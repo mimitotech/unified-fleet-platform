@@ -19,6 +19,7 @@ import { StatusBadge } from "@/components/shared/StatusBadge";
 import { UnitTypeIcon } from "@/components/fleet/UnitTypeIcon";
 import { WialonCommandButton } from "@/components/fleet/WialonCommandButton";
 import {
+  formatFuelDisplay,
   hasEngineHoursData,
   isFleetVideoDevice,
   type FleetUnit,
@@ -30,6 +31,7 @@ import {
   useWialonUnitDetail,
 } from "@/hooks/useWialonLive";
 import { useWialonGeocode } from "@/hooks/useWialonGeocode";
+import { formatReadingValue } from "@/lib/formatReading";
 
 type Props = {
   unit: FleetUnit | null;
@@ -46,10 +48,12 @@ function Stat({
   icon: Icon,
   label,
   value,
+  allowWrap = false,
 }: {
   icon: typeof Gauge;
   label: string;
   value: string;
+  allowWrap?: boolean;
 }) {
   return (
     <div className="rounded border border-border/40 bg-muted/20 px-1.5 py-1 min-w-0">
@@ -57,7 +61,12 @@ function Stat({
         <Icon className="h-2.5 w-2.5 shrink-0 opacity-70" />
         <span className="truncate">{label}</span>
       </div>
-      <p className="text-[11px] font-semibold leading-tight tabular-nums truncate mt-0.5">
+      <p
+        className={cn(
+          "text-[11px] font-semibold leading-tight tabular-nums mt-0.5",
+          allowWrap ? "whitespace-normal break-words" : "truncate",
+        )}
+      >
         {value}
       </p>
     </div>
@@ -151,8 +160,9 @@ function configuredFuelLabel(
   const pct = detail.fuel?.level ?? detail.fuelLevel;
   if (litres != null && Number.isFinite(litres) && litres > 0) {
     const rounded = Math.round(litres * 10) / 10;
+    // Compact form fits narrow tiles: "4362 L · 44%"
     return pct != null && pct > 0 && pct <= 100
-      ? `${rounded} L (${Math.round(pct)}%)`
+      ? `${rounded} L · ${Math.round(pct)}%`
       : `${rounded} L`;
   }
   if (pct != null && pct > 0 && pct <= 100) return `${Math.round(pct)}%`;
@@ -228,14 +238,24 @@ export function UnitDetailPanel({
         unit?: string;
         type?: string;
         param?: string;
-      }>(detail?.sensors).filter((s) => !isBlankValue(s.value)),
+      }>(detail?.sensors)
+        .filter((s) => !isBlankValue(s.value))
+        .map((s) => ({
+          ...s,
+          display: formatReadingValue(s.name, s.value, { unit: s.unit, type: s.type }),
+        })),
     [detail?.sensors],
   );
   const messageParams = useMemo(
     () =>
       safeArray<{ key: string; value: string }>(
         detail?.messageParams?.length ? detail.messageParams : detail?.prms,
-      ).filter(isConfiguredParam),
+      )
+        .filter(isConfiguredParam)
+        .map((p) => ({
+          ...p,
+          display: formatReadingValue(p.key, p.value),
+        })),
     [detail?.messageParams, detail?.prms],
   );
   const customFields = useMemo(
@@ -314,7 +334,9 @@ export function UnitDetailPanel({
   const isVideoUnit =
     isFleetVideoDevice(unit) || Boolean(video && Object.keys(video).length);
 
-  const fuelDisplay = configuredFuelLabel(detail);
+  const fuelDisplay = detail
+    ? configuredFuelLabel(detail)
+    : formatFuelDisplay(unit);
 
   const showScrollable = showControls;
 
@@ -326,9 +348,9 @@ export function UnitDetailPanel({
       )}
     >
       {loadingAsset && (
-        <div className="absolute inset-x-0 top-0 z-20 flex items-center gap-2 px-3 py-2 bg-primary/8 border-b border-primary/20 text-xs text-primary backdrop-blur-sm">
-          <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
-          <span>Loading asset details…</span>
+        <div className="absolute inset-x-0 top-0 z-20 flex items-center gap-2 px-3 py-1.5 bg-primary/8 border-b border-primary/20 text-[10px] text-primary backdrop-blur-sm">
+          <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+          <span>Updating sensors…</span>
         </div>
       )}
       {detailError && !loadingAsset && enabled && (
@@ -340,7 +362,7 @@ export function UnitDetailPanel({
       <div
         className={cn(
           "shrink-0 border-b border-border/50 px-2.5 py-2",
-          loadingAsset && "pt-9",
+          loadingAsset && "pt-7",
         )}
       >
         <div className="flex items-center gap-2 min-w-0">
@@ -351,21 +373,26 @@ export function UnitDetailPanel({
             title={displayName}
           />
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <h3 className="font-semibold text-xs leading-tight truncate">
+            <div className="flex items-start gap-1.5 min-w-0">
+              <h3
+                className="font-semibold text-xs leading-snug break-words min-w-0 flex-1"
+                title={displayName}
+              >
                 {displayName}
               </h3>
-              <StatusBadge status={status} label={motionLabel} size="sm" />
-              {live && (
-                <span className="inline-flex items-center gap-1 text-[9px] text-status-moving font-medium shrink-0">
-                  {quietlyRefreshing ? (
-                    <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                  ) : (
-                    <span className="w-1 h-1 rounded-full bg-status-moving animate-pulse" />
-                  )}
-                  Live
-                </span>
-              )}
+              <div className="shrink-0 flex items-center gap-1 pt-0.5">
+                <StatusBadge status={status} label={motionLabel} size="sm" />
+                {live && (
+                  <span className="inline-flex items-center gap-1 text-[9px] text-status-moving font-medium">
+                    {quietlyRefreshing ? (
+                      <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                    ) : (
+                      <span className="w-1 h-1 rounded-full bg-status-moving animate-pulse" />
+                    )}
+                    Live
+                  </span>
+                )}
+              </div>
             </div>
             <div className="mt-0.5 flex items-start gap-1 text-[10px] text-muted-foreground">
               <MapPin className="h-2.5 w-2.5 shrink-0 mt-[2px]" />
@@ -410,7 +437,7 @@ export function UnitDetailPanel({
         {!stationary && (
           <Stat icon={Navigation} label="Odo" value={formatCounter(mileage, "km")} />
         )}
-        <Stat icon={Fuel} label="Fuel" value={fuelDisplay} />
+        <Stat icon={Fuel} label="Fuel" value={fuelDisplay} allowWrap />
         {engineAsset ? (
           <Stat
             icon={Clock}
@@ -441,10 +468,7 @@ export function UnitDetailPanel({
               <KvRows
                 rows={sensors.map((s, i) => ({
                   key: s.param ? `${s.name} (${s.param})` : s.name || `Sensor ${i + 1}`,
-                  value:
-                    String(s.value ?? "").trim() === ""
-                      ? "—"
-                      : `${s.value}${s.unit ? ` ${s.unit}` : ""}`,
+                  value: s.display || "—",
                 }))}
               />
             </DetailSection>
@@ -466,7 +490,7 @@ export function UnitDetailPanel({
               <KvRows
                 rows={messageParams.map((p) => ({
                   key: p.key,
-                  value: p.value === "" ? "—" : p.value,
+                  value: p.display || "—",
                   mono: true,
                 }))}
               />
@@ -546,7 +570,7 @@ export function UnitDetailPanel({
           {detailPending && !detail && wialonId && (
             <p className="text-[10px] text-muted-foreground flex items-center gap-1">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Loading asset details…
+              Loading sensors…
             </p>
           )}
 

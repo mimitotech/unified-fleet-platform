@@ -137,9 +137,13 @@ export function FleetListTable({
                       title={u.name}
                     />
                     <div className="min-w-0">
-                      <p className="font-medium truncate">{u.name}</p>
+                      <p className="font-medium leading-snug break-words" title={u.name}>
+                        {u.name}
+                      </p>
                       {unitPlateLabel(u) && (
-                        <p className="text-xs text-muted-foreground font-mono truncate">{unitPlateLabel(u)}</p>
+                        <p className="text-xs text-muted-foreground font-mono mt-0.5">
+                          {unitPlateLabel(u)}
+                        </p>
                       )}
                     </div>
                   </div>

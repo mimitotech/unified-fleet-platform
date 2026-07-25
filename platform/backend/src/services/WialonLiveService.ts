@@ -667,7 +667,8 @@ export class WialonLiveService {
   static async getUnitDetail(credentials: WialonCredentialsInput, unitId: number) {
     return withWialonClient(credentials, async (client) => {
       const accountId = this.scopedAccount(credentials);
-      const hwTypes = await loadWialonHwTypes(client, `hw:${accountId ?? 'all'}`);
+      // Kick off HW types in parallel with the unit lookup (cached after first hit).
+      const hwPromise = loadWialonHwTypes(client, `hw:${accountId ?? 'all'}`);
 
       const result = await client.request<{ item?: WialonSearchItem }>('core/search_item', {
         id: unitId,
@@ -676,71 +677,44 @@ export class WialonLiveService {
       const item = result.item;
       if (!item) throw new Error('Unit not found');
 
-      let calcSensors: Array<{ n: string; v: string; u?: string; t?: number }> = [];
-      try {
-        const sens = await client.request<{ sensors?: Array<{ n: string; v: string; u?: string; t?: number }> }>(
-          'unit/calc_last_message',
-          { unitId, sensors: [], flags: 1 }
-        );
-        calcSensors = sens.sensors || [];
-      } catch {
-        /* sensors optional */
-      }
+      const sensorIds = item.sens
+        ? Object.keys(item.sens)
+            .map((id) => Number(id))
+            .filter((id) => Number.isFinite(id) && id > 0)
+        : [];
 
-      // Some accounts return empty when sensors=[] — retry with explicit sensor ids.
-      if (!calcSensors.length && item.sens) {
-        const sensorIds = Object.keys(item.sens)
-          .map((id) => Number(id))
-          .filter((id) => Number.isFinite(id) && id > 0);
-        if (sensorIds.length) {
+      // Sensors + optional video/fuel in parallel. Skip events/check_updates —
+      // that round-trip was the main delay; calibrated sensors already carry fuel.
+      const [hwTypes, calcSensors, video, fuelSettings] = await Promise.all([
+        hwPromise,
+        (async () => {
           try {
-            const sens = await client.request<{ sensors?: Array<{ n: string; v: string; u?: string; t?: number }> }>(
-              'unit/calc_last_message',
-              { unitId, sensors: sensorIds, flags: 1 }
-            );
-            calcSensors = sens.sensors || [];
+            const sens = await client.request<{
+              sensors?: Array<{ n: string; v: string; u?: string; t?: number }>;
+            }>('unit/calc_last_message', { unitId, sensors: [], flags: 1 });
+            if (sens.sensors?.length) return sens.sensors;
           } catch {
-            /* keep empty */
+            /* retry below */
           }
-        }
-      }
+          if (!sensorIds.length) return [] as Array<{ n: string; v: string; u?: string; t?: number }>;
+          try {
+            const sens = await client.request<{
+              sensors?: Array<{ n: string; v: string; u?: string; t?: number }>;
+            }>('unit/calc_last_message', { unitId, sensors: sensorIds, flags: 1 });
+            return sens.sensors || [];
+          } catch {
+            return [];
+          }
+        })(),
+        client
+          .request<Record<string, unknown>>('unit/get_video_settings', { itemId: unitId })
+          .catch(() => undefined),
+        client
+          .request<Record<string, unknown>>('unit/get_fuel_settings', { itemId: unitId })
+          .catch(() => undefined),
+      ]);
 
-      let video: Record<string, unknown> | undefined;
-      try {
-        video = await client.request<Record<string, unknown>>('unit/get_video_settings', { itemId: unitId });
-      } catch {
-        /* video optional */
-      }
-
-      let fuelSettings: Record<string, unknown> | undefined;
-      try {
-        fuelSettings = await client.request<Record<string, unknown>>('unit/get_fuel_settings', {
-          itemId: unitId,
-        });
-      } catch {
-        /* fuel settings optional */
-      }
-
-      let liveLls: import('./wialonFuel.js').WialonLlsReading[] | undefined;
-      try {
-        await subscribeFleetUnitsEvents(client, [unitId]);
-        const ev = await client.request<Record<string, unknown>>('events/check_updates', {
-          lang: 'en',
-          measure: 0,
-          detalization: 0x27,
-        });
-        const block = ev?.[String(unitId)] as Record<string, unknown> | undefined;
-        if (block?.lls) {
-          const sensDefs = item.sens
-            ? Object.entries(item.sens).map(([id, s]) => ({ id: Number(id), name: s?.n || `Sensor ${id}` }))
-            : [];
-          liveLls = mergeLlsWithSensorNames(parseWialonLlsBlock(block.lls), sensDefs.filter((s) => s.id > 0));
-        }
-      } catch {
-        /* live fuel optional */
-      }
-
-      return parseWialonUnitDetail(item, hwTypes, calcSensors, video, fuelSettings, liveLls);
+      return parseWialonUnitDetail(item, hwTypes, calcSensors, video, fuelSettings);
     });
   }
 

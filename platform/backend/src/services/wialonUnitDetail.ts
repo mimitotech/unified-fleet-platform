@@ -120,7 +120,7 @@ function parseHealthAndIo(lmsg?: { params?: Record<string, string | number> }, p
     if (parts[1] === 'out') {
       ioOutputs.push({ key, label: `Output ${parts[2]}`, state: on ? 'ON' : 'OFF' });
     } else if (parts.length >= 3) {
-      ioInputs.push({ key, label: `Input ${parts[2]}`, state: on ? 'High' : 'Low' });
+      ioInputs.push({ key, label: `Input ${parts[2]}`, state: on ? 'ON' : 'OFF' });
     }
   }
 

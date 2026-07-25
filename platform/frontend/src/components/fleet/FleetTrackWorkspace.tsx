@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { UnitTypeIcon } from '@/components/fleet/UnitTypeIcon';
+import { formatReadingValue } from '@/lib/formatReading';
 import { Loader2, Maximize2, Minimize2, Pause, Play, SkipBack, SkipForward } from 'lucide-react';
 
 const PERIODS: { id: TrackPeriod; label: string; unit: string }[] = [
@@ -170,10 +171,14 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
     return Object.entries(raw)
       .filter(([, v]) => v !== '' && v != null)
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, value]) => ({
-        key,
-        value: typeof value === 'number' ? String(Math.round(value * 1000) / 1000) : String(value),
-      }));
+      .map(([key, value]) => {
+        const asText =
+          typeof value === 'number' ? String(Math.round(value * 1000) / 1000) : String(value);
+        return {
+          key,
+          value: formatReadingValue(key, asText),
+        };
+      });
   }, [playhead]);
 
   const jumpToTrip = useCallback(
@@ -365,8 +370,10 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
                 >
                   <UnitTypeIcon wialonId={u.wialonId} iconUgi={u.iconUgi} size="sm" title={u.name} />
                   <div className="min-w-0 flex-1">
-                    <p className="text-[11px] font-medium truncate leading-tight">{u.name}</p>
-                    <p className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">
+                    <p className="text-[11px] font-medium leading-snug break-words" title={u.name}>
+                      {u.name}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">
                       {formatFuelDisplay(u)}
                       {u.plate ? ` · ${u.plate}` : ''}
                     </p>
@@ -508,7 +515,9 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
           <div className="shrink-0 border-b border-border/50 px-3 py-2.5 space-y-1">
             <div className="flex items-center gap-2 min-w-0">
               <span className="h-2 w-2 rounded-sm shrink-0" style={{ background: ROUTE_LINE_COLOR }} />
-              <p className="text-[12px] font-semibold truncate">{selected?.name}</p>
+              <p className="text-[12px] font-semibold leading-snug break-words" title={selected?.name}>
+                {selected?.name}
+              </p>
             </div>
             <p className="text-[10px] text-muted-foreground tabular-nums">
               {format(new Date(playhead.time * 1000), 'dd.MM.yyyy HH:mm:ss')}

@@ -114,7 +114,9 @@ export function FleetMapSidebar({
             >
               <UnitTypeIcon size="sm" wialonId={u.wialonId} iconUgi={u.iconUgi} title={u.name} />
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium leading-tight line-clamp-2">{u.name}</p>
+                <p className="text-xs font-medium leading-snug break-words" title={u.name}>
+                  {u.name}
+                </p>
                 {unitPlateLabel(u) && (
                   <p className="text-[10px] text-muted-foreground mt-0.5">{unitPlateLabel(u)}</p>
                 )}

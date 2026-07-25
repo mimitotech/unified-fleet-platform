@@ -80,7 +80,8 @@ export function createWialonLiveHandlers(loadCreds: CredsLoader) {
       if (!unitId) return error(res, 'Invalid unit id');
       try {
         const creds = await loadCreds(req);
-        const detail = await WialonLiveService.getUnitDetailWithAddress(creds, unitId);
+        // Address is resolved on the client via /geocode so sensors/fuel return immediately.
+        const detail = await WialonLiveService.getUnitDetail(creds, unitId);
         return success(res, { unitId, detail });
       } catch (e) {
         return error(res, (e as Error).message);

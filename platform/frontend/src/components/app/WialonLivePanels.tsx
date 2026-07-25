@@ -25,6 +25,7 @@ import {
 import { buildReportCsv, columnsFromRows, downloadReportCsv } from '@/lib/reportCsv';
 import { buildReportFilename } from '@/lib/reportFilename';
 import { useTenantBranding } from '@/hooks/useTenantBranding';
+import { formatReadingValue } from '@/lib/formatReading';
 
 function LiveHeader({
   title,
@@ -403,8 +404,13 @@ export function WialonSensorsPanel() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             {sensorRows.map((s) => (
               <div key={s.name} className="rounded border p-2">
-                <p className="text-[10px] text-muted-foreground">{s.name}</p>
-                <p className="font-semibold">{s.value}{s.unit ? ` ${s.unit}` : ''}</p>
+                <p className="text-[10px] text-muted-foreground break-words">{s.name}</p>
+                <p className="font-semibold">
+                  {formatReadingValue(s.name, s.value, {
+                    unit: s.unit,
+                    unitlessBinary: true,
+                  })}
+                </p>
               </div>
             ))}
           </div>
