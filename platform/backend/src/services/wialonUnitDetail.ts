@@ -4,6 +4,8 @@ import { mapWialonSearchItem, type WialonUnitSlice } from './wialonUnitMapper.js
 import type { WialonHwType } from './wialonHwTypes.js';
 import { parseWialonFuelSettings, type WialonFuelInfo, hasFuelData } from './wialonFuel.js';
 import {
+  readAllUnitSensors,
+  totalLitersFromReadings,
   tankCapacityFromItem,
   fuelPercentFromLitres,
 } from './wialonFuelSensorUtils.js';
@@ -187,21 +189,35 @@ export function parseWialonUnitDetail(
   const pos = slice.position;
   const extras = parseHealthAndIo(slice.lmsg, item.pos);
 
-  // Sensors = Wialon calc_last_message (+ exact configured param). Do not overwrite
-  // with our calibration tables — Monitoring must mirror Hosting as it is now.
-  const sensors = mergeSensorValues(slice, calcSensors || []);
-  const fuel = parseWialonFuelSettings(fuelSettings, sensors, liveLls);
-  const capacity = tankCapacityFromItem(item);
+  let sensors = mergeSensorValues(slice, calcSensors || []);
 
-  // Percent only when litres and declared capacity are both present — never invent %.
-  if (
-    fuel.levelLiters != null &&
-    fuel.levelLiters > 0 &&
-    capacity &&
-    capacity > 0 &&
-    fuel.level == null
-  ) {
-    fuel.level = fuelPercentFromLitres(fuel.levelLiters, capacity) ?? undefined;
+  // Apply the calibration table configured on the sensor for this asset. That
+  // table is part of the asset's setup, so the calibrated litres — not the raw
+  // ADC count behind them — are the real configured reading.
+  const calibrated = readAllUnitSensors(item);
+  if (calibrated.length) {
+    const byName = new Map(calibrated.map((r) => [r.name, r]));
+    const byId = new Map(calibrated.map((r) => [r.sensorId, r]));
+    sensors = sensors.map((s) => {
+      const hit = (s.id ? byId.get(s.id) : undefined) || byName.get(s.name);
+      if (!hit) return s;
+      return {
+        ...s,
+        value: String(hit.value),
+        unit: hit.unit || s.unit || (hit.isFuelLevel ? 'L' : undefined),
+      };
+    });
+  }
+
+  const fuel = parseWialonFuelSettings(fuelSettings, sensors, liveLls);
+  const calibratedLiters = calibrated.length ? totalLitersFromReadings(calibrated) : 0;
+  const capacity = tankCapacityFromItem(item);
+  if (calibratedLiters > 0) {
+    fuel.levelLiters = calibratedLiters;
+    fuel.levelFormatted = `${calibratedLiters} L`;
+    if (capacity && capacity > 0) {
+      fuel.level = fuelPercentFromLitres(calibratedLiters, capacity) ?? undefined;
+    }
   }
 
   return {

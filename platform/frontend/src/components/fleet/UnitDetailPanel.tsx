@@ -114,36 +114,50 @@ function formatCounter(value?: number, unit?: "km" | "h"): string {
   return `${value.toFixed(1)} km`;
 }
 
+function isBlankValue(value: unknown): boolean {
+  const v = String(value ?? "").trim();
+  return !v || v === "—" || v === "-" || v === "n/a" || v === "null";
+}
+
+/** Raw port/counter keys are device plumbing, not configured asset detail. */
+function isConfiguredParam(p: { key: string; value: string }): boolean {
+  const key = (p.key || "").toLowerCase();
+  if (isBlankValue(p.value)) return false;
+  if (/^in\d+$/.test(key) || /^out\d+$/.test(key)) return false;
+  if (/^adc\d+$/.test(key) && Number(p.value) === 0) return false;
+  return true;
+}
+
 /**
- * Fuel tile from the live Wialon detail only — no fleet-snapshot fallback and
- * no ADC heuristics. Empty when this asset has no fuel reading in Wialon.
+ * Fuel from the asset's configured level sensors — the calibrated litres, with
+ * percent only against a declared tank capacity. Blank when this asset has no
+ * fuel monitoring configured; nothing is substituted.
  */
-function wialonFuelLabel(detail: {
-  fuel?: {
-    levelLiters?: number;
-    levelFormatted?: string;
-    level?: number | null;
-  };
-  fuelLevel?: number | null;
-  sensors?: Array<{ name: string; value: string; unit?: string; type?: string }>;
-} | null | undefined): string {
+function configuredFuelLabel(
+  detail:
+    | {
+        fuel?: {
+          levelLiters?: number;
+          levelFormatted?: string;
+          level?: number | null;
+        };
+        fuelLevel?: number | null;
+      }
+    | null
+    | undefined,
+): string {
   if (!detail) return "—";
+  const litres = detail.fuel?.levelLiters;
+  const pct = detail.fuel?.level ?? detail.fuelLevel;
+  if (litres != null && Number.isFinite(litres) && litres > 0) {
+    const rounded = Math.round(litres * 10) / 10;
+    return pct != null && pct > 0 && pct <= 100
+      ? `${rounded} L (${Math.round(pct)}%)`
+      : `${rounded} L`;
+  }
+  if (pct != null && pct > 0 && pct <= 100) return `${Math.round(pct)}%`;
   const fmt = (detail.fuel?.levelFormatted || "").trim();
-  if (fmt) return fmt;
-  if (detail.fuel?.levelLiters != null && Number.isFinite(detail.fuel.levelLiters)) {
-    const L = Math.round(detail.fuel.levelLiters * 10) / 10;
-    const pct = detail.fuel.level ?? detail.fuelLevel;
-    return pct != null && pct > 0 && pct <= 100 ? `${L} L (${Math.round(pct)}%)` : `${L} L`;
-  }
-  const fuelSensor = (detail.sensors || []).find((s) => {
-    const blob = `${s.name} ${s.type || ""} ${s.unit || ""}`.toLowerCase();
-    return /fuel|lls|tank/.test(blob) && String(s.value ?? "").trim() !== "";
-  });
-  if (fuelSensor) {
-    const v = String(fuelSensor.value).trim();
-    return fuelSensor.unit ? `${v} ${fuelSensor.unit}` : v;
-  }
-  return "—";
+  return fmt || "—";
 }
 
 export function UnitDetailPanel({
@@ -204,7 +218,8 @@ export function UnitDetailPanel({
     lat != null &&
     lng != null;
 
-  // —— Exact Wialon lists: no usefulness filters, no row caps ——
+  // Every configured sensor / field for this asset — no row caps, but nothing
+  // with an empty reading and no raw device plumbing.
   const sensors = useMemo(
     () =>
       safeArray<{
@@ -213,14 +228,14 @@ export function UnitDetailPanel({
         unit?: string;
         type?: string;
         param?: string;
-      }>(detail?.sensors),
+      }>(detail?.sensors).filter((s) => !isBlankValue(s.value)),
     [detail?.sensors],
   );
   const messageParams = useMemo(
     () =>
       safeArray<{ key: string; value: string }>(
         detail?.messageParams?.length ? detail.messageParams : detail?.prms,
-      ),
+      ).filter(isConfiguredParam),
     [detail?.messageParams, detail?.prms],
   );
   const customFields = useMemo(
@@ -253,14 +268,6 @@ export function UnitDetailPanel({
       ),
     [detail?.fuel],
   );
-  const properties = useMemo(() => {
-    const prp = (detail?.prp || {}) as Record<string, string>;
-    return Object.entries(prp)
-      .filter(([, v]) => v != null && String(v).trim() !== "")
-      .map(([key, value]) => ({ key, value: String(value) }))
-      .sort((a, b) => a.key.localeCompare(b.key));
-  }, [detail?.prp]);
-
   if (!unit) {
     return (
       <div
@@ -307,7 +314,7 @@ export function UnitDetailPanel({
   const isVideoUnit =
     isFleetVideoDevice(unit) || Boolean(video && Object.keys(video).length);
 
-  const fuelDisplay = wialonFuelLabel(detail);
+  const fuelDisplay = configuredFuelLabel(detail);
 
   const showScrollable = showControls;
 
@@ -321,12 +328,12 @@ export function UnitDetailPanel({
       {loadingAsset && (
         <div className="absolute inset-x-0 top-0 z-20 flex items-center gap-2 px-3 py-2 bg-primary/8 border-b border-primary/20 text-xs text-primary backdrop-blur-sm">
           <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
-          <span>Loading live Wialon data…</span>
+          <span>Loading asset details…</span>
         </div>
       )}
       {detailError && !loadingAsset && enabled && (
         <div className="absolute inset-x-0 top-0 z-20 px-3 py-2 bg-destructive/10 border-b border-destructive/20 text-xs text-destructive">
-          Could not refresh live Wialon detail for this asset.
+          Could not refresh live details for this asset.
         </div>
       )}
 
@@ -455,7 +462,7 @@ export function UnitDetailPanel({
           )}
 
           {messageParams.length > 0 && (
-            <DetailSection title={`Message parameters · ${messageParams.length}`}>
+            <DetailSection title={`Live parameters · ${messageParams.length}`}>
               <KvRows
                 rows={messageParams.map((p) => ({
                   key: p.key,
@@ -494,18 +501,6 @@ export function UnitDetailPanel({
                 rows={profileFields.map((f) => ({
                   key: f.name,
                   value: f.value === "" ? "—" : f.value,
-                }))}
-              />
-            </DetailSection>
-          )}
-
-          {properties.length > 0 && !compact && (
-            <DetailSection title={`Unit properties · ${properties.length}`}>
-              <KvRows
-                rows={properties.map((p) => ({
-                  key: p.key,
-                  value: p.value,
-                  mono: true,
                 }))}
               />
             </DetailSection>
@@ -551,7 +546,7 @@ export function UnitDetailPanel({
           {detailPending && !detail && wialonId && (
             <p className="text-[10px] text-muted-foreground flex items-center gap-1">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Loading live Wialon data…
+              Loading asset details…
             </p>
           )}
 
@@ -560,8 +555,7 @@ export function UnitDetailPanel({
             messageParams.length === 0 &&
             customFields.length === 0 && (
               <p className="text-[10px] text-muted-foreground">
-                Wialon returned no sensors, message parameters, or custom fields for
-                this asset.
+                No sensors or fields are configured for this asset.
               </p>
             )}
         </div>

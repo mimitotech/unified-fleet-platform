@@ -332,7 +332,7 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
           </button>
         </div>
         {!connected && (
-          <p className="text-[10px] text-amber-700 leading-snug">Wialon link idle — connect in Admin.</p>
+          <p className="text-[10px] text-amber-700 leading-snug">Tracking link idle — connect in Admin.</p>
         )}
       </div>
 
@@ -402,7 +402,7 @@ export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }
           <div className="rounded-md border border-destructive/25 bg-destructive/5 px-2.5 py-2 space-y-1.5">
             <p className="text-[11px] font-medium text-destructive">Could not load track</p>
             <p className="text-[10px] text-muted-foreground leading-snug break-words">
-              {errorMessage || 'Wialon request failed'}
+              {errorMessage || 'Track request failed'}
             </p>
             <Button type="button" size="sm" variant="outline" className="h-7 w-full text-[11px]" onClick={() => refetch()}>
               Retry

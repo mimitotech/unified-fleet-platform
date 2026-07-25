@@ -222,8 +222,8 @@ export function WialonReportsPanel() {
     const columns = columnsFromRows(reportRows);
     const csv = buildReportCsv({
       meta: {
-        title: template?.name || 'Wialon live report',
-        moduleLabel: 'Wialon',
+        title: template?.name || 'Live report',
+        moduleLabel: 'Live reports',
         clientName: branding.name,
         periodLabel: 'Last 7 days',
         objectLabel: selectedUnitName || selectedUnit || undefined,
@@ -232,7 +232,7 @@ export function WialonReportsPanel() {
           ...(template?.resourceName ? [{ label: 'Resource', value: template.resourceName }] : []),
           ...(template ? [{ label: 'Template id', value: String(template.id) }] : []),
         ],
-        notes: ['Live Wialon template export for the selected unit over the last 7 days.'],
+        notes: ['Live template export for the selected unit over the last 7 days.'],
       },
       columns,
       rows: reportRows,
@@ -241,7 +241,7 @@ export function WialonReportsPanel() {
       csv,
       `${buildReportFilename({
         clientName: branding.name,
-        reportName: template?.name || 'Wialon_Report',
+        reportName: template?.name || 'Live_Report',
         unitName: selectedUnitName,
       })}.csv`,
     );
