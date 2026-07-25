@@ -20,7 +20,6 @@ import { UnitTypeIcon } from "@/components/fleet/UnitTypeIcon";
 import { WialonCommandButton } from "@/components/fleet/WialonCommandButton";
 import {
   hasEngineHoursData,
-  formatFuelDisplay,
   isFleetVideoDevice,
   type FleetUnit,
 } from "@/lib/fleetUnits";
@@ -82,52 +81,30 @@ function DetailSection({
   );
 }
 
-type SensorRow = {
-  name: string;
-  value: string | number;
-  unit?: string;
-  type?: string;
-};
-
-function sensorGroup(name: string, type?: string): string {
-  const blob = `${name} ${type || ""}`.toLowerCase();
-  if (/fuel|lls|tank|litre|liter/.test(blob)) return "Fuel";
-  if (/ignition|acc|engine\s*on|engine\s*off|rpm|moto/.test(blob))
-    return "Powertrain";
-  if (/batter|voltage|pwr|power|volt|amp/.test(blob)) return "Power / Battery";
-  if (/temp|coolant|thermo|ambient/.test(blob)) return "Temperature";
-  if (/door|hatch|boot|trunk|cover/.test(blob)) return "Doors / Security";
-  if (/speed|gps|sat|hdop|altitude|course|odometer|mileage/.test(blob))
-    return "Location / Motion";
-  if (/hour|mh\b|counter/.test(blob)) return "Counters";
-  return "Other";
-}
-
-const SENSOR_GROUP_ORDER = [
-  "Fuel",
-  "Powertrain",
-  "Power / Battery",
-  "Temperature",
-  "Doors / Security",
-  "Location / Motion",
-  "Counters",
-  "Other",
-];
-
-function groupSensors(
-  sensors: SensorRow[],
-): Array<{ group: string; items: SensorRow[] }> {
-  const map = new Map<string, SensorRow[]>();
-  for (const s of sensors) {
-    const g = sensorGroup(s.name, s.type);
-    const list = map.get(g) || [];
-    list.push(s);
-    map.set(g, list);
-  }
-  return SENSOR_GROUP_ORDER.filter((g) => map.has(g)).map((g) => ({
-    group: g,
-    items: map.get(g)!,
-  }));
+function KvRows({
+  rows,
+}: {
+  rows: Array<{ key: string; value: string; mono?: boolean }>;
+}) {
+  if (!rows.length) return null;
+  return (
+    <div className="rounded border border-border/40 divide-y divide-border/30 overflow-hidden">
+      {rows.map((r) => (
+        <div
+          key={r.key}
+          className={cn(
+            "flex justify-between gap-2 px-2 py-1 bg-card/40",
+            r.mono && "font-mono text-[10px]",
+          )}
+        >
+          <span className="text-muted-foreground truncate min-w-0">{r.key}</span>
+          <span className="font-semibold shrink-0 text-right break-all tabular-nums">
+            {r.value}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function formatCounter(value?: number, unit?: "km" | "h"): string {
@@ -137,80 +114,36 @@ function formatCounter(value?: number, unit?: "km" | "h"): string {
   return `${value.toFixed(1)} km`;
 }
 
-/** Device battery may arrive as %, volts, or millivolts — never show raw ADC as "%". */
-function formatBatteryReading(value: number): string {
-  if (value <= 100) return `${Math.round(value)}%`;
-  if (value < 60) return `${value.toFixed(1)} V`;
-  if (value < 100_000) return `${(value / 1000).toFixed(2)} V`;
-  return String(Math.round(value));
-}
-
-function isEmptySensorValue(value: unknown): boolean {
-  const v = String(value ?? "").trim();
-  return !v || v === "—" || v === "-" || v === "n/a" || v === "null";
-}
-
-function isUsefulSensor(s: SensorRow): boolean {
-  if (isEmptySensorValue(s.value)) return false;
-  const name = (s.name || "").toLowerCase();
-  if (/^in\d+$/i.test(name) || /^out\d+$/i.test(name)) return false;
-  return true;
-}
-
-function isUsefulParam(p: { key: string; value: string }): boolean {
-  const key = (p.key || "").toLowerCase();
-  if (/^in\d+$/.test(key) || /^out\d+$/.test(key)) return false;
-  if (/^adc\d+$/.test(key) && (p.value === "0" || p.value === "0.0")) return false;
-  if (isEmptySensorValue(p.value)) return false;
-  return true;
-}
-
-function formatParamValue(key: string, value: string): string {
-  const k = key.toLowerCase();
-  const n = Number(value);
-  if (!Number.isFinite(n)) return value;
-  if (k === "odometer" || k === "mileage") {
-    if (n > 100_000) return `${Math.round(n / 1000)} km`;
-    return `${Math.round(n)} km`;
-  }
-  if (k === "battery" || k === "pwr_int" || k === "pwr_ext") {
-    return formatBatteryReading(n);
-  }
-  return value;
-}
-
-/** Prefer calibrated fleet litres over raw ADC from unit-detail calcSensors. */
-function resolveDisplayFuel(
-  unit: FleetUnit,
-  detail?: {
-    fuel?: { levelLiters?: number; levelFormatted?: string };
-    fuelLevel?: number;
-  } | null,
-): Parameters<typeof formatFuelDisplay>[0] {
-  const capacity = unit.tankCapacity;
-  const fleetL = unit.fuelLiters;
-  const detailL = detail?.fuel?.levelLiters;
-  let litres = detailL ?? fleetL;
-
-  if (fleetL != null && Number.isFinite(fleetL)) {
-    if (detailL == null) {
-      litres = fleetL;
-    } else if (capacity && capacity > 0) {
-      if (detailL > capacity * 1.5 && fleetL <= capacity * 1.25) litres = fleetL;
-    } else if (detailL > 800 && fleetL < 500 && detailL / Math.max(fleetL, 1) > 4) {
-      litres = fleetL;
-    }
-  }
-
-  return {
-    fuelLiters: litres,
-    fuelFormatted:
-      litres === fleetL
-        ? unit.fuelFormatted
-        : detail?.fuel?.levelFormatted ?? unit.fuelFormatted,
-    fuelLevel: detail?.fuelLevel ?? unit.fuelLevel,
-    tankCapacity: capacity,
+/**
+ * Fuel tile from the live Wialon detail only — no fleet-snapshot fallback and
+ * no ADC heuristics. Empty when this asset has no fuel reading in Wialon.
+ */
+function wialonFuelLabel(detail: {
+  fuel?: {
+    levelLiters?: number;
+    levelFormatted?: string;
+    level?: number | null;
   };
+  fuelLevel?: number | null;
+  sensors?: Array<{ name: string; value: string; unit?: string; type?: string }>;
+} | null | undefined): string {
+  if (!detail) return "—";
+  const fmt = (detail.fuel?.levelFormatted || "").trim();
+  if (fmt) return fmt;
+  if (detail.fuel?.levelLiters != null && Number.isFinite(detail.fuel.levelLiters)) {
+    const L = Math.round(detail.fuel.levelLiters * 10) / 10;
+    const pct = detail.fuel.level ?? detail.fuelLevel;
+    return pct != null && pct > 0 && pct <= 100 ? `${L} L (${Math.round(pct)}%)` : `${L} L`;
+  }
+  const fuelSensor = (detail.sensors || []).find((s) => {
+    const blob = `${s.name} ${s.type || ""} ${s.unit || ""}`.toLowerCase();
+    return /fuel|lls|tank/.test(blob) && String(s.value ?? "").trim() !== "";
+  });
+  if (fuelSensor) {
+    const v = String(fuelSensor.value).trim();
+    return fuelSensor.unit ? `${v} ${fuelSensor.unit}` : v;
+  }
+  return "—";
 }
 
 export function UnitDetailPanel({
@@ -234,6 +167,7 @@ export function UnitDetailPanel({
     isError: detailError,
   } = useWialonUnitDetail(wialonId ?? null, enabled, live);
 
+  // Prefer Wialon detail position for geocode so we resolve the live point.
   const lat = detail?.position?.lat ?? unit?.lat;
   const lng = detail?.position?.lng ?? unit?.lng;
   const { data: geocode, isPending: geoPending } = useWialonGeocode(
@@ -243,8 +177,6 @@ export function UnitDetailPanel({
     live,
   );
 
-  // Only block the panel on the *first* load. Live polls set isFetching every few
-  // seconds — showing "Loading asset data…" then makes the UI feel unstable.
   const loadingAsset = enabled && detailPending && !detail;
   const quietlyRefreshing = enabled && detailFetching && !!detail;
   const { data: commandsPayload } = useWialonUnitCommands(
@@ -271,17 +203,63 @@ export function UnitDetailPanel({
     geoPending &&
     lat != null &&
     lng != null;
-  const sensors = detail?.sensors || [];
-  // Must run before any early return — React #310 if hooked only when unit is set.
-  const sensorGroups = useMemo(
-    () => groupSensors((sensors as SensorRow[]).filter(isUsefulSensor)),
-    [sensors],
-  );
-  const usefulParams = useMemo(
+
+  // —— Exact Wialon lists: no usefulness filters, no row caps ——
+  const sensors = useMemo(
     () =>
-      safeArray<{ key: string; value: string }>(detail?.prms).filter(isUsefulParam),
-    [detail?.prms],
+      safeArray<{
+        name: string;
+        value: string | number;
+        unit?: string;
+        type?: string;
+        param?: string;
+      }>(detail?.sensors),
+    [detail?.sensors],
   );
+  const messageParams = useMemo(
+    () =>
+      safeArray<{ key: string; value: string }>(
+        detail?.messageParams?.length ? detail.messageParams : detail?.prms,
+      ),
+    [detail?.messageParams, detail?.prms],
+  );
+  const customFields = useMemo(
+    () => safeArray<{ name: string; value: string }>(detail?.flds),
+    [detail?.flds],
+  );
+  const profileFields = useMemo(
+    () => safeArray<{ name: string; value: string }>(detail?.profileFields),
+    [detail?.profileFields],
+  );
+  const maintenance = useMemo(
+    () =>
+      safeArray<{ name: string; detail?: string; counter?: number; threshold?: number }>(
+        detail?.maintenance,
+      ),
+    [detail?.maintenance],
+  );
+  const ioInputs = useMemo(
+    () => safeArray<{ label: string; state: string }>(detail?.io?.inputs),
+    [detail?.io],
+  );
+  const ioOutputs = useMemo(
+    () => safeArray<{ label: string; state: string }>(detail?.io?.outputs),
+    [detail?.io],
+  );
+  const fuelTanks = useMemo(
+    () =>
+      safeArray<{ name: string; value: string | number; unit?: string }>(
+        detail?.fuel?.tanks,
+      ),
+    [detail?.fuel],
+  );
+  const properties = useMemo(() => {
+    const prp = (detail?.prp || {}) as Record<string, string>;
+    return Object.entries(prp)
+      .filter(([, v]) => v != null && String(v).trim() !== "")
+      .map(([key, value]) => ({ key, value: String(value) }))
+      .sort((a, b) => a.key.localeCompare(b.key));
+  }, [detail?.prp]);
 
   if (!unit) {
     return (
@@ -299,20 +277,20 @@ export function UnitDetailPanel({
     );
   }
 
+  // Once live detail is in, prefer it over the fleet snapshot for every field.
   const displayName = detail?.name || unit.name;
   const status = (detail?.status as FleetUnit["status"]) || unit.status;
   const motionLabel = detail?.motionState || unit.motionState;
-  const speed = detail?.position?.speed ?? unit.speed;
-  const course = detail?.position?.course ?? unit.course;
-  const mileage = detail?.counters?.mileage ?? unit.mileage;
+  const speed = detail?.position?.speed ?? (detail ? undefined : unit.speed);
+  const course = detail?.position?.course ?? (detail ? undefined : unit.course);
+  const mileage = detail?.counters?.mileage ?? (detail ? undefined : unit.mileage);
   const stationary =
     unit.stationary === true ||
     unit.assetCategory === "generator" ||
     unit.assetCategory === "machinery";
-  const engineHours = detail?.counters?.engineHours ?? unit.engineHours;
+  const engineHours =
+    detail?.counters?.engineHours ?? (detail ? undefined : unit.engineHours);
   const lastAge = detail?.lastUpdateAge;
-  const parameters = usefulParams;
-  const customFields = detail?.flds || [];
   const video = detail?.video;
   const health = detail?.health as
     | {
@@ -322,16 +300,16 @@ export function UnitDetailPanel({
         altitude?: number;
       }
     | undefined;
-  const engineAsset = hasEngineHoursData({ ...unit, engineHours });
+  const engineAsset = hasEngineHoursData({
+    ...unit,
+    engineHours: engineHours ?? unit.engineHours,
+  });
   const isVideoUnit =
     isFleetVideoDevice(unit) || Boolean(video && Object.keys(video).length);
 
-  const fuelDisplay = formatFuelDisplay(resolveDisplayFuel(unit, detail));
+  const fuelDisplay = wialonFuelLabel(detail);
 
-  const showScrollable =
-    showControls && (!compact || sensors.length > 0 || parameters.length > 0);
-  const sensorLimit = compact ? 6 : 16;
-  const paramLimit = compact ? 8 : 14;
+  const showScrollable = showControls;
 
   return (
     <div
@@ -343,15 +321,15 @@ export function UnitDetailPanel({
       {loadingAsset && (
         <div className="absolute inset-x-0 top-0 z-20 flex items-center gap-2 px-3 py-2 bg-primary/8 border-b border-primary/20 text-xs text-primary backdrop-blur-sm">
           <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
-          <span>Loading asset data…</span>
+          <span>Loading live Wialon data…</span>
         </div>
       )}
       {detailError && !loadingAsset && enabled && (
         <div className="absolute inset-x-0 top-0 z-20 px-3 py-2 bg-destructive/10 border-b border-destructive/20 text-xs text-destructive">
-          Could not refresh live sensors — showing last known fleet data.
+          Could not refresh live Wialon detail for this asset.
         </div>
       )}
-      {/* Header — compact */}
+
       <div
         className={cn(
           "shrink-0 border-b border-border/50 px-2.5 py-2",
@@ -382,7 +360,6 @@ export function UnitDetailPanel({
                 </span>
               )}
             </div>
-            {/* Full address, wrapped — the place name alone ("Wakiso") is not a location. */}
             <div className="mt-0.5 flex items-start gap-1 text-[10px] text-muted-foreground">
               <MapPin className="h-2.5 w-2.5 shrink-0 mt-[2px]" />
               <p className="min-w-0 leading-snug break-words">
@@ -415,21 +392,16 @@ export function UnitDetailPanel({
         </div>
       </div>
 
-      {/* Stats — dense 3-col */}
       <div className="grid grid-cols-3 gap-1 shrink-0 px-2.5 py-1.5">
         {!stationary && (
           <Stat
             icon={Gauge}
             label="Speed"
-            value={speed != null ? `${Math.round(speed)} km/h` : "0 km/h"}
+            value={speed != null ? `${Math.round(speed)} km/h` : "—"}
           />
         )}
         {!stationary && (
-          <Stat
-            icon={Navigation}
-            label="Odo"
-            value={formatCounter(mileage, "km")}
-          />
+          <Stat icon={Navigation} label="Odo" value={formatCounter(mileage, "km")} />
         )}
         <Stat icon={Fuel} label="Fuel" value={fuelDisplay} />
         {engineAsset ? (
@@ -439,107 +411,139 @@ export function UnitDetailPanel({
             value={formatCounter(engineHours, "h")}
           />
         ) : health?.battery != null && Number.isFinite(health.battery) ? (
-          <Stat
-            icon={Radio}
-            label="Battery"
-            value={formatBatteryReading(health.battery)}
-          />
+          <Stat icon={Radio} label="Battery" value={String(health.battery)} />
         ) : null}
-        {!stationary && course != null && status === "moving" && (
-          <Stat
-            icon={Compass}
-            label="Head"
-            value={`${Math.round(course)}°`}
-          />
+        {!stationary && course != null && (
+          <Stat icon={Compass} label="Head" value={`${Math.round(course)}°`} />
         )}
         {health?.satellites != null && (
-          <Stat
-            icon={Navigation}
-            label="Sats"
-            value={String(health.satellites)}
-          />
+          <Stat icon={Navigation} label="Sats" value={String(health.satellites)} />
+        )}
+        {health?.hdop != null && (
+          <Stat icon={Radio} label="HDOP" value={String(health.hdop)} />
+        )}
+        {health?.altitude != null && (
+          <Stat icon={Navigation} label="Alt" value={`${Math.round(health.altitude)} m`} />
         )}
       </div>
 
-      {/* Scrollable detail — only useful rows */}
       {showScrollable && (
         <div className="flex-1 overflow-auto border-t px-2.5 py-2 space-y-2.5 min-h-0 text-[11px]">
-          {sensorGroups.length > 0 && (
-            <DetailSection title="Sensors">
-              <div className="rounded border border-border/40 divide-y divide-border/30 overflow-hidden">
-                {sensorGroups.flatMap((g) =>
-                  g.items
-                    .slice(0, Math.max(2, Math.ceil(sensorLimit / Math.max(sensorGroups.length, 1))))
-                    .map((s, i) => (
-                      <div
-                        key={`${g.group}-${s.name}-${i}`}
-                        className="flex justify-between gap-2 px-2 py-1 bg-card/40"
-                      >
-                        <span className="text-muted-foreground truncate min-w-0">
-                          {s.name}
-                        </span>
-                        <span className="font-semibold shrink-0 tabular-nums">
-                          {s.value}
-                          {s.unit ? ` ${s.unit}` : ""}
-                        </span>
-                      </div>
-                    )),
-                )}
-              </div>
+          {sensors.length > 0 && (
+            <DetailSection title={`Sensors · ${sensors.length}`}>
+              <KvRows
+                rows={sensors.map((s, i) => ({
+                  key: s.param ? `${s.name} (${s.param})` : s.name || `Sensor ${i + 1}`,
+                  value:
+                    String(s.value ?? "").trim() === ""
+                      ? "—"
+                      : `${s.value}${s.unit ? ` ${s.unit}` : ""}`,
+                }))}
+              />
             </DetailSection>
           )}
 
-          {parameters.length > 0 && (
-            <DetailSection title="Key params">
-              <div className="rounded border border-border/40 divide-y divide-border/30 overflow-hidden">
-                {parameters.slice(0, paramLimit).map((p) => (
-                  <div
-                    key={p.key}
-                    className="flex justify-between gap-2 px-2 py-1 bg-card/40 font-mono text-[10px]"
-                  >
-                    <span className="text-muted-foreground shrink-0 max-w-[40%] truncate">
-                      {p.key}
-                    </span>
-                    <span className="font-medium text-right truncate">
-                      {formatParamValue(p.key, p.value)}
-                    </span>
-                  </div>
-                ))}
-              </div>
+          {fuelTanks.length > 0 && (
+            <DetailSection title="Fuel tanks">
+              <KvRows
+                rows={fuelTanks.map((t) => ({
+                  key: t.name,
+                  value: `${t.value}${t.unit ? ` ${t.unit}` : ""}`,
+                }))}
+              />
             </DetailSection>
           )}
 
-          {customFields.length > 0 && !compact && (
-            <DetailSection title="Custom fields">
-              <dl className="space-y-0.5">
-                {customFields.slice(0, 6).map((f) => (
-                  <div key={f.name} className="flex justify-between gap-2">
-                    <dt className="text-muted-foreground truncate">{f.name}</dt>
-                    <dd className="font-medium text-right truncate">{f.value}</dd>
-                  </div>
-                ))}
-              </dl>
+          {messageParams.length > 0 && (
+            <DetailSection title={`Message parameters · ${messageParams.length}`}>
+              <KvRows
+                rows={messageParams.map((p) => ({
+                  key: p.key,
+                  value: p.value === "" ? "—" : p.value,
+                  mono: true,
+                }))}
+              />
+            </DetailSection>
+          )}
+
+          {(ioInputs.length > 0 || ioOutputs.length > 0) && (
+            <DetailSection title="I/O">
+              <KvRows
+                rows={[
+                  ...ioInputs.map((i) => ({ key: i.label, value: i.state })),
+                  ...ioOutputs.map((o) => ({ key: o.label, value: o.state })),
+                ]}
+              />
+            </DetailSection>
+          )}
+
+          {customFields.length > 0 && (
+            <DetailSection title={`Custom fields · ${customFields.length}`}>
+              <KvRows
+                rows={customFields.map((f) => ({
+                  key: f.name,
+                  value: f.value === "" ? "—" : f.value,
+                }))}
+              />
+            </DetailSection>
+          )}
+
+          {profileFields.length > 0 && (
+            <DetailSection title={`Profile fields · ${profileFields.length}`}>
+              <KvRows
+                rows={profileFields.map((f) => ({
+                  key: f.name,
+                  value: f.value === "" ? "—" : f.value,
+                }))}
+              />
+            </DetailSection>
+          )}
+
+          {properties.length > 0 && !compact && (
+            <DetailSection title={`Unit properties · ${properties.length}`}>
+              <KvRows
+                rows={properties.map((p) => ({
+                  key: p.key,
+                  value: p.value,
+                  mono: true,
+                }))}
+              />
+            </DetailSection>
+          )}
+
+          {maintenance.length > 0 && (
+            <DetailSection title="Service intervals">
+              <KvRows
+                rows={maintenance.map((m) => ({
+                  key: m.name,
+                  value:
+                    m.detail ||
+                    (m.counter != null && m.threshold != null
+                      ? `${m.counter} / ${m.threshold}`
+                      : m.counter != null
+                        ? String(m.counter)
+                        : "—"),
+                }))}
+              />
             </DetailSection>
           )}
 
           {commands && commands.length > 0 && (
             <DetailSection title="Commands">
               <div className="flex flex-wrap gap-1">
-                {commands
-                  .slice(0, compact ? 4 : 6)
-                  .map((c, i) =>
-                    wialonId ? (
-                      <WialonCommandButton
-                        key={`${c.name}-${i}`}
-                        unitId={wialonId}
-                        commandName={c.name}
-                        label={c.label || c.name}
-                        variant="outline"
-                        size="sm"
-                        className="h-6 text-[10px] px-1.5"
-                      />
-                    ) : null,
-                  )}
+                {commands.map((c, i) =>
+                  wialonId ? (
+                    <WialonCommandButton
+                      key={`${c.name}-${i}`}
+                      unitId={wialonId}
+                      commandName={c.name}
+                      label={c.label || c.name}
+                      variant="outline"
+                      size="sm"
+                      className="h-6 text-[10px] px-1.5"
+                    />
+                  ) : null,
+                )}
               </div>
             </DetailSection>
           )}
@@ -547,13 +551,22 @@ export function UnitDetailPanel({
           {detailPending && !detail && wialonId && (
             <p className="text-[10px] text-muted-foreground flex items-center gap-1">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Loading data…
+              Loading live Wialon data…
             </p>
           )}
+
+          {detail &&
+            sensors.length === 0 &&
+            messageParams.length === 0 &&
+            customFields.length === 0 && (
+              <p className="text-[10px] text-muted-foreground">
+                Wialon returned no sensors, message parameters, or custom fields for
+                this asset.
+              </p>
+            )}
         </div>
       )}
 
-      {/* Actions */}
       <div className="shrink-0 border-t bg-muted/20 flex flex-wrap gap-1 p-1.5">
         {onViewOnMap && (
           <Button

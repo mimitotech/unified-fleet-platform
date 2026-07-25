@@ -1080,6 +1080,8 @@ export const clientApi = {
         counters?: { mileage?: number; engineHours?: number };
         prp?: Record<string, string>;
         flds?: Array<{ id: number; name: string; value: string }>;
+        profileFields?: Array<{ id: number; name: string; value: string }>;
+        messageParams?: Array<{ key: string; value: string }>;
         sens?: Array<{ id: number; name: string; type: string; param?: string; unit?: string }>;
         prms?: Array<{ key: string; value: string }>;
         rtd?: Record<string, unknown>;

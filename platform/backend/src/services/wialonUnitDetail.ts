@@ -4,9 +4,6 @@ import { mapWialonSearchItem, type WialonUnitSlice } from './wialonUnitMapper.js
 import type { WialonHwType } from './wialonHwTypes.js';
 import { parseWialonFuelSettings, type WialonFuelInfo, hasFuelData } from './wialonFuel.js';
 import {
-  isFuelLevelSensor,
-  readAllUnitSensors,
-  totalLitersFromReadings,
   tankCapacityFromItem,
   fuelPercentFromLitres,
 } from './wialonFuelSensorUtils.js';
@@ -42,40 +39,29 @@ function mapMaintenance(item: WialonSearchItem) {
     });
 }
 
-function mapCalcSensors(calcSensors: CalcSensor[]) {
-  return calcSensors.map((s) => ({
-    name: s.n,
-    value: s.v,
-    unit: s.u,
-    type: s.t != null ? String(s.t) : undefined,
-  }));
-}
-
+/**
+ * Build the sensor list exactly as Wialon Hosting does:
+ * `unit/calc_last_message` value when present, else the configured parameter
+ * from the last message only (exact `def.param` key — no name aliases).
+ * Never invent a placeholder value.
+ */
 function mergeSensorValues(slice: WialonUnitSlice, calcSensors: CalcSensor[]) {
   const calcByName = new Map(calcSensors.map((s) => [s.n, s]));
   const params = slice.lmsg?.params || {};
 
-  const paramFallback = (def: { name: string; param?: string }) => {
-    if (def.param && params[def.param] != null && params[def.param] !== '') {
-      return String(params[def.param]);
-    }
-    // Common Wialon param aliases on last message
-    const aliases = [def.name, def.param, def.name?.toLowerCase()].filter(Boolean) as string[];
-    for (const key of aliases) {
-      if (key && params[key] != null && params[key] !== '') return String(params[key]);
-    }
-    return undefined;
-  };
-
   const fromDefs = slice.sens.map((def) => {
     const calc = calcByName.get(def.name);
-    const fallback = paramFallback(def);
+    const paramVal =
+      def.param && params[def.param] != null && params[def.param] !== ''
+        ? String(params[def.param])
+        : undefined;
+    const value = calc?.v != null && calc.v !== '' ? String(calc.v) : paramVal ?? '';
     return {
       id: def.id,
       name: def.name,
       type: def.type,
       param: def.param,
-      value: calc?.v ?? fallback ?? '—',
+      value,
       unit: calc?.u ?? def.unit,
     };
   });
@@ -87,12 +73,30 @@ function mergeSensorValues(slice: WialonUnitSlice, calcSensors: CalcSensor[]) {
         name: calc.n,
         type: calc.t != null ? String(calc.t) : '',
         param: undefined,
-        value: calc.v,
+        value: calc.v != null ? String(calc.v) : '',
         unit: calc.u,
       });
     }
   }
   return fromDefs;
+}
+
+function mapProfileFields(item: WialonSearchItem): Array<{ id: number; name: string; value: string }> {
+  if (!item.pflds) return [];
+  return wialonObjectValues(item.pflds)
+    .filter((f) => f?.n)
+    .map((f) => ({ id: f.id ?? 0, name: f.n!, value: String(f.v ?? '') }));
+}
+
+/** Last-message parameters exactly as Wialon sent them on `lmsg.p`. */
+function mapLastMessageParams(
+  lmsg?: { params?: Record<string, string | number> },
+): Array<{ key: string; value: string }> {
+  if (!lmsg?.params) return [];
+  return Object.entries(lmsg.params).map(([key, value]) => ({
+    key,
+    value: value == null ? '' : String(value),
+  }));
 }
 
 function parseHealthAndIo(lmsg?: { params?: Record<string, string | number> }, pos?: { sc?: number; z?: number }) {
@@ -144,6 +148,10 @@ export type WialonUnitDetail = WialonUnitSlice & {
     value: string;
     unit?: string;
   }>;
+  /** Profile fields (`pflds`) exactly as configured on the unit in Wialon. */
+  profileFields?: Array<{ id: number; name: string; value: string }>;
+  /** Raw last-message parameters (`lmsg.p`) — current device payload. */
+  messageParams?: Array<{ key: string; value: string }>;
   maintenance: Array<{
     id?: number;
     name: string;
@@ -153,6 +161,7 @@ export type WialonUnitDetail = WialonUnitSlice & {
   }>;
   video?: Record<string, unknown>;
   address?: string;
+  addressParts?: string[];
   health?: {
     battery?: number;
     hdop?: number;
@@ -177,36 +186,22 @@ export function parseWialonUnitDetail(
   const slice = mapWialonSearchItem(item, hwTypes, calcSensors);
   const pos = slice.position;
   const extras = parseHealthAndIo(slice.lmsg, item.pos);
-  let sensors = mergeSensorValues(slice, calcSensors || []);
 
-  // Prefer calibrated FLS readings (sensor.tbl) — calcSensors often returns raw ADC
-  // (e.g. 2170) which must never be shown or monetised as litres.
-  const calibrated = readAllUnitSensors(item);
-  if (calibrated.length) {
-    const byName = new Map(calibrated.map((r) => [r.name, r]));
-    const byId = new Map(calibrated.map((r) => [r.sensorId, r]));
-    sensors = sensors.map((s) => {
-      const hit = (s.id ? byId.get(s.id) : undefined) || byName.get(s.name);
-      if (!hit) return s;
-      if (!isFuelLevelSensor(s.name, s.type) && !hit.isFuelLevel) return s;
-      return {
-        ...s,
-        value: String(hit.value),
-        unit: hit.unit || s.unit || (hit.isFuelLevel ? 'L' : undefined),
-      };
-    });
-  }
-
+  // Sensors = Wialon calc_last_message (+ exact configured param). Do not overwrite
+  // with our calibration tables — Monitoring must mirror Hosting as it is now.
+  const sensors = mergeSensorValues(slice, calcSensors || []);
   const fuel = parseWialonFuelSettings(fuelSettings, sensors, liveLls);
-  const calibratedLiters = calibrated.length ? totalLitersFromReadings(calibrated) : 0;
   const capacity = tankCapacityFromItem(item);
-  if (calibratedLiters > 0) {
-    // Always trust calibration table over raw calcSensors for levelLiters.
-    fuel.levelLiters = calibratedLiters;
-    fuel.levelFormatted = `${calibratedLiters} L`;
-    if (capacity && capacity > 0) {
-      fuel.level = fuelPercentFromLitres(calibratedLiters, capacity) ?? undefined;
-    }
+
+  // Percent only when litres and declared capacity are both present — never invent %.
+  if (
+    fuel.levelLiters != null &&
+    fuel.levelLiters > 0 &&
+    capacity &&
+    capacity > 0 &&
+    fuel.level == null
+  ) {
+    fuel.level = fuelPercentFromLitres(fuel.levelLiters, capacity) ?? undefined;
   }
 
   return {
@@ -215,6 +210,8 @@ export function parseWialonUnitDetail(
     lastUpdate: pos?.time ? new Date(pos.time * 1000).toISOString() : undefined,
     lastUpdateAge: pos?.time ? formatAge(pos.time) : undefined,
     sensors,
+    profileFields: mapProfileFields(item),
+    messageParams: mapLastMessageParams(slice.lmsg),
     maintenance: mapMaintenance(item),
     video,
     fuel: hasFuelData(fuel) ? fuel : undefined,
