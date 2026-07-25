@@ -103,79 +103,80 @@ export function LiveReportTable({
           createElement(
             'div',
             { className: 'bg-white text-slate-900' },
-            createElement(
-              BrandedReportDocument,
-              { branding },
-              createElement(BrandedReportHeader, {
-                branding,
-                reportTitle: def.label,
-                moduleLabel,
-                periodLabel,
-                objectLabel,
-                generatedAt: fetchedAt ? new Date(fetchedAt) : new Date(),
-              }),
-              createElement(
-                'div',
-                { className: 'border border-slate-200 border-t-0 px-4 py-3' },
+            createElement(BrandedReportDocument, {
+              branding,
+              children: [
+                createElement(BrandedReportHeader, {
+                  branding,
+                  reportTitle: def.label,
+                  moduleLabel,
+                  periodLabel,
+                  objectLabel,
+                  generatedAt: fetchedAt ? new Date(fetchedAt) : new Date(),
+                }),
                 createElement(
-                  'table',
-                  { className: 'w-full text-sm border-collapse' },
+                  'div',
+                  { className: 'border border-slate-200 border-t-0 px-4 py-3', key: 'body' },
                   createElement(
-                    'thead',
-                    null,
+                    'table',
+                    { className: 'w-full text-sm border-collapse' },
                     createElement(
-                      'tr',
+                      'thead',
                       null,
-                      def.columns.map((col) =>
-                        createElement(
-                          'th',
-                          {
-                            key: col.key,
-                            className: cn(
-                              'border px-2 py-1.5 text-xs font-medium',
-                              col.align === 'right' ? 'text-right' : 'text-left',
-                            ),
-                            style: {
-                              background: branding.primaryColor,
-                              color: '#fff',
-                              borderColor: branding.primaryColor,
-                            },
-                          },
-                          col.label,
-                        ),
-                      ),
-                    ),
-                  ),
-                  createElement(
-                    'tbody',
-                    null,
-                    rows.map((row, ri) =>
                       createElement(
                         'tr',
-                        { key: ri, className: ri % 2 ? 'bg-slate-50' : 'bg-white' },
+                        null,
                         def.columns.map((col) =>
                           createElement(
-                            'td',
+                            'th',
                             {
                               key: col.key,
                               className: cn(
-                                'border border-slate-200 px-2 py-1 text-xs',
-                                col.align === 'right' && 'text-right',
+                                'border px-2 py-1.5 text-xs font-medium',
+                                col.align === 'right' ? 'text-right' : 'text-left',
                               ),
+                              style: {
+                                background: branding.primaryColor,
+                                color: '#fff',
+                                borderColor: branding.primaryColor,
+                              },
                             },
-                            formatReportCell(row[col.key]),
+                            col.label,
+                          ),
+                        ),
+                      ),
+                    ),
+                    createElement(
+                      'tbody',
+                      null,
+                      rows.map((row, ri) =>
+                        createElement(
+                          'tr',
+                          { key: ri, className: ri % 2 ? 'bg-slate-50' : 'bg-white' },
+                          def.columns.map((col) =>
+                            createElement(
+                              'td',
+                              {
+                                key: col.key,
+                                className: cn(
+                                  'border border-slate-200 px-2 py-1 text-xs',
+                                  col.align === 'right' && 'text-right',
+                                ),
+                              },
+                              formatReportCell(row[col.key]),
+                            ),
                           ),
                         ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              createElement(BrandedReportFooter, {
-                branding,
-                generatedAt: fetchedAt ? new Date(fetchedAt) : new Date(),
-              }),
-            ),
+                createElement(BrandedReportFooter, {
+                  branding,
+                  generatedAt: fetchedAt ? new Date(fetchedAt) : new Date(),
+                }),
+              ],
+            }),
           ),
         );
         requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
