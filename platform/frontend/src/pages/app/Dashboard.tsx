@@ -72,6 +72,7 @@ import {
   useGeneratorFuelTransactions,
   useMachineryFuelTransactions,
   useFuelFleetSummary,
+  useLiveFuelLevels,
 } from "@/services/fleet";
 import { applyPriceToKpis } from "@/components/fuel/fuelReportStats";
 import { useWialonGeofencesLive } from "@/hooks/useWialonLive";
@@ -776,19 +777,11 @@ export default function Dashboard() {
   }, [alertList, accent, brand]);
 
   /* —— Fuel —— */
-  // Live tank litres by unit name AND plate — same keys the Fuel module builds
-  // so balance-derived consumption and plausibility filters stay identical.
-  const liveLevelsByName = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const u of units ?? []) {
-      const liters = num(u.fuelLiters);
-      if (!(liters > 0)) continue;
-      if (u.name) m.set(u.name, liters);
-      const plate = (u.plate || "").trim();
-      if (plate) m.set(plate, liters);
-    }
-    return m;
-  }, [units]);
+  // Literally the same map object the Fuel tabs read, from the one shared
+  // fuel-assets cache. Deriving it here from the monitoring snapshot instead
+  // let the two screens anchor balance-derived consumption on levels captured
+  // at different poll ticks, so the same period agreed only intermittently.
+  const { data: liveLevelsByName } = useLiveFuelLevels();
 
   const allStationary = useMemo(
     () =>

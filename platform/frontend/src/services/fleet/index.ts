@@ -65,6 +65,8 @@ export {
   useMachineryFuelTransactions,
   useMachineryWithReports,
   useFuelFleetSummary,
+  useLiveFuelLevels,
+  useLiveFuelReadings,
   useGeneratorEngineHours,
   useRefreshGeneratorEngineHours,
   useGeneratorFuelTransactions,

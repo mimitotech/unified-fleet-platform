@@ -16,7 +16,7 @@
  */
 
 import { useMemo } from 'react';
-import { useVehicles, useFuelTransactions } from '@/services/fleet';
+import { useVehicles, useFuelTransactions, useLiveFuelLevels } from '@/services/fleet';
 import { tankPercentFromLiters, usablePercent } from '@/lib/fuelLevel';
 import type { Vehicle, FuelTransaction } from '@/types';
 
@@ -135,9 +135,11 @@ export function useFleetData(options?: FleetDataOptions): FleetDataResult {
       const status: 'critical' | 'warning' | 'ok' =
         percent == null ? 'ok' : percent <= 15 ? 'critical' : percent <= 30 ? 'warning' : 'ok';
 
+      // Percent stays at full precision — rounding here and again at render can
+      // push a reading across a whole point versus the same figure elsewhere.
       map.set(v.id, {
         level: Math.round(level * 10) / 10,
-        percent: percent == null ? null : Math.round(percent * 10) / 10,
+        percent,
         tankCapacity,
         status,
       });
@@ -150,23 +152,9 @@ export function useFleetData(options?: FleetDataOptions): FleetDataResult {
   // Computed: Vehicle fuel level map (by name/plate)
   // Used by Fuel page for matching with sheet transactions
   // -------------------------------------------------------------------------
-  const vehicleFuelMapByName = useMemo(() => {
-    const map = new Map<string, number>();
-    
-    for (const vehicle of vehicles) {
-      const info = vehicleFuelMap.get(vehicle.id);
-      if (info) {
-        map.set(vehicle.name, info.level);
-        // Also map by normalized plate for sheet matching
-        if (vehicle.plate) {
-          const normalizedPlate = vehicle.plate.toUpperCase().replace(/\s+/g, '');
-          map.set(normalizedPlate, info.level);
-        }
-      }
-    }
-    
-    return map;
-  }, [vehicles, vehicleFuelMap]);
+  // Shared with the Dashboard and every other Fuel tab so period KPIs are seeded
+  // from one set of levels rather than per-screen copies that drift apart.
+  const { data: vehicleFuelMapByName } = useLiveFuelLevels({ enabled });
   
   // -------------------------------------------------------------------------
   // Computed: Fuel aggregation by vehicle

@@ -5,6 +5,7 @@
 import { useMemo } from 'react';
 import type { Generator, Machinery } from '@/types';
 import { useStationaryAssets, useStationaryFuelTransactions, type StationaryFuelType } from '@/components/fuel/useStationaryFuelHooks';
+import { useLiveFuelLevels } from '@/services/fleet';
 import type { FuelTableUnit } from '@/components/fuel/FuelTransactionsTable/types';
 
 export interface StationaryFleetDataOptions {
@@ -28,29 +29,6 @@ export interface StationaryFleetDataResult {
   refetchFuel: () => void;
 }
 
-function buildFuelLevelByName(units: Array<Generator | Machinery>): Map<string, number> {
-  const map = new Map<string, number>();
-  for (const unit of units) {
-    const tankCapacity =
-      unit.fuelInfo?.tankCapacity && unit.fuelInfo.tankCapacity > 0
-        ? unit.fuelInfo.tankCapacity
-        : 0;
-    let level = 0;
-    if (unit.fuelInfo) {
-      level = Number(unit.fuelInfo.level) || 0;
-    } else if (unit.fuelUnit === 'liters') {
-      level = Number(unit.fuel) || 0;
-    } else if (tankCapacity > 0) {
-      const percent = Number(unit.fuel) || 0;
-      level = (percent / 100) * tankCapacity;
-    }
-    if (level > 0) {
-      map.set(unit.name, Math.round(level * 10) / 10);
-    }
-  }
-  return map;
-}
-
 export function useStationaryFleetData(options?: StationaryFleetDataOptions): StationaryFleetDataResult {
   const { stationaryType = 'generator', startDate, endDate, enabled = true } = options ?? {};
 
@@ -64,7 +42,8 @@ export function useStationaryFleetData(options?: StationaryFleetDataOptions): St
     Boolean(fuelQuery.data?.warming) ||
     (Boolean(fuelQuery.data?.needsRefresh) && fuelQuery.isFetching);
 
-  const unitFuelMapByName = useMemo(() => buildFuelLevelByName(units), [units]);
+  // Same shared map the Dashboard and vehicle tab use — see useLiveFuelLevels.
+  const { data: unitFuelMapByName } = useLiveFuelLevels({ enabled });
 
   const tableUnits = useMemo<FuelTableUnit[]>(
     () =>

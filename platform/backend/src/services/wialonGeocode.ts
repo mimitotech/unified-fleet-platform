@@ -48,6 +48,49 @@ function normalizeResult(partsIn: string[]): WialonGeocodeResult | undefined {
   return { address: parts.join(', '), parts };
 }
 
+/**
+ * Below this many components an address is a region label, not a location
+ * ("Wakiso, Uganda"). Worth spending a fallback lookup to do better.
+ */
+const MIN_DETAIL_PARTS = 3;
+
+/**
+ * Nominatim's usage policy caps us at ~1 request/second, and a fleet parked in
+ * a thinly mapped area would otherwise fire one lookup per unit at once. Serialise
+ * them and remember the misses so a coordinate is only ever tried once per TTL.
+ */
+const NOMINATIM_MIN_INTERVAL_MS = 1100;
+let nominatimChain: Promise<unknown> = Promise.resolve();
+let nominatimLastAt = 0;
+const nominatimMisses = new Map<string, number>();
+
+function queuedNominatimReverseGeocode(
+  lat: number,
+  lng: number
+): Promise<WialonGeocodeResult | undefined> {
+  const key = cacheKey(lat, lng);
+  const missedAt = nominatimMisses.get(key);
+  if (missedAt && missedAt > Date.now() - GEOCODE_TTL_MS) return Promise.resolve(undefined);
+
+  const run = nominatimChain.then(async () => {
+    const wait = NOMINATIM_MIN_INTERVAL_MS - (Date.now() - nominatimLastAt);
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    nominatimLastAt = Date.now();
+    const result = await nominatimReverseGeocode(lat, lng);
+    if (!result) {
+      nominatimMisses.set(key, Date.now());
+      if (nominatimMisses.size > 2000) {
+        const first = nominatimMisses.keys().next().value;
+        if (first) nominatimMisses.delete(first);
+      }
+    }
+    return result;
+  });
+
+  nominatimChain = run.catch(() => undefined);
+  return run.catch(() => undefined);
+}
+
 function cacheKey(lat: number, lng: number): string {
   return `${Math.round(lat * 10_000) / 10_000},${Math.round(lng * 10_000) / 10_000}`;
 }
@@ -79,7 +122,7 @@ export async function wialonReverseGeocodeFull(
     return normalizeResult(hit.result.parts.length ? hit.result.parts : [hit.result.address]) ?? hit.result;
   }
 
-  const result = await withWialonClient(credentials, async (client) => {
+  const fromWialon = await withWialonClient(credentials, async (client) => {
     const sid = client.getSessionId();
     if (!sid) return undefined;
 
@@ -106,17 +149,24 @@ export async function wialonReverseGeocodeFull(
         const text = pickText(item);
         if (text && !parts.includes(text)) parts.push(text);
       }
-      const cleaned = normalizeResult(parts);
-      if (!cleaned) {
-        const fallback = await nominatimReverseGeocode(lat, lng);
-        if (fallback) return fallback;
-        return undefined;
-      }
-      return cleaned;
+      return normalizeResult(parts);
     } catch {
-      return nominatimReverseGeocode(lat, lng);
+      return undefined;
     }
   });
+
+  // Wialon GIS thins out away from mapped roads and can answer with just
+  // "Wakiso, Uganda". Nominatim at zoom 18 usually still has the road or
+  // village, so take whichever answer is actually more specific. Enrichment
+  // runs after the Wialon session is released — it can sit in a rate-limit
+  // queue and must not hold a session open while it waits.
+  let result = fromWialon;
+  if (!result || result.parts.length < MIN_DETAIL_PARTS) {
+    const fallback = await queuedNominatimReverseGeocode(lat, lng);
+    if (fallback && (!result || fallback.parts.length > result.parts.length)) {
+      result = fallback;
+    }
+  }
 
   if (result) {
     geocodeCache.set(key, { result, expires: Date.now() + GEOCODE_TTL_MS });

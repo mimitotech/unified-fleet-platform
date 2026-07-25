@@ -36,6 +36,7 @@ import type {
 } from './types';
 import type { Vehicle, Generator, Machinery, Driver, Route, Alert, FuelTransaction, FuelStation, GeneratorEngineHours, EnrichedGenerator, EnrichedMachinery } from '@/types';
 import type { FuelFleetSummary, WialonFuelAssetsResponse } from '@/lib/fuelTypes';
+import { buildLiveFuelLevels, buildLiveFuelReadings } from '@/lib/fuelLevel';
 import { clientApi } from '@/lib/api';
 import {
   fuelAssetToGenerator,
@@ -533,6 +534,32 @@ export function useMachineryWithReports(range?: {
 export function useFuelFleetSummary() {
   const query = useFuelAssetsBundle();
   const data = query.data?.summary as FuelFleetSummary | undefined;
+  return { ...query, data };
+}
+
+/**
+ * Live tank litres for every fuel asset, from the one shared fuel-assets cache.
+ *
+ * Dashboard and all Fuel tabs must use this so they seed `computePeriodFuelKpis`
+ * with identical levels; separate per-screen maps drift as each source polls and
+ * make the same period report different litres and money minutes apart.
+ */
+export function useLiveFuelLevels(options?: { enabled?: boolean }) {
+  const query = useFuelAssetsBundle({ enabled: options?.enabled });
+  const data = useMemo(
+    () => buildLiveFuelLevels(query.data?.assets ?? []),
+    [query.data],
+  );
+  return { ...query, data };
+}
+
+/** Litres + percent + capacity per asset, from the same shared cache. */
+export function useLiveFuelReadings(options?: { enabled?: boolean }) {
+  const query = useFuelAssetsBundle({ enabled: options?.enabled });
+  const data = useMemo(
+    () => buildLiveFuelReadings(query.data?.assets ?? []),
+    [query.data],
+  );
   return { ...query, data };
 }
 

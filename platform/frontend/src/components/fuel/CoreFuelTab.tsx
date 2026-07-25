@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useFleetData } from '@/hooks/useFleetData';
 import { useStationaryFleetData } from '@/hooks/useStationaryFleetData';
-import { useRefreshFuelTransactions } from '@/services/fleet';
+import { useRefreshFuelTransactions, useLiveFuelReadings } from '@/services/fleet';
 import { useFuelModuleConfig, getVisibleFuelColumns } from '@/hooks/useFuelModuleConfig';
 import {
   FuelKpiCards,
@@ -88,6 +88,7 @@ export function CoreFuelTab({
     enabled: !isVehicle,
   });
 
+  const { data: liveReadings } = useLiveFuelReadings();
   const refreshFuelMutation = useRefreshFuelTransactions();
   const { data: fuelModuleConfig } = useFuelModuleConfig();
   const visibleColumns = useMemo(
@@ -116,37 +117,21 @@ export function CoreFuelTab({
     [fuelTransactions, fromDate, toDate],
   );
 
+  // Litres and percent for a unit always come from the same reading, so a tile
+  // can never show litres measured at one rounding and a percent at another.
   const liveUnits = useMemo(() => {
-    if (isVehicle) {
-      return fleet.vehicles.map((u) => {
-        const level = unitFuelMapByName.get(u.name) ?? 0;
-        const vehicleFuel = fleet.vehicleFuelMap.get(u.id);
-        return {
-          id: u.id,
-          name: u.name,
-          fuelLiters: level > 0 ? level : undefined,
-          fuelPercent: vehicleFuel?.percent ?? undefined,
-        };
-      });
-    }
-
-    return categoryFleet.units.map((u) => {
-      const level = unitFuelMapByName.get(u.name) ?? 0;
-      const fuelPercent = resolveTankPercent(u, level);
+    const source = isVehicle ? fleet.vehicles : categoryFleet.units;
+    return source.map((u) => {
+      const reading = liveReadings.get(u.name);
+      const percent = reading?.percent ?? resolveTankPercent(u, reading?.liters ?? 0);
       return {
         id: u.id,
         name: u.name,
-        fuelLiters: level > 0 ? level : undefined,
-        fuelPercent: fuelPercent ?? undefined,
+        fuelLiters: reading && reading.liters > 0 ? reading.liters : undefined,
+        fuelPercent: percent ?? undefined,
       };
     });
-  }, [
-    isVehicle,
-    fleet.vehicles,
-    fleet.vehicleFuelMap,
-    unitFuelMapByName,
-    categoryFleet.units,
-  ]);
+  }, [isVehicle, fleet.vehicles, categoryFleet.units, liveReadings]);
 
   const totalLiveFuelLiters = useMemo(
     () =>
@@ -166,38 +151,20 @@ export function CoreFuelTab({
   const fleetFuelLevels: FleetFuelLevel[] = useMemo(() => {
     // Assets with no usable percent have no fuel monitoring — leaving them out
     // keeps them from surfacing as a false 0% critical.
-    if (isVehicle) {
-      return fleet.vehicles.flatMap((vehicle) => {
-        const fuelInfo = fleet.vehicleFuelMap.get(vehicle.id);
-        const percent = usablePercent(fuelInfo?.percent);
-        if (percent == null) return [];
-        return [
-          {
-            vehicleId: vehicle.id,
-            vehicle: vehicle.name,
-            fuelLevel: fuelInfo?.level ?? 0,
-            fuelPercent: percent,
-            status: fuelInfo?.status ?? fuelStatusFromPercent(percent),
-          },
-        ];
-      });
-    }
-
-    return categoryFleet.units.flatMap((u) => {
-      const level = unitFuelMapByName.get(u.name) ?? 0;
-      const percent = resolveTankPercent(u, level);
+    return liveUnits.flatMap((u) => {
+      const percent = usablePercent(u.fuelPercent);
       if (percent == null) return [];
       return [
         {
           vehicleId: u.id,
           vehicle: u.name,
-          fuelLevel: level,
+          fuelLevel: u.fuelLiters ?? 0,
           fuelPercent: percent,
           status: fuelStatusFromPercent(percent),
         },
       ];
     });
-  }, [isVehicle, fleet.vehicles, fleet.vehicleFuelMap, categoryFleet.units, unitFuelMapByName]);
+  }, [liveUnits]);
 
   /** Sudden drops from leaf Wialon theft events only — volume matches Before/After. */
   const drainAlerts = useMemo<FuelEvent[]>(() => {

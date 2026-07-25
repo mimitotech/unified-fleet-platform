@@ -53,11 +53,20 @@ export function FuelCostingPanel({
   onFromDateChange?: (v: string) => void;
   onToDateChange?: (v: string) => void;
 }) {
+  // `price` is the saved, fleet-wide rate every money surface reads; `priceDraft`
+  // is only what is currently in the input. Charting the draft made this panel
+  // disagree with the Dashboard for as long as the field was mid-edit — clearing
+  // it to retype dropped every figure to zero.
   const [price, setPrice] = useState(() => resolveDashboardFuelPrice() || DEFAULT_FUEL_PRICE_UGX);
+  const [priceDraft, setPriceDraft] = useState(() => String(price));
   const [selected, setSelected] = useState<string>('all');
 
   useEffect(() => {
-    const sync = () => setPrice(resolveDashboardFuelPrice());
+    const sync = () => {
+      const next = resolveDashboardFuelPrice();
+      setPrice(next);
+      setPriceDraft(String(next));
+    };
     window.addEventListener('mams:fuel-price', sync);
     window.addEventListener('storage', sync);
     return () => {
@@ -133,18 +142,23 @@ export function FuelCostingPanel({
   );
 
   const persistPrice = () => {
-    const saved = saveFuelPrice(price);
+    const saved = saveFuelPrice(Number(priceDraft));
     setPrice(saved);
+    setPriceDraft(String(saved));
   };
+  const priceDirty = Number(priceDraft) !== price;
 
   return (
     <Card className="branded-panel shadow-none">
       <CardHeader className="py-3 px-4 space-y-3">
         <div>
-          <CardTitle className="text-sm font-medium text-primary">Fuel costing</CardTitle>
+          <CardTitle className="text-sm font-medium text-primary">
+            Fuel costing · {unitLabel.toLowerCase()}s only
+          </CardTitle>
           <p className="text-xs text-muted-foreground mt-0.5">
             One price for the whole system · fill cost and use cost stay separate · same period as the
-            table
+            table. The Dashboard totals every fuel category, so it reads higher when this account also
+            runs generators or machinery.
           </p>
         </div>
         <PeriodAssetControls
@@ -169,8 +183,8 @@ export function FuelCostingPanel({
               min={0}
               step="1"
               className="w-36 h-9"
-              value={price || ''}
-              onChange={(e) => setPrice(Number(e.target.value) || 0)}
+              value={priceDraft}
+              onChange={(e) => setPriceDraft(e.target.value)}
               onBlur={persistPrice}
             />
           </div>
@@ -178,7 +192,9 @@ export function FuelCostingPanel({
             Save price
           </Button>
           <p className="text-[11px] text-muted-foreground max-w-xs">
-            Saving updates dashboard money tiles and all fuel charts immediately.
+            {priceDirty
+              ? `Figures below still use the saved ${price.toLocaleString('en-UG')} UGX/L — save to apply.`
+              : 'Saving updates dashboard money tiles and all fuel charts immediately.'}
           </p>
         </div>
 

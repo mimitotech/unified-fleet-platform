@@ -261,6 +261,10 @@ export function UnitDetailPanel({
       ),
     [detail?.addressParts, geocode?.parts, address],
   );
+  const fullAddress = useMemo(
+    () => (addressParts.length ? addressParts.join(", ") : address || ""),
+    [addressParts, address],
+  );
   const resolvingAddress =
     !addressParts.length &&
     !address &&
@@ -378,17 +382,25 @@ export function UnitDetailPanel({
                 </span>
               )}
             </div>
-            <p className="text-[10px] text-muted-foreground truncate mt-0.5 flex items-center gap-1">
-              <MapPin className="h-2.5 w-2.5 shrink-0" />
-              {resolvingAddress
-                ? "Resolving…"
-                : addressParts[0] ||
-                  address ||
-                  (lat != null && lng != null
-                    ? `${lat.toFixed(4)}, ${lng.toFixed(4)}`
-                    : "No position")}
-              {lastAge ? <span className="opacity-70">· {lastAge}</span> : null}
-            </p>
+            {/* Full address, wrapped — the place name alone ("Wakiso") is not a location. */}
+            <div className="mt-0.5 flex items-start gap-1 text-[10px] text-muted-foreground">
+              <MapPin className="h-2.5 w-2.5 shrink-0 mt-[2px]" />
+              <p className="min-w-0 leading-snug break-words">
+                {resolvingAddress
+                  ? "Resolving address…"
+                  : fullAddress ||
+                    (lat != null && lng != null
+                      ? `${lat.toFixed(5)}, ${lng.toFixed(5)}`
+                      : "No position")}
+                {fullAddress && lat != null && lng != null && (
+                  <span className="opacity-60">
+                    {" "}
+                    · {lat.toFixed(5)}, {lng.toFixed(5)}
+                  </span>
+                )}
+                {lastAge ? <span className="opacity-70"> · {lastAge}</span> : null}
+              </p>
+            </div>
           </div>
           {onClose && (
             <Button
