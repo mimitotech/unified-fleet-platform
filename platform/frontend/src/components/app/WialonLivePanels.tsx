@@ -375,9 +375,10 @@ export function WialonGeofencesLivePanel() {
 
 export function WialonSensorsPanel() {
   const { connected } = useWialonContext();
-  const { data: units, isLoading } = useWialonUnits(connected);
+  const { data: units } = useWialonUnits(connected);
   const [unitId, setUnitId] = useState<number | null>(null);
-  const { data: sensors, isFetching } = useWialonUnitSensors(unitId, connected);
+  const { data: sensors, isPending: sensorsPending } = useWialonUnitSensors(unitId, connected);
+  const sensorRows = sensors && 'sensors' in sensors ? sensors.sensors : [];
 
   if (!connected) return null;
 
@@ -393,9 +394,11 @@ export function WialonSensorsPanel() {
             ))}
           </SelectContent>
         </Select>
-        {isLoading || isFetching ? <Skeleton className="h-20" /> : (
+        {unitId && sensorsPending && sensorRows.length === 0 ? (
+          <Skeleton className="h-20" />
+        ) : (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            {(sensors?.sensors || []).map((s) => (
+            {sensorRows.map((s) => (
               <div key={s.name} className="rounded border p-2">
                 <p className="text-[10px] text-muted-foreground">{s.name}</p>
                 <p className="font-semibold">{s.value}{s.unit ? ` ${s.unit}` : ''}</p>

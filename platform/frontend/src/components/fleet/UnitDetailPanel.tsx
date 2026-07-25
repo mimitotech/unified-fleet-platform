@@ -138,6 +138,14 @@ function formatCounter(value?: number, unit?: "km" | "h"): string {
   return `${value.toFixed(1)} km`;
 }
 
+/** Device battery may arrive as %, volts, or millivolts — never show raw ADC as "%". */
+function formatBatteryReading(value: number): string {
+  if (value <= 100) return `${Math.round(value)}%`;
+  if (value < 60) return `${value.toFixed(1)} V`;
+  if (value < 100_000) return `${(value / 1000).toFixed(2)} V`;
+  return String(Math.round(value));
+}
+
 export function UnitDetailPanel({
   unit,
   onClose,
@@ -168,10 +176,13 @@ export function UnitDetailPanel({
     live,
   );
 
-  const loadingAsset = enabled && (detailPending || detailFetching);
+  // Only block the panel on the *first* load. Live polls set isFetching every few
+  // seconds — showing "Loading asset data…" then makes the UI feel unstable.
+  const loadingAsset = enabled && detailPending && !detail;
+  const quietlyRefreshing = enabled && detailFetching && !!detail;
   const { data: commandsPayload } = useWialonUnitCommands(
     wialonId ?? null,
-    enabled && !!detail && !detailFetching,
+    enabled && !!detail,
   );
   const commands = commandsPayload?.commands;
 
@@ -302,7 +313,11 @@ export function UnitDetailPanel({
                 <StatusBadge status={status} label={motionLabel} size="sm" />
                 {live && (
                   <span className="inline-flex items-center gap-1 text-[10px] text-status-moving font-medium">
-                    <span className="w-1.5 h-1.5 rounded-full bg-status-moving animate-pulse" />
+                    {quietlyRefreshing ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <span className="w-1.5 h-1.5 rounded-full bg-status-moving animate-pulse" />
+                    )}
                     Live
                   </span>
                 )}
@@ -433,11 +448,11 @@ export function UnitDetailPanel({
             health?.altitude != null) && (
             <DetailSection title="Device vitals">
               <div className="grid grid-cols-2 gap-1.5">
-                {health?.battery != null && (
+                {health?.battery != null && Number.isFinite(health.battery) && (
                   <Stat
                     icon={Radio}
                     label="Battery"
-                    value={`${Math.round(health.battery)}%`}
+                    value={formatBatteryReading(health.battery)}
                   />
                 )}
                 {health?.satellites != null && (
@@ -598,7 +613,7 @@ export function UnitDetailPanel({
             </DetailSection>
           )}
 
-          {detailPending && wialonId && (
+          {detailPending && !detail && wialonId && (
             <p className="text-xs text-muted-foreground flex items-center gap-1">
               <Loader2 className="h-3 w-3 animate-spin" />
               Loading data…

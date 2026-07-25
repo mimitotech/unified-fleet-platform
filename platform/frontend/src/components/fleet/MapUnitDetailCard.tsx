@@ -247,8 +247,18 @@ export function MapUnitDetailCard({ unit, lat, lng, speed, course, live = false,
           {altitude != null && (
             <Metric label="Altitude" value={`${Math.round(altitude)} m`} icon={Mountain} />
           )}
-          {battery != null && (
-            <Metric label="Battery" value={`${battery} V`} icon={Battery} />
+          {battery != null && Number.isFinite(battery) && (
+            <Metric
+              label="Battery"
+              value={
+                battery <= 100
+                  ? `${Math.round(battery)}%`
+                  : battery < 60
+                    ? `${battery.toFixed(1)} V`
+                    : `${(battery / 1000).toFixed(2)} V`
+              }
+              icon={Battery}
+            />
           )}
           {detail?.uid && (
             <Metric label="Device ID" value={detail.uid} icon={Radio} />

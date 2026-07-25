@@ -67,6 +67,9 @@ export function useWialonUnitDetail(unitId: number | null, enabled: boolean, liv
     staleTime: live ? LIVE_POLL.unitDetail : 15_000,
     refetchInterval:
       enabled && unitId != null && live ? pollWhenVisible(LIVE_POLL.unitDetail) : false,
+    // Avoid focus/reconnect storms that remount "loading" UX while a unit is selected.
+    refetchOnWindowFocus: !live,
+    refetchOnReconnect: true,
     placeholderData: (prev, prevQuery) => {
       const prevId = prevQuery?.queryKey[1];
       return prevId === unitId ? prev : undefined;
@@ -85,12 +88,16 @@ export function prefetchWialonUnitDetail(client: QueryClient, unitId: number, li
 }
 
 export function useWialonUnitSensors(unitId: number | null, enabled: boolean) {
-  return useQuery({
+  return useQuery<{
+    unitId: number;
+    sensors: Array<{ name: string; value: string; unit?: string }>;
+  }>({
     queryKey: ['wialon-unit-sensors', unitId],
     queryFn: () => clientApi.getWialonUnitSensors(unitId!),
     enabled: enabled && unitId != null,
     staleTime: LIVE_POLL.unitDetail,
     refetchInterval: enabled && unitId != null ? pollWhenVisible(LIVE_POLL.unitDetail) : false,
+    refetchOnWindowFocus: false,
   });
 }
 
