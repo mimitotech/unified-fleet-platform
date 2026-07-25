@@ -33,8 +33,16 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>
 );
 
-if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+    // Drop any leftover MAMS / legacy service workers so deploys always load live.
+    void navigator.serviceWorker.getRegistrations().then((regs) => {
+      for (const reg of regs) void reg.unregister();
+    });
+    if (typeof caches !== 'undefined') {
+      void caches.keys().then((keys) => {
+        for (const key of keys) void caches.delete(key);
+      });
+    }
   });
 }

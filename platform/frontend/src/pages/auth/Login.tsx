@@ -61,6 +61,47 @@ const DEFAULT_SLIDES: Slide[] = [
 const fieldClass =
   'h-10 bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 focus-visible:border-primary focus-visible:ring-primary/25 rounded-lg text-sm';
 
+const SLIDES_CACHE_KEY = 'ufp_public_login_slides';
+const LOGOS_CACHE_KEY = 'ufp_public_login_trust_logos';
+
+function readCachedSlides(): Slide[] {
+  try {
+    const raw = localStorage.getItem(SLIDES_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Slide[];
+    return Array.isArray(parsed) ? parsed.filter((s) => s?.id && s?.src) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCachedSlides(slides: Slide[]) {
+  try {
+    localStorage.setItem(SLIDES_CACHE_KEY, JSON.stringify(slides));
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+function readCachedLogos(): TrustLogo[] {
+  try {
+    const raw = localStorage.getItem(LOGOS_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as TrustLogo[];
+    return Array.isArray(parsed) ? parsed.filter((l) => l?.id && l?.imageUrl) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCachedLogos(logos: TrustLogo[]) {
+  try {
+    localStorage.setItem(LOGOS_CACHE_KEY, JSON.stringify(logos));
+  } catch {
+    /* ignore */
+  }
+}
+
 export default function Login() {
   const { signIn } = useAuth();
   const [email, setEmail] = useState('');
@@ -72,7 +113,13 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [slide, setSlide] = useState(0);
 
-  const { data: remote } = useQuery({
+  const {
+    data: remote,
+    isPending: slidesPending,
+    isFetched: slidesFetched,
+    isError: slidesError,
+    isSuccess: slidesSuccess,
+  } = useQuery({
     queryKey: ['publicLoginSlides'],
     queryFn: () =>
       api<{
@@ -84,37 +131,97 @@ export default function Login() {
           imageUrl: string | null;
         }>;
       }>('/api/public/login-slides'),
-    staleTime: 60_000,
-    retry: 1,
+    staleTime: 30_000,
+    retry: 2,
+    refetchOnWindowFocus: true,
   });
 
-  const { data: logosRemote } = useQuery({
+  const {
+    data: logosRemote,
+    isPending: logosPending,
+    isFetched: logosFetched,
+    isError: logosError,
+    isSuccess: logosSuccess,
+  } = useQuery({
     queryKey: ['publicLoginTrustLogos'],
     queryFn: () =>
       api<{
         logos: Array<{ id: string; name: string; imageUrl: string | null }>;
       }>('/api/public/login-trust-logos'),
-    staleTime: 60_000,
-    retry: 1,
+    staleTime: 30_000,
+    retry: 2,
+    refetchOnWindowFocus: true,
   });
 
   const slides = useMemo(() => {
     const rows = remote?.slides?.filter((s) => s.imageUrl) ?? [];
-    if (!rows.length) return DEFAULT_SLIDES;
-    return rows.map((s) => ({
-      id: s.id,
-      src: s.imageUrl!,
-      eyebrow: s.eyebrow || '',
-      title: s.title,
-      caption: s.details || '',
-    }));
-  }, [remote]);
+    if (rows.length) {
+      return rows.map((s) => ({
+        id: s.id,
+        src: s.imageUrl!,
+        eyebrow: s.eyebrow || '',
+        title: s.title,
+        caption: s.details || '',
+      }));
+    }
+
+    // While loading / on network error: keep last uploaded slides — never flash stock art.
+    if (slidesPending || !slidesFetched || slidesError) {
+      return readCachedSlides();
+    }
+
+    // API answered successfully with zero enabled slides → built-in fallback only then.
+    if (slidesSuccess) return DEFAULT_SLIDES;
+    return readCachedSlides();
+  }, [remote, slidesPending, slidesFetched, slidesError, slidesSuccess]);
+
+  useEffect(() => {
+    if (!slidesSuccess) return;
+    const rows = remote?.slides?.filter((s) => s.imageUrl) ?? [];
+    if (rows.length) {
+      writeCachedSlides(
+        rows.map((s) => ({
+          id: s.id,
+          src: s.imageUrl!,
+          eyebrow: s.eyebrow || '',
+          title: s.title,
+          caption: s.details || '',
+        })),
+      );
+    } else {
+      try {
+        localStorage.removeItem(SLIDES_CACHE_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [remote, slidesSuccess]);
 
   const trustLogos = useMemo((): TrustLogo[] => {
-    return (logosRemote?.logos ?? [])
+    const live = (logosRemote?.logos ?? [])
       .filter((l): l is { id: string; name: string; imageUrl: string } => Boolean(l.imageUrl))
       .map((l) => ({ id: l.id, name: l.name, imageUrl: l.imageUrl }));
-  }, [logosRemote]);
+    if (live.length) return live;
+    if (logosPending || !logosFetched || logosError) return readCachedLogos();
+    if (logosSuccess) return [];
+    return readCachedLogos();
+  }, [logosRemote, logosPending, logosFetched, logosError, logosSuccess]);
+
+  useEffect(() => {
+    if (!logosSuccess) return;
+    const live = (logosRemote?.logos ?? [])
+      .filter((l): l is { id: string; name: string; imageUrl: string } => Boolean(l.imageUrl))
+      .map((l) => ({ id: l.id, name: l.name, imageUrl: l.imageUrl }));
+    if (live.length) {
+      writeCachedLogos(live);
+    } else {
+      try {
+        localStorage.removeItem(LOGOS_CACHE_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [logosRemote, logosSuccess]);
 
   const marqueeLogos = useMemo(() => {
     if (trustLogos.length === 0) return [];
@@ -196,88 +303,100 @@ export default function Login() {
     setConfirmPassword('');
   };
 
-  const active = slides[Math.min(slide, slides.length - 1)] ?? DEFAULT_SLIDES[0];
+  const active = slides[Math.min(slide, Math.max(slides.length - 1, 0))] ?? null;
   const hasTrust = trustLogos.length > 0;
+  const mediaReady = slides.length > 0;
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center overflow-hidden bg-neutral-950">
-      {/* Media layer — keep images vivid; overlays stay light */}
-      {slides.map((s, i) => (
-        <div
-          key={s.id}
-          className={cn(
-            'absolute inset-0 transition-opacity duration-1000 ease-in-out',
-            i === slide ? 'opacity-100' : 'opacity-0',
-          )}
-          aria-hidden={i !== slide}
-        >
-          <img
-            src={s.src}
-            alt=""
-            className="absolute inset-0 block h-full w-full max-w-none object-cover object-center"
-            draggable={false}
-          />
-        </div>
-      ))}
-
-      {/* Light center scrim only — enough for the card, media stays visible */}
-      <div
-        className="pointer-events-none absolute inset-0 z-[1] bg-gradient-to-b from-black/25 via-black/15 to-black/30"
-        aria-hidden
-      />
-
-      {/* Slide copy — text shadow instead of heavy overlay */}
-      <div className="absolute inset-x-0 top-0 z-10 p-6 sm:p-10 pointer-events-none">
-        <div className="max-w-lg">
-          {active.eyebrow ? (
-            <p
-              className="mb-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-white/90"
-              style={{ textShadow: '0 1px 8px rgba(0,0,0,0.55)' }}
-            >
-              {active.eyebrow}
-            </p>
-          ) : null}
-          <h2
-            className="text-2xl font-bold tracking-tight text-white sm:text-3xl lg:text-4xl"
-            style={{ textShadow: '0 2px 16px rgba(0,0,0,0.55)' }}
+    <div className="fixed inset-0 flex flex-col overflow-hidden bg-[#004225]">
+      {/* Media area — stops exactly where the trust strip begins */}
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        {/* Uploaded slides only until API confirms none exist */}
+        {slides.map((s, i) => (
+          <div
+            key={s.id}
+            className={cn(
+              'absolute inset-0 transition-opacity duration-1000 ease-in-out',
+              i === slide ? 'opacity-100' : 'opacity-0',
+            )}
+            aria-hidden={i !== slide}
           >
-            {active.title}
-          </h2>
-          {active.caption ? (
-            <p
-              className="mt-2.5 max-w-md text-sm leading-relaxed text-white/95 sm:text-base"
-              style={{ textShadow: '0 1px 10px rgba(0,0,0,0.5)' }}
-            >
-              {active.caption}
-            </p>
-          ) : null}
-        </div>
-      </div>
-
-      {slides.length > 1 && (
-        <div
-          className={cn(
-            'absolute left-1/2 z-10 flex -translate-x-1/2 gap-2',
-            hasTrust ? 'bottom-28' : 'bottom-8',
-          )}
-        >
-          {slides.map((s, i) => (
-            <button
-              key={s.id}
-              type="button"
-              aria-label={`Slide ${i + 1}`}
-              onClick={() => setSlide(i)}
-              className={cn(
-                'h-1.5 rounded-full transition-all',
-                i === slide ? 'w-7 bg-white' : 'w-1.5 bg-white/45 hover:bg-white/75',
-              )}
+            {/* Blurred fill removes letterbox bars without stretching the real photo */}
+            <img
+              src={s.src}
+              alt=""
+              aria-hidden
+              className="absolute inset-0 block h-full w-full max-w-none scale-110 object-cover object-center blur-2xl"
+              draggable={false}
             />
-          ))}
-        </div>
-      )}
+            {/* Whole image, correct proportions, nothing cropped */}
+            <img
+              src={s.src}
+              alt=""
+              className="absolute inset-0 block h-full w-full max-w-none object-contain object-center"
+              draggable={false}
+            />
+          </div>
+        ))}
 
-      {/* Centered sign-in card */}
-      <div className={cn('relative z-20 w-full max-w-[340px] px-4', hasTrust && 'mb-20')}>
+        {/* Light scrim only when media is showing */}
+        {mediaReady ? (
+          <div
+            className="pointer-events-none absolute inset-0 z-[1] bg-gradient-to-b from-black/25 via-black/10 to-black/30"
+            aria-hidden
+          />
+        ) : null}
+
+        {/* Slide copy — text shadow instead of heavy overlay */}
+        {active ? (
+          <div className="absolute inset-x-0 top-0 z-10 p-6 sm:p-10 pointer-events-none">
+            <div className="max-w-lg">
+              {active.eyebrow ? (
+                <p
+                  className="mb-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-white/90"
+                  style={{ textShadow: '0 1px 8px rgba(0,0,0,0.55)' }}
+                >
+                  {active.eyebrow}
+                </p>
+              ) : null}
+              <h2
+                className="text-2xl font-bold tracking-tight text-white sm:text-3xl lg:text-4xl"
+                style={{ textShadow: '0 2px 16px rgba(0,0,0,0.55)' }}
+              >
+                {active.title}
+              </h2>
+              {active.caption ? (
+                <p
+                  className="mt-2.5 max-w-md text-sm leading-relaxed text-white/95 sm:text-base"
+                  style={{ textShadow: '0 1px 10px rgba(0,0,0,0.5)' }}
+                >
+                  {active.caption}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {slides.length > 1 && (
+          <div className="absolute bottom-5 left-1/2 z-10 flex -translate-x-1/2 gap-2">
+            {slides.map((s, i) => (
+              <button
+                key={s.id}
+                type="button"
+                aria-label={`Slide ${i + 1}`}
+                onClick={() => setSlide(i)}
+                className={cn(
+                  'h-1.5 rounded-full transition-all',
+                  i === slide ? 'w-7 bg-white' : 'w-1.5 bg-white/45 hover:bg-white/75',
+                )}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Centered sign-in card */}
+        <div className="absolute inset-0 z-20 flex items-center justify-center px-4">
+          <div className="w-full max-w-[340px]">
         <div className="overflow-hidden rounded-2xl border-2 border-primary/70 bg-white shadow-[0_18px_50px_-16px_rgba(0,66,37,0.55)] ring-1 ring-primary/10">
           {/* Brand header — solid white so the logo reads clearly */}
           <div className="flex flex-col items-center border-b border-primary/12 bg-white px-5 pb-4 pt-5 text-center">
@@ -466,12 +585,14 @@ export default function Login() {
               </Link>
             </div>
           </div>
+          </div>
         </div>
       </div>
+      </div>
 
-      {/* Trusted-by marquee — bottom strip, full-color logos */}
+      {/* Trusted-by marquee — sits below the media, never over it */}
       {hasTrust ? (
-        <div className="absolute inset-x-0 bottom-0 z-20 border-t border-white/20 bg-[#004225]/92 backdrop-blur-md">
+        <div className="relative z-20 shrink-0 border-t border-white/20 bg-[#004225]">
           <div className="flex items-center gap-3 px-3 py-3 sm:gap-5 sm:px-6 sm:py-3.5">
             <p
               className="shrink-0 text-[11px] font-extrabold uppercase tracking-[0.2em] text-white sm:text-xs"

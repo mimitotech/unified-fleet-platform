@@ -1,39 +1,33 @@
-/* MAMS service worker — network-first shell; API/uploads never cached */
-const CACHE = 'mams-shell-v2';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest'];
-
+/**
+ * Legacy self-destructing service worker.
+ *
+ * Older builds registered a network-first shell cache that could serve a stale
+ * index.html (and thus an old UI) when the network was flaky. This file replaces
+ * that worker: clear every cache, unregister, and leave network requests alone.
+ */
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting())
-  );
+  event.waitUntil(self.skipWaiting());
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
-    ).then(() => self.clients.claim())
+    (async () => {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+      await self.registration.unregister();
+      const clients = await self.clients.matchAll({ type: 'window' });
+      for (const client of clients) {
+        if ('navigate' in client) {
+          try {
+            await client.navigate(client.url);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    })(),
   );
 });
 
-self.addEventListener('fetch', (event) => {
-  const req = event.request;
-  if (req.method !== 'GET') return;
-  const url = new URL(req.url);
-  // Never intercept API or uploads — always hit the live server
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/uploads/')) {
-    return;
-  }
-  // Network-first so deploys are not stuck behind stale shell cache
-  event.respondWith(
-    fetch(req)
-      .then((res) => {
-        if (res.ok && url.origin === self.location.origin) {
-          const copy = res.clone();
-          caches.open(CACHE).then((cache) => cache.put(req, copy));
-        }
-        return res;
-      })
-      .catch(() => caches.match(req).then((cached) => cached || Response.error()))
-  );
-});
+// Do not intercept fetches — always go to the network.
+self.addEventListener('fetch', () => undefined);

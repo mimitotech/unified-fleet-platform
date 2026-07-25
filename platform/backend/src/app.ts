@@ -106,11 +106,35 @@ export function createApp() {
   if (frontendDist) {
     app.use(
       express.static(frontendDist, {
-        maxAge: process.env.NODE_ENV === 'production' ? '7d' : 0,
         index: false,
+        etag: true,
+        setHeaders(res, filePath) {
+          const base = path.basename(filePath);
+          // HTML + SW must never be long-cached or clients stick on old deploys.
+          if (
+            base === 'index.html' ||
+            base === 'sw.js' ||
+            base.endsWith('.webmanifest') ||
+            base === 'manifest.webmanifest'
+          ) {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+            return;
+          }
+          // Hashed Vite assets are content-addressed — safe to cache hard.
+          if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+            return;
+          }
+          res.setHeader('Cache-Control', 'public, max-age=3600');
+        },
       })
     );
     app.get(/^(?!\/api(?:\/|$)|\/uploads(?:\/|$)|\/health(?:\/|$)).*/, (_req, res) => {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       res.sendFile(path.join(frontendDist, 'index.html'), (err) => {
         if (err && !res.headersSent) {
           console.error('[mams] sendFile failed', err.message);
