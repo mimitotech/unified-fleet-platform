@@ -1287,8 +1287,11 @@ export default function Dashboard() {
       title="Dashboard"
       subtitle="Live operational picture across your enabled modules"
     >
-      <div className="mb-1">{toolbar}</div>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 -mt-1 mb-3 text-[11px] text-muted-foreground tabular-nums">
+      <div className="mb-1" data-no-print>
+        {toolbar}
+      </div>
+      <div ref={printContentRef} className="space-y-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-muted-foreground tabular-nums">
         {connected && accountName && (
           <>
             <span className="inline-flex items-center gap-1.5 text-foreground font-medium">
@@ -1365,17 +1368,18 @@ export default function Dashboard() {
         )}
       </div>
       {(fuelTxError || alertsError) && (
-        <QueryErrorBanner
-          message="Some dashboard widgets could not load."
-          onRetry={() => {
-            refetchFuelTx();
-            void refetchAlerts();
-          }}
-          className="mb-4"
-        />
+        <div data-no-print>
+          <QueryErrorBanner
+            message="Some dashboard widgets could not load."
+            onRetry={() => {
+              refetchFuelTx();
+              void refetchAlerts();
+            }}
+            className="mb-4"
+          />
+        </div>
       )}
 
-      <div ref={printContentRef} className="space-y-0">
       <AnimatedPage
         key={`dash-period-${applied.from}-${applied.to}-${executeFlash}`}
         className={cn(

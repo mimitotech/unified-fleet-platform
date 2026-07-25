@@ -65,12 +65,13 @@ export function DashboardWidget({
   return (
     <section
       className={cn(
-        'group/widget relative flex flex-col min-h-[280px] overflow-hidden rounded-xl border p-3.5',
+        'group/widget relative flex flex-col min-h-[280px] overflow-visible rounded-xl border p-3.5',
         'animate-slide-in transition-all duration-300 ease-out',
         'hover:-translate-y-1 hover:shadow-lg hover:border-opacity-60',
         className,
       )}
       style={style}
+      data-dashboard-widget
       onMouseEnter={(e) => {
         e.currentTarget.style.boxShadow = `0 12px 28px -14px ${accent}55, 0 2px 6px ${accent}18`;
         e.currentTarget.style.borderColor = `${accent}55`;
@@ -92,15 +93,18 @@ export function DashboardWidget({
       />
 
       <header className="relative flex items-start justify-between gap-2 mb-2.5 shrink-0 pt-0.5">
-        <div className="min-w-0">
-          <h3 className="text-[13px] font-semibold text-foreground truncate leading-tight">{title}</h3>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-[13px] font-semibold text-foreground leading-snug break-words" title={title}>
+            {title}
+          </h3>
           {subtitle && (
-            <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-1 leading-snug">{subtitle}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug break-words">{subtitle}</p>
           )}
         </div>
         {href && (
           <Link
             to={href}
+            data-no-print
             className="inline-flex items-center gap-0.5 text-[10px] font-semibold shrink-0 rounded-md px-1.5 py-0.5 transition-all duration-200 hover:scale-105"
             style={{ color: accent, background: `${accent}12` }}
             onMouseEnter={(e) => {

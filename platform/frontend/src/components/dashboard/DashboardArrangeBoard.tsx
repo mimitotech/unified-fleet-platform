@@ -84,7 +84,10 @@ export function DashboardArrangeItem({
       }
     >
       {editMode && (
-        <div className="absolute top-2 right-2 z-20 flex items-center gap-0.5 rounded-md border border-border/80 bg-background/95 p-0.5 shadow-sm">
+        <div
+          data-no-print
+          className="absolute top-2 right-2 z-20 flex items-center gap-0.5 rounded-md border border-border/80 bg-background/95 p-0.5 shadow-sm"
+        >
           <button
             type="button"
             draggable
