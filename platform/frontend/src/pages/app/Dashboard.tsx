@@ -62,7 +62,6 @@ import { useWialonContext } from "@/hooks/useWialon";
 import { useFleetAssetProfile } from "@/hooks/useFleetAssetProfile";
 import {
   useDriverStats,
-  useFuelKpis,
   useGeofences,
   useRouteStats,
   useVideoStreams,
@@ -280,11 +279,10 @@ export default function Dashboard() {
     }
   }, [draftFrom, draftTo, queryClient, hasAlerts]);
 
-  const alertFromIso = useMemo(
-    () => `${applied.from}T00:00:00.000Z`,
-    [applied.from],
-  );
-  const alertToIso = useMemo(() => `${applied.to}T23:59:59.999Z`, [applied.to]);
+  // Local wall-clock bounds — same encoding as the Alerts module so the same
+  // calendar day never drifts across midnight timezone conversion.
+  const alertFromIso = useMemo(() => `${applied.from}T00:00:00`, [applied.from]);
+  const alertToIso = useMemo(() => `${applied.to}T23:59:59`, [applied.to]);
 
   const {
     units,
@@ -324,11 +322,6 @@ export default function Dashboard() {
     assetId?: string;
   }>(alerts);
 
-  const { isError: fuelKpisError, refetch: refetchFuelKpis } = useFuelKpis(
-    hasFuel,
-    { from: applied.from, to: applied.to },
-  );
-
   // Fuel totals must match the Fuel module exactly: fetch the SAME category-scoped
   // transactions the Fuel tabs use and merge them, instead of the fleet-wide
   // unscoped harvest (which inflates via group summaries + balance-derived used).
@@ -354,6 +347,24 @@ export default function Dashboard() {
     { startDate: applied.from, endDate: applied.to },
     { enabled: wantMachineryFuel },
   );
+
+  const fuelTxError =
+    (wantVehicleFuel && vehicleFuelTx.isError) ||
+    (wantGeneratorFuel && generatorFuelTx.isError) ||
+    (wantMachineryFuel && machineryFuelTx.isError);
+
+  const refetchFuelTx = useCallback(() => {
+    if (wantVehicleFuel) void vehicleFuelTx.refetch();
+    if (wantGeneratorFuel) void generatorFuelTx.refetch();
+    if (wantMachineryFuel) void machineryFuelTx.refetch();
+  }, [
+    wantVehicleFuel,
+    wantGeneratorFuel,
+    wantMachineryFuel,
+    vehicleFuelTx,
+    generatorFuelTx,
+    machineryFuelTx,
+  ]);
 
   const fuelTransactions = useMemo(
     () => [
@@ -1328,11 +1339,11 @@ export default function Dashboard() {
           </Badge>
         )}
       </div>
-      {(fuelKpisError || alertsError) && (
+      {(fuelTxError || alertsError) && (
         <QueryErrorBanner
           message="Some dashboard widgets could not load."
           onRetry={() => {
-            void refetchFuelKpis();
+            refetchFuelTx();
             void refetchAlerts();
           }}
           className="mb-4"

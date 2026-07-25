@@ -23,29 +23,27 @@ function buildFuelInfoFromAsset(asset: WialonFuelAssetRow): FuelInfo | undefined
 
 /**
  * Fuel level, capacity and percent using only what Wialon actually reports.
- * Capacity falls back to back-deriving it from a real percent, and stays null
- * otherwise — never a placeholder tank that would turn litres into a percent.
+ * Never invent a tank size from L÷% and never invent 0% — missing percent means
+ * the asset is not fuel-monitored for %, and callers must treat it as unknown.
  */
 function resolveFuelInfo(
   liters: number | null | undefined,
   percent: number | null | undefined,
   declaredCapacity?: number | null,
 ): FuelInfo {
-  const level = liters ?? 0;
+  const level = liters != null && Number.isFinite(liters) ? liters : 0;
   const reported = usablePercent(percent);
-
-  let tankCapacity =
-    declaredCapacity != null && declaredCapacity > 0 ? declaredCapacity : null;
-  if (tankCapacity == null && reported != null && level > 0) {
-    tankCapacity = Math.round((level / reported) * 100);
-  }
+  const tankCapacity =
+    declaredCapacity != null && declaredCapacity > 0 ? declaredCapacity : undefined;
+  const percentage =
+    reported ?? (level > 0 ? tankPercentFromLiters(level, tankCapacity) ?? undefined : undefined);
 
   return {
     level,
     unit: 'liters',
     tankCapacity: tankCapacity ?? 0,
-    percentage: reported ?? tankPercentFromLiters(level, tankCapacity) ?? 0,
-    capacitySource: 'sensor',
+    percentage,
+    capacitySource: tankCapacity != null ? 'custom_field' : 'sensor',
   };
 }
 
