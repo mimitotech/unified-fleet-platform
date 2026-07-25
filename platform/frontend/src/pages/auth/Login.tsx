@@ -279,32 +279,25 @@ export default function Login() {
 
       {/* Centered sign-in card */}
       <div className={cn('relative z-20 w-full max-w-[340px] px-4', hasTrust && 'mb-16')}>
-        {/* MAMS logo — no container, fully visible */}
-        <div className="mb-4 flex flex-col items-center text-center">
-          <img
-            src={BRAND.logo}
-            alt={BRAND.name}
-            className="h-16 w-auto object-contain drop-shadow-[0_4px_14px_rgba(0,0,0,0.45)]"
-          />
-          <h1
-            className="mt-2.5 text-2xl font-extrabold tracking-tight text-white"
-            style={{ textShadow: '0 2px 12px rgba(0,0,0,0.5)' }}
-          >
-            {BRAND.name}
-          </h1>
-          <p
-            className="mt-0.5 text-xs font-medium text-white/90"
-            style={{ textShadow: '0 1px 8px rgba(0,0,0,0.5)' }}
-          >
-            {view === 'login'
-              ? BRAND.fullName
-              : view === 'forgot-email'
-                ? 'Reset your password'
-                : 'Choose a new password'}
-          </p>
-        </div>
+        <div className="overflow-hidden rounded-2xl border-2 border-primary/70 bg-white shadow-[0_18px_50px_-16px_rgba(0,66,37,0.55)] ring-1 ring-primary/10">
+          {/* Brand header — solid white so the logo reads clearly */}
+          <div className="flex flex-col items-center border-b border-primary/12 bg-white px-5 pb-4 pt-5 text-center">
+            <img
+              src={BRAND.logo}
+              alt={BRAND.name}
+              className="h-14 w-auto object-contain"
+            />
+            <h1 className="mt-2 text-xl font-extrabold tracking-tight text-primary">{BRAND.name}</h1>
+            <p className="mt-0.5 text-[11px] font-semibold leading-snug text-primary/70">
+              {view === 'login'
+                ? BRAND.fullName
+                : view === 'forgot-email'
+                  ? 'Reset your password'
+                  : 'Choose a new password'}
+            </p>
+          </div>
 
-        <div className="rounded-2xl border-2 border-primary/70 bg-white/95 p-5 shadow-[0_18px_50px_-16px_rgba(0,66,37,0.55)] ring-1 ring-primary/10 backdrop-blur-sm sm:p-6">
+          <div className="p-5 sm:p-6">
           {view === 'login' && (
             <form onSubmit={handleSubmit} className="space-y-3.5">
               <div className="space-y-1">
@@ -458,20 +451,21 @@ export default function Login() {
             </form>
           )}
 
-          <div className="mt-4 border-t border-primary/15 pt-3 text-center text-[11px]">
-            <Link
-              to="/terms-of-use"
-              className="font-bold text-primary underline-offset-2 hover:underline"
-            >
-              Terms of Use
-            </Link>
-            <span className="mx-2 text-primary/40">·</span>
-            <Link
-              to="/privacy-policy"
-              className="font-bold text-primary underline-offset-2 hover:underline"
-            >
-              Privacy Policy
-            </Link>
+            <div className="mt-4 border-t border-primary/15 pt-3 text-center text-[11px]">
+              <Link
+                to="/terms-of-use"
+                className="font-bold text-primary underline-offset-2 hover:underline"
+              >
+                Terms of Use
+              </Link>
+              <span className="mx-2 text-primary/40">·</span>
+              <Link
+                to="/privacy-policy"
+                className="font-bold text-primary underline-offset-2 hover:underline"
+              >
+                Privacy Policy
+              </Link>
+            </div>
           </div>
         </div>
       </div>
