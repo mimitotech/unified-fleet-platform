@@ -9,8 +9,6 @@ import {
   Fuel,
   Navigation,
   Compass,
-  Cpu,
-  Wrench,
   Video,
   Loader2,
   Radio,
@@ -22,7 +20,6 @@ import { UnitTypeIcon } from "@/components/fleet/UnitTypeIcon";
 import { WialonCommandButton } from "@/components/fleet/WialonCommandButton";
 import {
   hasEngineHoursData,
-  hwDisplayLabel,
   formatFuelDisplay,
   isFleetVideoDevice,
   type FleetUnit,
@@ -56,12 +53,14 @@ function Stat({
   value: string;
 }) {
   return (
-    <div className="rounded-lg border border-border/50 bg-muted/30 px-2.5 py-2 min-w-0">
-      <div className="flex items-center gap-1 text-[10px] text-muted-foreground mb-0.5 uppercase tracking-wide">
-        <Icon className="h-3 w-3 shrink-0" />
+    <div className="rounded border border-border/40 bg-muted/20 px-1.5 py-1 min-w-0">
+      <div className="flex items-center gap-0.5 text-[9px] text-muted-foreground uppercase tracking-wide leading-none">
+        <Icon className="h-2.5 w-2.5 shrink-0 opacity-70" />
         <span className="truncate">{label}</span>
       </div>
-      <p className="text-sm font-semibold leading-tight break-words">{value}</p>
+      <p className="text-[11px] font-semibold leading-tight tabular-nums truncate mt-0.5">
+        {value}
+      </p>
     </div>
   );
 }
@@ -74,8 +73,8 @@ function DetailSection({
   children: ReactNode;
 }) {
   return (
-    <section>
-      <h4 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+    <section className="space-y-1">
+      <h4 className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
         {title}
       </h4>
       {children}
@@ -146,6 +145,74 @@ function formatBatteryReading(value: number): string {
   return String(Math.round(value));
 }
 
+function isEmptySensorValue(value: unknown): boolean {
+  const v = String(value ?? "").trim();
+  return !v || v === "—" || v === "-" || v === "n/a" || v === "null";
+}
+
+function isUsefulSensor(s: SensorRow): boolean {
+  if (isEmptySensorValue(s.value)) return false;
+  const name = (s.name || "").toLowerCase();
+  if (/^in\d+$/i.test(name) || /^out\d+$/i.test(name)) return false;
+  return true;
+}
+
+function isUsefulParam(p: { key: string; value: string }): boolean {
+  const key = (p.key || "").toLowerCase();
+  if (/^in\d+$/.test(key) || /^out\d+$/.test(key)) return false;
+  if (/^adc\d+$/.test(key) && (p.value === "0" || p.value === "0.0")) return false;
+  if (isEmptySensorValue(p.value)) return false;
+  return true;
+}
+
+function formatParamValue(key: string, value: string): string {
+  const k = key.toLowerCase();
+  const n = Number(value);
+  if (!Number.isFinite(n)) return value;
+  if (k === "odometer" || k === "mileage") {
+    if (n > 100_000) return `${Math.round(n / 1000)} km`;
+    return `${Math.round(n)} km`;
+  }
+  if (k === "battery" || k === "pwr_int" || k === "pwr_ext") {
+    return formatBatteryReading(n);
+  }
+  return value;
+}
+
+/** Prefer calibrated fleet litres over raw ADC from unit-detail calcSensors. */
+function resolveDisplayFuel(
+  unit: FleetUnit,
+  detail?: {
+    fuel?: { levelLiters?: number; levelFormatted?: string };
+    fuelLevel?: number;
+  } | null,
+): Parameters<typeof formatFuelDisplay>[0] {
+  const capacity = unit.tankCapacity;
+  const fleetL = unit.fuelLiters;
+  const detailL = detail?.fuel?.levelLiters;
+  let litres = detailL ?? fleetL;
+
+  if (fleetL != null && Number.isFinite(fleetL)) {
+    if (detailL == null) {
+      litres = fleetL;
+    } else if (capacity && capacity > 0) {
+      if (detailL > capacity * 1.5 && fleetL <= capacity * 1.25) litres = fleetL;
+    } else if (detailL > 800 && fleetL < 500 && detailL / Math.max(fleetL, 1) > 4) {
+      litres = fleetL;
+    }
+  }
+
+  return {
+    fuelLiters: litres,
+    fuelFormatted:
+      litres === fleetL
+        ? unit.fuelFormatted
+        : detail?.fuel?.levelFormatted ?? unit.fuelFormatted,
+    fuelLevel: detail?.fuelLevel ?? unit.fuelLevel,
+    tankCapacity: capacity,
+  };
+}
+
 export function UnitDetailPanel({
   unit,
   onClose,
@@ -203,8 +270,13 @@ export function UnitDetailPanel({
   const sensors = detail?.sensors || [];
   // Must run before any early return — React #310 if hooked only when unit is set.
   const sensorGroups = useMemo(
-    () => groupSensors(sensors as SensorRow[]),
+    () => groupSensors((sensors as SensorRow[]).filter(isUsefulSensor)),
     [sensors],
+  );
+  const usefulParams = useMemo(
+    () =>
+      safeArray<{ key: string; value: string }>(detail?.prms).filter(isUsefulParam),
+    [detail?.prms],
   );
 
   if (!unit) {
@@ -224,7 +296,6 @@ export function UnitDetailPanel({
   }
 
   const displayName = detail?.name || unit.name;
-  const displayPlate = detail?.plate || unit.plate;
   const status = (detail?.status as FleetUnit["status"]) || unit.status;
   const motionLabel = detail?.motionState || unit.motionState;
   const speed = detail?.position?.speed ?? unit.speed;
@@ -236,9 +307,8 @@ export function UnitDetailPanel({
     unit.assetCategory === "machinery";
   const engineHours = detail?.counters?.engineHours ?? unit.engineHours;
   const lastAge = detail?.lastUpdateAge;
-  const parameters = detail?.prms || [];
+  const parameters = usefulParams;
   const customFields = detail?.flds || [];
-  const maintenance = detail?.maintenance || [];
   const video = detail?.video;
   const health = detail?.health as
     | {
@@ -251,25 +321,13 @@ export function UnitDetailPanel({
   const engineAsset = hasEngineHoursData({ ...unit, engineHours });
   const isVideoUnit =
     isFleetVideoDevice(unit) || Boolean(video && Object.keys(video).length);
-  const tripState =
-    detail?.trip?.state === 1
-      ? "On trip"
-      : detail?.trip?.state === 2
-        ? "Brief stop"
-        : detail?.trip?.state === 0
-          ? "Parked"
-          : undefined;
 
-  const fuelDisplay = formatFuelDisplay({
-    fuelFormatted: detail?.fuel?.levelFormatted ?? unit.fuelFormatted,
-    fuelLiters: detail?.fuel?.levelLiters ?? unit.fuelLiters,
-    fuelLevel: detail?.fuelLevel ?? unit.fuelLevel,
-  });
+  const fuelDisplay = formatFuelDisplay(resolveDisplayFuel(unit, detail));
 
   const showScrollable =
     showControls && (!compact || sensors.length > 0 || parameters.length > 0);
-  const sensorLimit = compact ? 8 : 40;
-  const paramLimit = compact ? 12 : 40;
+  const sensorLimit = compact ? 6 : 16;
+  const paramLimit = compact ? 8 : 14;
 
   return (
     <div
@@ -289,112 +347,64 @@ export function UnitDetailPanel({
           Could not refresh live sensors — showing last known fleet data.
         </div>
       )}
-      {/* Header */}
+      {/* Header — compact */}
       <div
         className={cn(
-          "shrink-0 border-b border-border/60",
-          compact ? "p-3" : "p-4",
-          loadingAsset && "pt-10",
+          "shrink-0 border-b border-border/50 px-2.5 py-2",
+          loadingAsset && "pt-9",
         )}
       >
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex items-start gap-2.5 min-w-0 flex-1">
-            <UnitTypeIcon
-              size={compact ? "sm" : "md"}
-              wialonId={wialonId}
-              iconUgi={unit.iconUgi}
-              title={displayName}
-            />
-            <div className="min-w-0 flex-1">
-              <h3 className="font-semibold text-sm leading-snug">
+        <div className="flex items-center gap-2 min-w-0">
+          <UnitTypeIcon
+            size="sm"
+            wialonId={wialonId}
+            iconUgi={unit.iconUgi}
+            title={displayName}
+          />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <h3 className="font-semibold text-xs leading-tight truncate">
                 {displayName}
               </h3>
-              <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                <StatusBadge status={status} label={motionLabel} size="sm" />
-                {live && (
-                  <span className="inline-flex items-center gap-1 text-[10px] text-status-moving font-medium">
-                    {quietlyRefreshing ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <span className="w-1.5 h-1.5 rounded-full bg-status-moving animate-pulse" />
-                    )}
-                    Live
-                  </span>
-                )}
-                {tripState && (
-                  <span className="text-[10px] text-muted-foreground">
-                    {tripState}
-                  </span>
-                )}
-              </div>
-              {displayPlate && (
-                <p className="text-xs text-muted-foreground font-mono mt-1">
-                  {displayPlate}
-                </p>
+              <StatusBadge status={status} label={motionLabel} size="sm" />
+              {live && (
+                <span className="inline-flex items-center gap-1 text-[9px] text-status-moving font-medium shrink-0">
+                  {quietlyRefreshing ? (
+                    <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                  ) : (
+                    <span className="w-1 h-1 rounded-full bg-status-moving animate-pulse" />
+                  )}
+                  Live
+                </span>
               )}
-              <p className="text-[11px] text-muted-foreground mt-0.5">
-                {hwDisplayLabel(detail || unit)}
-              </p>
             </div>
+            <p className="text-[10px] text-muted-foreground truncate mt-0.5 flex items-center gap-1">
+              <MapPin className="h-2.5 w-2.5 shrink-0" />
+              {resolvingAddress
+                ? "Resolving…"
+                : addressParts[0] ||
+                  address ||
+                  (lat != null && lng != null
+                    ? `${lat.toFixed(4)}, ${lng.toFixed(4)}`
+                    : "No position")}
+              {lastAge ? <span className="opacity-70">· {lastAge}</span> : null}
+            </p>
           </div>
           {onClose && (
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7 shrink-0"
+              className="h-6 w-6 shrink-0"
               onClick={onClose}
             >
-              <X className="h-3.5 w-3.5" />
+              <X className="h-3 w-3" />
             </Button>
-          )}
-        </div>
-
-        {/* Address — prominent for monitoring */}
-        <div className="mt-3 rounded-lg bg-muted/30 border border-border/40 px-2.5 py-2">
-          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1 flex items-center gap-1">
-            <MapPin className="h-3 w-3" />
-            Location
-          </p>
-          {resolvingAddress ? (
-            <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Resolving address…
-            </p>
-          ) : addressParts.length > 0 ? (
-            <p className="text-xs text-foreground leading-relaxed">
-              {addressParts.join(", ")}
-            </p>
-          ) : address ? (
-            <p className="text-xs text-foreground leading-relaxed">{address}</p>
-          ) : lat != null && lng != null ? (
-            <p className="text-xs font-mono text-muted-foreground">
-              {lat.toFixed(5)}, {lng.toFixed(5)}
-            </p>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              Position unavailable
-            </p>
-          )}
-          {(lastAge || detail?.lastUpdate) && (
-            <p className="text-[10px] text-muted-foreground mt-1.5">
-              {lastAge}
-              {detail?.lastUpdate && (
-                <span className="ml-1">
-                  · {new Date(detail.lastUpdate).toLocaleString()}
-                </span>
-              )}
-            </p>
           )}
         </div>
       </div>
 
-      {/* Stats */}
-      <div
-        className={cn(
-          "grid grid-cols-2 gap-1.5 shrink-0",
-          compact ? "p-3 pt-2" : "p-4 pt-3",
-        )}
-      >
+      {/* Stats — dense 3-col */}
+      <div className="grid grid-cols-3 gap-1 shrink-0 px-2.5 py-1.5">
         {!stationary && (
           <Stat
             icon={Gauge}
@@ -405,7 +415,7 @@ export function UnitDetailPanel({
         {!stationary && (
           <Stat
             icon={Navigation}
-            label="Odometer"
+            label="Odo"
             value={formatCounter(mileage, "km")}
           />
         )}
@@ -413,145 +423,73 @@ export function UnitDetailPanel({
         {engineAsset ? (
           <Stat
             icon={Clock}
-            label="Engine hrs"
+            label="Eng hrs"
             value={formatCounter(engineHours, "h")}
           />
-        ) : (
+        ) : health?.battery != null && Number.isFinite(health.battery) ? (
           <Stat
-            icon={Cpu}
-            label="Device"
-            value={hwDisplayLabel(detail || unit)}
+            icon={Radio}
+            label="Battery"
+            value={formatBatteryReading(health.battery)}
           />
-        )}
+        ) : null}
         {!stationary && course != null && status === "moving" && (
           <Stat
             icon={Compass}
-            label="Heading"
+            label="Head"
             value={`${Math.round(course)}°`}
           />
         )}
-        {detail?.netconn != null && (
+        {health?.satellites != null && (
           <Stat
-            icon={Radio}
-            label="Online"
-            value={detail.netconn ? "Yes" : "No"}
+            icon={Navigation}
+            label="Sats"
+            value={String(health.satellites)}
           />
         )}
       </div>
 
-      {/* Scrollable detail sections */}
+      {/* Scrollable detail — only useful rows */}
       {showScrollable && (
-        <div className="flex-1 overflow-auto border-t px-3 py-3 space-y-4 min-h-0">
-          {(health?.battery != null ||
-            health?.satellites != null ||
-            health?.hdop != null ||
-            health?.altitude != null) && (
-            <DetailSection title="Device vitals">
-              <div className="grid grid-cols-2 gap-1.5">
-                {health?.battery != null && Number.isFinite(health.battery) && (
-                  <Stat
-                    icon={Radio}
-                    label="Battery"
-                    value={formatBatteryReading(health.battery)}
-                  />
-                )}
-                {health?.satellites != null && (
-                  <Stat
-                    icon={Navigation}
-                    label="Satellites"
-                    value={String(health.satellites)}
-                  />
-                )}
-                {health?.hdop != null && (
-                  <Stat icon={Gauge} label="HDOP" value={String(health.hdop)} />
-                )}
-                {health?.altitude != null && (
-                  <Stat
-                    icon={Compass}
-                    label="Altitude"
-                    value={`${Math.round(health.altitude)} m`}
-                  />
-                )}
-              </div>
-            </DetailSection>
-          )}
-
+        <div className="flex-1 overflow-auto border-t px-2.5 py-2 space-y-2.5 min-h-0 text-[11px]">
           {sensorGroups.length > 0 && (
             <DetailSection title="Sensors">
-              <div className="space-y-3">
-                {sensorGroups.map((g) => {
-                  const items = g.items.slice(
-                    0,
-                    Math.max(2, Math.ceil(sensorLimit / sensorGroups.length)),
-                  );
-                  return (
-                    <div
-                      key={g.group}
-                      className="rounded-lg border border-border/40 overflow-hidden"
-                    >
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground bg-muted/40 px-2.5 py-1.5 border-b border-border/40">
-                        {g.group}
-                        <span className="ml-1.5 font-normal tabular-nums">
-                          ({g.items.length})
+              <div className="rounded border border-border/40 divide-y divide-border/30 overflow-hidden">
+                {sensorGroups.flatMap((g) =>
+                  g.items
+                    .slice(0, Math.max(2, Math.ceil(sensorLimit / Math.max(sensorGroups.length, 1))))
+                    .map((s, i) => (
+                      <div
+                        key={`${g.group}-${s.name}-${i}`}
+                        className="flex justify-between gap-2 px-2 py-1 bg-card/40"
+                      >
+                        <span className="text-muted-foreground truncate min-w-0">
+                          {s.name}
                         </span>
-                      </p>
-                      <ul className="divide-y divide-border/40">
-                        {items.map((s, i) => (
-                          <li
-                            key={`${g.group}-${s.name}-${i}`}
-                            className="flex justify-between gap-2 text-xs px-2.5 py-2 bg-card/50"
-                          >
-                            <span className="text-muted-foreground min-w-0">
-                              {s.name}
-                            </span>
-                            <span className="font-semibold shrink-0 text-right tabular-nums">
-                              {s.value}
-                              {s.unit ? ` ${s.unit}` : ""}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  );
-                })}
+                        <span className="font-semibold shrink-0 tabular-nums">
+                          {s.value}
+                          {s.unit ? ` ${s.unit}` : ""}
+                        </span>
+                      </div>
+                    )),
+                )}
               </div>
-            </DetailSection>
-          )}
-
-          {(detail?.ph || detail?.uid) && !compact && (
-            <DetailSection title="Connectivity">
-              <dl className="text-xs space-y-1.5">
-                {detail.ph && (
-                  <div className="flex justify-between gap-2">
-                    <dt className="text-muted-foreground">Phone</dt>
-                    <dd className="font-medium font-mono">{detail.ph}</dd>
-                  </div>
-                )}
-                {detail.uid && (
-                  <div className="flex justify-between gap-2">
-                    <dt className="text-muted-foreground">UID</dt>
-                    <dd className="font-medium font-mono text-[10px] break-all text-right">
-                      {detail.uid}
-                    </dd>
-                  </div>
-                )}
-              </dl>
             </DetailSection>
           )}
 
           {parameters.length > 0 && (
-            <DetailSection title="Parameters">
-              <div className="rounded-lg border border-border/40 divide-y divide-border/40 overflow-hidden">
+            <DetailSection title="Key params">
+              <div className="rounded border border-border/40 divide-y divide-border/30 overflow-hidden">
                 {parameters.slice(0, paramLimit).map((p) => (
                   <div
                     key={p.key}
-                    className="flex justify-between gap-2 text-[11px] px-2.5 py-1.5 bg-card/50 font-mono"
+                    className="flex justify-between gap-2 px-2 py-1 bg-card/40 font-mono text-[10px]"
                   >
-                    <span className="text-muted-foreground shrink-0 max-w-[45%] break-all">
+                    <span className="text-muted-foreground shrink-0 max-w-[40%] truncate">
                       {p.key}
                     </span>
-                    <span className="font-medium text-right break-all">
-                      {p.value}
+                    <span className="font-medium text-right truncate">
+                      {formatParamValue(p.key, p.value)}
                     </span>
                   </div>
                 ))}
@@ -561,33 +499,14 @@ export function UnitDetailPanel({
 
           {customFields.length > 0 && !compact && (
             <DetailSection title="Custom fields">
-              <dl className="text-xs space-y-1.5">
-                {customFields.map((f) => (
+              <dl className="space-y-0.5">
+                {customFields.slice(0, 6).map((f) => (
                   <div key={f.name} className="flex justify-between gap-2">
-                    <dt className="text-muted-foreground">{f.name}</dt>
-                    <dd className="font-medium text-right">{f.value}</dd>
+                    <dt className="text-muted-foreground truncate">{f.name}</dt>
+                    <dd className="font-medium text-right truncate">{f.value}</dd>
                   </div>
                 ))}
               </dl>
-            </DetailSection>
-          )}
-
-          {maintenance.length > 0 && !compact && (
-            <DetailSection title="Maintenance">
-              <ul className="text-xs space-y-1.5">
-                {maintenance.map((m, i) => (
-                  <li
-                    key={`${m.name}-${i}`}
-                    className="flex justify-between gap-2"
-                  >
-                    <span className="text-muted-foreground flex items-center gap-1">
-                      <Wrench className="h-3 w-3" />
-                      {m.name}
-                    </span>
-                    <span className="font-medium text-right">{m.detail}</span>
-                  </li>
-                ))}
-              </ul>
             </DetailSection>
           )}
 
@@ -595,7 +514,7 @@ export function UnitDetailPanel({
             <DetailSection title="Commands">
               <div className="flex flex-wrap gap-1">
                 {commands
-                  .slice(0, compact ? 4 : 8)
+                  .slice(0, compact ? 4 : 6)
                   .map((c, i) =>
                     wialonId ? (
                       <WialonCommandButton
@@ -605,7 +524,7 @@ export function UnitDetailPanel({
                         label={c.label || c.name}
                         variant="outline"
                         size="sm"
-                        className="h-7 text-[10px] px-2"
+                        className="h-6 text-[10px] px-1.5"
                       />
                     ) : null,
                   )}
@@ -614,7 +533,7 @@ export function UnitDetailPanel({
           )}
 
           {detailPending && !detail && wialonId && (
-            <p className="text-xs text-muted-foreground flex items-center gap-1">
+            <p className="text-[10px] text-muted-foreground flex items-center gap-1">
               <Loader2 className="h-3 w-3 animate-spin" />
               Loading data…
             </p>
@@ -623,20 +542,15 @@ export function UnitDetailPanel({
       )}
 
       {/* Actions */}
-      <div
-        className={cn(
-          "shrink-0 border-t bg-muted/20 flex flex-wrap gap-1.5",
-          compact ? "p-2" : "p-3",
-        )}
-      >
+      <div className="shrink-0 border-t bg-muted/20 flex flex-wrap gap-1 p-1.5">
         {onViewOnMap && (
           <Button
             variant="secondary"
             size="sm"
-            className="h-8 text-xs flex-1 min-w-[5rem]"
+            className="h-7 text-[10px] flex-1 min-w-[4.5rem]"
             onClick={() => onViewOnMap(unit)}
           >
-            <MapPin className="h-3.5 w-3.5 mr-1" />
+            <MapPin className="h-3 w-3 mr-1" />
             Map
           </Button>
         )}
@@ -644,10 +558,10 @@ export function UnitDetailPanel({
           <Button
             variant="outline"
             size="sm"
-            className="h-8 text-xs flex-1 min-w-[5rem]"
+            className="h-7 text-[10px] flex-1 min-w-[4.5rem]"
             onClick={() => onTripHistory(unit)}
           >
-            <History className="h-3.5 w-3.5 mr-1" />
+            <History className="h-3 w-3 mr-1" />
             Track
           </Button>
         )}
@@ -655,13 +569,13 @@ export function UnitDetailPanel({
           <Button
             variant="outline"
             size="sm"
-            className="h-8 text-xs flex-1 min-w-[5rem]"
+            className="h-7 text-[10px] flex-1 min-w-[4.5rem]"
             asChild
           >
             <Link
               to={`/app/surveillance${wialonId ? `?unitId=${wialonId}` : ""}`}
             >
-              <Video className="h-3.5 w-3.5 mr-1" />
+              <Video className="h-3 w-3 mr-1" />
               Video
             </Link>
           </Button>
@@ -670,11 +584,11 @@ export function UnitDetailPanel({
           <Button
             variant="outline"
             size="sm"
-            className="h-8 text-xs flex-1 min-w-[5rem]"
+            className="h-7 text-[10px] flex-1 min-w-[4.5rem]"
             asChild
           >
             <Link to={`/app/commands?unit=${wialonId}`}>
-              <Radio className="h-3.5 w-3.5 mr-1" />
+              <Radio className="h-3 w-3 mr-1" />
               Commands
             </Link>
           </Button>

@@ -214,25 +214,47 @@ export function hasVideoCapability(
 export function formatFuelDisplay(
   unit: Pick<FleetUnit, 'fuelLevel' | 'fuelLiters' | 'fuelFormatted' | 'tankCapacity'>,
 ): string {
-  const litres = unit.fuelLiters;
   const capacity = unit.tankCapacity;
+  let litres = unit.fuelLiters;
+
+  // Reject uncalibrated ADC-looking values (e.g. 2170) when they exceed tank capacity.
+  if (
+    litres != null &&
+    capacity != null &&
+    capacity > 0 &&
+    litres > capacity * 1.5
+  ) {
+    litres = undefined;
+  }
+  // Without capacity, values well above a normal vehicle tank that have no "L" unit
+  // in formatted text are usually raw sensor counts — don't show them as fuel.
+  if (litres != null && litres > 800 && (capacity == null || capacity <= 0)) {
+    const formatted = (unit.fuelFormatted || '').toLowerCase();
+    if (!/\bl\b|litre|liter/.test(formatted) || /adc|raw/.test(formatted)) {
+      litres = undefined;
+    }
+  }
+
   const pctFromCapacity =
     litres != null && capacity != null && capacity > 0
       ? Math.min(100, Math.max(0, Math.round((litres / capacity) * 100)))
       : null;
-  // Never treat raw litres ≤100 as % when capacity is known.
   const pct =
     pctFromCapacity ??
     (capacity == null && unit.fuelLevel != null && unit.fuelLevel > 0 && unit.fuelLevel <= 100
       ? Math.round(unit.fuelLevel)
       : null);
 
-  if (unit.fuelFormatted && pctFromCapacity == null) return unit.fuelFormatted;
   if (litres != null) {
-    return pct != null ? `${litres} L (${pct}%)` : `${litres} L`;
+    const rounded = Math.round(litres * 10) / 10;
+    return pct != null ? `${rounded} L (${pct}%)` : `${rounded} L`;
   }
   if (pct != null) return `${pct}%`;
-  if (unit.fuelFormatted) return unit.fuelFormatted;
+  // Only trust formatted strings that look like litres / percent — never raw ADC.
+  const fmt = (unit.fuelFormatted || '').trim();
+  if (fmt && /\d/.test(fmt) && (/l|litre|liter|%/i.test(fmt) || Number(fmt) <= 100)) {
+    return fmt;
+  }
   return '—';
 }
 

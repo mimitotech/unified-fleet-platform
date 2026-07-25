@@ -3,6 +3,12 @@ import { wialonObjectValues } from '../adapters/wialonUtils.js';
 import { mapWialonSearchItem, type WialonUnitSlice } from './wialonUnitMapper.js';
 import type { WialonHwType } from './wialonHwTypes.js';
 import { parseWialonFuelSettings, type WialonFuelInfo, hasFuelData } from './wialonFuel.js';
+import {
+  isFuelLevelSensor,
+  readAllUnitSensors,
+  totalLitersFromReadings,
+  tankCapacityFromItem,
+} from './wialonFuelSensorUtils.js';
 
 type CalcSensor = { n: string; v: string; u?: string; t?: number };
 
@@ -170,8 +176,37 @@ export function parseWialonUnitDetail(
   const slice = mapWialonSearchItem(item, hwTypes, calcSensors);
   const pos = slice.position;
   const extras = parseHealthAndIo(slice.lmsg, item.pos);
-  const sensors = mergeSensorValues(slice, calcSensors || []);
+  let sensors = mergeSensorValues(slice, calcSensors || []);
+
+  // Prefer calibrated FLS readings (sensor.tbl) — calcSensors often returns raw ADC
+  // (e.g. 2170) which must never be shown or monetised as litres.
+  const calibrated = readAllUnitSensors(item);
+  if (calibrated.length) {
+    const byName = new Map(calibrated.map((r) => [r.name, r]));
+    const byId = new Map(calibrated.map((r) => [r.sensorId, r]));
+    sensors = sensors.map((s) => {
+      const hit = (s.id ? byId.get(s.id) : undefined) || byName.get(s.name);
+      if (!hit) return s;
+      if (!isFuelLevelSensor(s.name, s.type) && !hit.isFuelLevel) return s;
+      return {
+        ...s,
+        value: String(hit.value),
+        unit: hit.unit || s.unit || (hit.isFuelLevel ? 'L' : undefined),
+      };
+    });
+  }
+
   const fuel = parseWialonFuelSettings(fuelSettings, sensors, liveLls);
+  const calibratedLiters = calibrated.length ? totalLitersFromReadings(calibrated) : 0;
+  const capacity = tankCapacityFromItem(item);
+  if (calibratedLiters > 0) {
+    // Always trust calibration table over raw calcSensors for levelLiters.
+    fuel.levelLiters = calibratedLiters;
+    fuel.levelFormatted = `${calibratedLiters} L`;
+    if (capacity && capacity > 0) {
+      fuel.level = Math.min(100, Math.max(0, Math.round((calibratedLiters / capacity) * 100)));
+    }
+  }
 
   return {
     ...slice,
@@ -183,8 +218,15 @@ export function parseWialonUnitDetail(
     video,
     fuel: hasFuelData(fuel) ? fuel : undefined,
     fuelLevel:
+      (fuel.level != null ? fuel.level : undefined) ??
       slice.fuelLevel ??
-      fuel.level ??
-      (fuel.levelLiters != null && fuel.levelLiters <= 100 ? Math.round(fuel.levelLiters) : undefined),
+      (fuel.levelLiters != null &&
+      capacity &&
+      capacity > 0 &&
+      fuel.levelLiters <= capacity * 1.2
+        ? Math.round((fuel.levelLiters / capacity) * 100)
+        : fuel.levelLiters != null && fuel.levelLiters <= 100
+          ? Math.round(fuel.levelLiters)
+          : undefined),
   };
 }
