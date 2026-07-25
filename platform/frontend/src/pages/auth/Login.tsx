@@ -1,6 +1,6 @@
 /**
- * Login — full-bleed media with a solid sign-in panel and optional
- * “Trusted by” client-logo marquee (Admin → System → Login media).
+ * Login — full-bleed media slideshow with a centered sign-in card and an
+ * optional “Trusted by” client-logo marquee (Admin → System → Login media).
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -59,7 +59,7 @@ const DEFAULT_SLIDES: Slide[] = [
 ];
 
 const fieldClass =
-  'h-11 bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 focus-visible:border-primary focus-visible:ring-primary/25 rounded-lg';
+  'h-10 bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 focus-visible:border-primary focus-visible:ring-primary/25 rounded-lg text-sm';
 
 export default function Login() {
   const { signIn } = useAuth();
@@ -118,7 +118,6 @@ export default function Login() {
 
   const marqueeLogos = useMemo(() => {
     if (trustLogos.length === 0) return [];
-    // Duplicate so the CSS loop stays seamless; pad short lists further.
     const base = trustLogos.length < 4 ? [...trustLogos, ...trustLogos, ...trustLogos] : trustLogos;
     return [...base, ...base];
   }, [trustLogos]);
@@ -201,7 +200,7 @@ export default function Login() {
   const hasTrust = trustLogos.length > 0;
 
   return (
-    <div className="fixed inset-0 overflow-hidden bg-neutral-950">
+    <div className="fixed inset-0 flex items-center justify-center overflow-hidden bg-neutral-950">
       {/* Media layer — keep images vivid; overlays stay light */}
       {slides.map((s, i) => (
         <div
@@ -222,21 +221,14 @@ export default function Login() {
         </div>
       ))}
 
-      {/* Soft left vignette only (form readability) — no full-screen wash */}
+      {/* Light center scrim only — enough for the card, media stays visible */}
       <div
-        className="pointer-events-none absolute inset-y-0 left-0 z-[1] w-full max-w-xl bg-gradient-to-r from-black/45 via-black/18 to-transparent lg:max-w-[48%]"
+        className="pointer-events-none absolute inset-0 z-[1] bg-gradient-to-b from-black/25 via-black/15 to-black/30"
         aria-hidden
       />
-      {/* Subtle bottom fade so the trust strip sits cleanly */}
-      {hasTrust ? (
-        <div
-          className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-28 bg-gradient-to-t from-black/35 to-transparent"
-          aria-hidden
-        />
-      ) : null}
 
       {/* Slide copy — text shadow instead of heavy overlay */}
-      <div className="absolute inset-x-0 top-0 z-10 p-6 sm:p-10 pointer-events-none lg:pr-[min(42%,28rem)]">
+      <div className="absolute inset-x-0 top-0 z-10 p-6 sm:p-10 pointer-events-none">
         <div className="max-w-lg">
           {active.eyebrow ? (
             <p
@@ -266,8 +258,8 @@ export default function Login() {
       {slides.length > 1 && (
         <div
           className={cn(
-            'absolute left-6 z-10 flex gap-2 sm:left-10',
-            hasTrust ? 'bottom-28' : 'bottom-8',
+            'absolute left-1/2 z-10 flex -translate-x-1/2 gap-2',
+            hasTrust ? 'bottom-24' : 'bottom-8',
           )}
         >
           {slides.map((s, i) => (
@@ -285,34 +277,38 @@ export default function Login() {
         </div>
       )}
 
-      {/* Sign-in panel */}
-      <div
-        className={cn(
-          'absolute z-20 flex w-full justify-center px-4',
-          'top-1/2 -translate-y-1/2',
-          'lg:right-10 lg:top-1/2 lg:w-auto lg:translate-y-[-50%] lg:justify-end xl:right-16',
-          hasTrust && 'max-lg:pb-24',
-        )}
-      >
-        <div className="w-full max-w-[400px] rounded-2xl border border-slate-200/80 bg-white p-7 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.45)] sm:p-8">
-          <div className="mb-6 flex flex-col items-center text-center">
-            <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 ring-1 ring-primary/20">
-              <img src={BRAND.logo} alt="" className="h-9 w-9 object-contain" />
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900">{BRAND.name}</h1>
-            <p className="mt-1 text-sm text-slate-600">
-              {view === 'login'
-                ? BRAND.fullName
-                : view === 'forgot-email'
-                  ? 'Reset your password'
-                  : 'Choose a new password'}
-            </p>
-          </div>
+      {/* Centered sign-in card */}
+      <div className={cn('relative z-20 w-full max-w-[340px] px-4', hasTrust && 'mb-16')}>
+        {/* MAMS logo — no container, fully visible */}
+        <div className="mb-4 flex flex-col items-center text-center">
+          <img
+            src={BRAND.logo}
+            alt={BRAND.name}
+            className="h-16 w-auto object-contain drop-shadow-[0_4px_14px_rgba(0,0,0,0.45)]"
+          />
+          <h1
+            className="mt-2.5 text-2xl font-extrabold tracking-tight text-white"
+            style={{ textShadow: '0 2px 12px rgba(0,0,0,0.5)' }}
+          >
+            {BRAND.name}
+          </h1>
+          <p
+            className="mt-0.5 text-xs font-medium text-white/90"
+            style={{ textShadow: '0 1px 8px rgba(0,0,0,0.5)' }}
+          >
+            {view === 'login'
+              ? BRAND.fullName
+              : view === 'forgot-email'
+                ? 'Reset your password'
+                : 'Choose a new password'}
+          </p>
+        </div>
 
+        <div className="rounded-2xl border-2 border-primary/70 bg-white/95 p-5 shadow-[0_18px_50px_-16px_rgba(0,66,37,0.55)] ring-1 ring-primary/10 backdrop-blur-sm sm:p-6">
           {view === 'login' && (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="login-email" className="text-slate-700">
+            <form onSubmit={handleSubmit} className="space-y-3.5">
+              <div className="space-y-1">
+                <Label htmlFor="login-email" className="text-xs font-bold text-primary">
                   Email
                 </Label>
                 <Input
@@ -328,14 +324,14 @@ export default function Login() {
                   className={fieldClass}
                 />
               </div>
-              <div className="space-y-1.5">
+              <div className="space-y-1">
                 <div className="flex items-center justify-between gap-2">
-                  <Label htmlFor="login-password" className="text-slate-700">
+                  <Label htmlFor="login-password" className="text-xs font-bold text-primary">
                     Password
                   </Label>
                   <button
                     type="button"
-                    className="text-xs font-semibold text-primary hover:text-primary/80 underline-offset-2 hover:underline"
+                    className="text-[11px] font-bold text-primary underline-offset-2 hover:underline"
                     onClick={() => setView('forgot-email')}
                     disabled={loading}
                   >
@@ -356,23 +352,23 @@ export default function Login() {
 
               <LoadingButton
                 type="submit"
-                className="mt-1 h-11 w-full rounded-lg bg-primary text-base font-semibold text-white shadow-md shadow-primary/25 hover:bg-primary/90"
+                className="mt-1 h-10 w-full rounded-lg bg-primary text-sm font-bold text-white shadow-md shadow-primary/25 hover:bg-primary/90"
                 loading={loading}
                 loadingText="Signing In..."
               >
-                <LogIn className="mr-2 h-4 w-4" />
+                <LogIn className="mr-1.5 h-4 w-4" />
                 Sign In
               </LoadingButton>
             </form>
           )}
 
           {view === 'forgot-email' && (
-            <form onSubmit={handleForgotEmail} className="space-y-4">
-              <p className="text-sm text-slate-600">
+            <form onSubmit={handleForgotEmail} className="space-y-3.5">
+              <p className="text-xs font-medium leading-relaxed text-slate-600">
                 Enter the email on your account. If it exists, you can set a new password.
               </p>
-              <div className="space-y-1.5">
-                <Label htmlFor="forgot-email" className="text-slate-700">
+              <div className="space-y-1">
+                <Label htmlFor="forgot-email" className="text-xs font-bold text-primary">
                   Email
                 </Label>
                 <Input
@@ -390,32 +386,32 @@ export default function Login() {
               </div>
               <LoadingButton
                 type="submit"
-                className="h-11 w-full rounded-lg bg-primary text-base font-semibold text-white shadow-md shadow-primary/25 hover:bg-primary/90"
+                className="h-10 w-full rounded-lg bg-primary text-sm font-bold text-white shadow-md shadow-primary/25 hover:bg-primary/90"
                 loading={loading}
                 loadingText="Checking..."
               >
-                <KeyRound className="mr-2 h-4 w-4" />
+                <KeyRound className="mr-1.5 h-4 w-4" />
                 Continue
               </LoadingButton>
               <button
                 type="button"
                 onClick={goLogin}
                 disabled={loading}
-                className="flex w-full items-center justify-center gap-1.5 text-sm font-medium text-slate-600 hover:text-primary"
+                className="flex w-full items-center justify-center gap-1.5 text-xs font-bold text-primary hover:text-primary/80"
               >
-                <ArrowLeft className="h-4 w-4" />
+                <ArrowLeft className="h-3.5 w-3.5" />
                 Back to sign in
               </button>
             </form>
           )}
 
           {view === 'forgot-reset' && (
-            <form onSubmit={handleResetPassword} className="space-y-4">
-              <p className="break-all text-sm text-slate-600">
-                Resetting password for <span className="font-semibold text-slate-900">{email}</span>
+            <form onSubmit={handleResetPassword} className="space-y-3.5">
+              <p className="break-all text-xs font-medium text-slate-600">
+                Resetting for <span className="font-bold text-primary">{email}</span>
               </p>
-              <div className="space-y-1.5">
-                <Label className="text-slate-700">New password</Label>
+              <div className="space-y-1">
+                <Label className="text-xs font-bold text-primary">New password</Label>
                 <PasswordInput
                   placeholder="At least 8 characters"
                   value={newPassword}
@@ -428,8 +424,8 @@ export default function Login() {
                   className={fieldClass}
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label className="text-slate-700">Confirm password</Label>
+              <div className="space-y-1">
+                <Label className="text-xs font-bold text-primary">Confirm password</Label>
                 <PasswordInput
                   placeholder="Confirm new password"
                   value={confirmPassword}
@@ -443,36 +439,36 @@ export default function Login() {
               </div>
               <LoadingButton
                 type="submit"
-                className="h-11 w-full rounded-lg bg-primary text-base font-semibold text-white shadow-md shadow-primary/25 hover:bg-primary/90"
+                className="h-10 w-full rounded-lg bg-primary text-sm font-bold text-white shadow-md shadow-primary/25 hover:bg-primary/90"
                 loading={loading}
                 loadingText="Saving..."
               >
-                <KeyRound className="mr-2 h-4 w-4" />
+                <KeyRound className="mr-1.5 h-4 w-4" />
                 Save new password
               </LoadingButton>
               <button
                 type="button"
                 onClick={goLogin}
                 disabled={loading}
-                className="flex w-full items-center justify-center gap-1.5 text-sm font-medium text-slate-600 hover:text-primary"
+                className="flex w-full items-center justify-center gap-1.5 text-xs font-bold text-primary hover:text-primary/80"
               >
-                <ArrowLeft className="h-4 w-4" />
+                <ArrowLeft className="h-3.5 w-3.5" />
                 Back to sign in
               </button>
             </form>
           )}
 
-          <div className="mt-6 border-t border-slate-100 pt-4 text-center text-xs text-slate-600">
+          <div className="mt-4 border-t border-primary/15 pt-3 text-center text-[11px]">
             <Link
               to="/terms-of-use"
-              className="font-medium text-primary underline-offset-2 hover:underline"
+              className="font-bold text-primary underline-offset-2 hover:underline"
             >
               Terms of Use
             </Link>
-            <span className="mx-2.5 text-slate-300">·</span>
+            <span className="mx-2 text-primary/40">·</span>
             <Link
               to="/privacy-policy"
-              className="font-medium text-primary underline-offset-2 hover:underline"
+              className="font-bold text-primary underline-offset-2 hover:underline"
             >
               Privacy Policy
             </Link>
@@ -480,11 +476,11 @@ export default function Login() {
         </div>
       </div>
 
-      {/* Trusted-by marquee — bottom strip, modest logos */}
+      {/* Trusted-by marquee — bottom strip, full-color logos */}
       {hasTrust ? (
-        <div className="absolute inset-x-0 bottom-0 z-20 border-t border-white/25 bg-white/88 backdrop-blur-md">
+        <div className="absolute inset-x-0 bottom-0 z-20 border-t border-white/25 bg-white/92 backdrop-blur-md">
           <div className="flex items-center gap-4 px-3 py-2.5 sm:px-6">
-            <p className="hidden shrink-0 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 sm:block">
+            <p className="hidden shrink-0 text-[10px] font-bold uppercase tracking-[0.18em] text-primary sm:block">
               Trusted by
             </p>
             <div className="min-w-0 flex-1 overflow-hidden">
@@ -498,7 +494,7 @@ export default function Login() {
                     <img
                       src={logo.imageUrl}
                       alt={logo.name}
-                      className="max-h-8 max-w-[108px] object-contain opacity-80 grayscale transition-[filter,opacity] duration-300 hover:opacity-100 hover:grayscale-0 sm:max-w-[120px]"
+                      className="max-h-8 max-w-[112px] object-contain sm:max-w-[124px]"
                       draggable={false}
                     />
                   </div>

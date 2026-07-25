@@ -515,7 +515,7 @@
   }
 
   .login-trust-marquee-track {
-    animation: login-trust-marquee 40s linear infinite;
+    animation: login-trust-marquee 32s linear infinite;
     width: max-content;
   }
 
