@@ -72,6 +72,7 @@ export function DashboardWidget({
       )}
       style={style}
       data-dashboard-widget
+      data-print-keep
       onMouseEnter={(e) => {
         e.currentTarget.style.boxShadow = `0 12px 28px -14px ${accent}55, 0 2px 6px ${accent}18`;
         e.currentTarget.style.borderColor = `${accent}55`;

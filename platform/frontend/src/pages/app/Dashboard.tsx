@@ -1389,7 +1389,7 @@ export default function Dashboard() {
       >
         <WialonContextBanner errorOnly />
 
-        <div className="stat-strip">
+        <div className="stat-strip" data-print-keep>
           {hasMonitoring && (
             <MetricCard
               title="Assets"
