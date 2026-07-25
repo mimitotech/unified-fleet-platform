@@ -10,7 +10,7 @@ import { UnitDetailPanel } from '@/components/fleet/UnitDetailPanel';
 import { UnitTypeIcon } from '@/components/fleet/UnitTypeIcon';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import type { VehicleStatus } from '@/components/shared/StatusBadge';
-import { type FleetUnit } from '@/lib/fleetUnits';
+import { type FleetUnit, unitPlateLabel } from '@/lib/fleetUnits';
 import { MapBasemapBar } from '@/components/map/MapBasemapPicker';
 import { cn } from '@/lib/utils';
 import type { AssetStatusEntry } from '@/hooks/useAssets';
@@ -115,7 +115,9 @@ export function FleetMapSidebar({
               <UnitTypeIcon size="sm" wialonId={u.wialonId} iconUgi={u.iconUgi} title={u.name} />
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium leading-tight line-clamp-2">{u.name}</p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">{u.plate || u.id}</p>
+                {unitPlateLabel(u) && (
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{unitPlateLabel(u)}</p>
+                )}
               </div>
               <div className="shrink-0 text-right">
                 <StatusBadge

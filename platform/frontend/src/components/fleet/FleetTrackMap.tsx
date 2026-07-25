@@ -10,7 +10,7 @@ import type { WialonTrackHistory } from '@/hooks/useWialonTrackHistory';
 import { useFleetUnitIcon } from '@/hooks/useFleetUnitIcon';
 import { buildFleetMapIcon } from '@/lib/fleetMapIcons';
 import type { FleetUnit } from '@/lib/fleetUnits';
-import { formatFuelDisplay } from '@/lib/fleetUnits';
+import { formatFuelDisplay, unitPlateLabel } from '@/lib/fleetUnits';
 import {
   formatTrackDuration,
   ROUTE_LINE_COLOR,
@@ -334,7 +334,9 @@ export function FleetTrackMap({
 
       <div className="absolute top-2 left-2 z-[500] bg-card/95 border border-border rounded-lg px-2.5 py-2 shadow-md max-w-[240px]">
         <p className="font-semibold text-xs truncate">{unit.name}</p>
-        <p className="text-[10px] text-muted-foreground">{unit.plate || unit.id}</p>
+        {unitPlateLabel(unit) && (
+          <p className="text-[10px] text-muted-foreground">{unitPlateLabel(unit)}</p>
+        )}
         <div className="flex items-center gap-1.5 mt-1">
           <StatusBadge status={unit.status} size="sm" />
           <span className="text-[10px] text-muted-foreground">Fuel {formatFuelDisplay(unit)}</span>

@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import type { VehicleStatus } from '@/components/shared/StatusBadge';
 import { UnitTypeIcon } from '@/components/fleet/UnitTypeIcon';
-import { formatFuelDisplay, hwDisplayLabel, type FleetUnit } from '@/lib/fleetUnits';
+import { formatFuelDisplay, hwDisplayLabel, unitPlateLabel, type FleetUnit } from '@/lib/fleetUnits';
 import { cn } from '@/lib/utils';
 import { prefetchWialonUnitDetail } from '@/hooks/useWialonLive';
 
@@ -138,7 +138,9 @@ export function FleetListTable({
                     />
                     <div className="min-w-0">
                       <p className="font-medium truncate">{u.name}</p>
-                      <p className="text-xs text-muted-foreground font-mono truncate">{u.plate || u.id}</p>
+                      {unitPlateLabel(u) && (
+                        <p className="text-xs text-muted-foreground font-mono truncate">{unitPlateLabel(u)}</p>
+                      )}
                     </div>
                   </div>
                 </td>

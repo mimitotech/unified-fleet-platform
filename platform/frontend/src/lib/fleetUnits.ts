@@ -129,6 +129,18 @@ export function hwDisplayLabel(unit: Pick<FleetUnit, 'hwName' | 'hw'>): string {
   return '—';
 }
 
+/**
+ * Secondary label under a unit name (plate/registration).
+ * Returns empty when there's no real plate — never the raw Wialon unit ID,
+ * and never a duplicate of the unit name.
+ */
+export function unitPlateLabel(unit: Pick<FleetUnit, 'name' | 'plate'>): string {
+  const plate = (unit.plate ?? '').trim();
+  if (!plate) return '';
+  if (plate === (unit.name ?? '').trim()) return '';
+  return plate;
+}
+
 /** Units with Wialon fuel LEVEL sensors configured. */
 export function hasFuelSensors(
   unit: Pick<FleetUnit, 'sens' | 'fuelLiters' | 'fuelFormatted' | 'fuelLevel'>

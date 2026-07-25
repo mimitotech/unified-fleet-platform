@@ -12,6 +12,7 @@ import { History, FileText } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { FleetUnit } from '@/lib/fleetUnits';
+import { unitPlateLabel } from '@/lib/fleetUnits';
 import { safeArray } from '@/lib/safeArray';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -31,7 +32,9 @@ function UnitCommandsCard({ unit }: { unit: FleetUnit }) {
         <UnitTypeIcon wialonId={unit.wialonId} iconUgi={unit.iconUgi} size="md" title={unit.name} />
         <div className="min-w-0 flex-1">
           <p className="font-medium truncate">{unit.name}</p>
-          <p className="text-sm text-muted-foreground truncate">{unit.plate || unit.id}</p>
+          {unitPlateLabel(unit) && (
+            <p className="text-sm text-muted-foreground truncate">{unitPlateLabel(unit)}</p>
+          )}
           <StatusBadge status={unit.status} size="sm" className="mt-1" />
         </div>
       </div>

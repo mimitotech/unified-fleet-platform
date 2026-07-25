@@ -61,12 +61,15 @@ import { useWialonContext } from "@/hooks/useWialon";
 import {
   useDriverStats,
   useFuelKpis,
-  useFuelTransactions,
   useGeofences,
   useRouteStats,
   useVideoStreams,
   useWorkshopKpis,
 } from "@/hooks/useDomain";
+import {
+  useFuelTransactions as useCategoryFuelTransactions,
+  useFuelFleetSummary,
+} from "@/services/fleet";
 import { useWialonGeofencesLive } from "@/hooks/useWialonLive";
 import { clientApi, getTenantSlug } from "@/lib/api";
 import { ALERT_SEVERITY, FLEET_STATUS } from "@/lib/chartColors";
@@ -309,11 +312,50 @@ export default function Dashboard() {
     isError: fuelKpisError,
     refetch: refetchFuelKpis,
   } = useFuelKpis(hasFuel, { from: applied.from, to: applied.to });
-  const { data: fuelTransactions = [], isFetched: fuelTxsFetched } =
-    useFuelTransactions(hasFuel, {
-      from: applied.from,
-      to: applied.to,
-    });
+
+  // Fuel totals must match the Fuel module exactly: fetch the SAME category-scoped
+  // transactions the Fuel tabs use and merge them, instead of the fleet-wide
+  // unscoped harvest (which inflates via group summaries + balance-derived used).
+  const { data: fuelSummary } = useFuelFleetSummary();
+  const fuelSupport = fuelSummary?.supportedCategories;
+  const wantVehicleFuel = hasFuel;
+  const wantGeneratorFuel =
+    hasFuel && (fuelSupport ? fuelSupport.generator : (fuelSummary?.generators ?? 0) > 0);
+  const wantMachineryFuel =
+    hasFuel && (fuelSupport ? fuelSupport.machinery : (fuelSummary?.machinery ?? 0) > 0);
+
+  const vehicleFuelTx = useCategoryFuelTransactions(
+    { startDate: applied.from, endDate: applied.to, assetCategory: "vehicle" },
+    { enabled: wantVehicleFuel },
+  );
+  const generatorFuelTx = useCategoryFuelTransactions(
+    { startDate: applied.from, endDate: applied.to, assetCategory: "generator" },
+    { enabled: wantGeneratorFuel },
+  );
+  const machineryFuelTx = useCategoryFuelTransactions(
+    { startDate: applied.from, endDate: applied.to, assetCategory: "machinery" },
+    { enabled: wantMachineryFuel },
+  );
+
+  const fuelTransactions = useMemo(
+    () => [
+      ...(wantVehicleFuel ? vehicleFuelTx.data?.transactions ?? [] : []),
+      ...(wantGeneratorFuel ? generatorFuelTx.data?.transactions ?? [] : []),
+      ...(wantMachineryFuel ? machineryFuelTx.data?.transactions ?? [] : []),
+    ],
+    [
+      wantVehicleFuel,
+      wantGeneratorFuel,
+      wantMachineryFuel,
+      vehicleFuelTx.data,
+      generatorFuelTx.data,
+      machineryFuelTx.data,
+    ],
+  );
+  const fuelTxsFetched =
+    (!wantVehicleFuel || vehicleFuelTx.isFetched) &&
+    (!wantGeneratorFuel || generatorFuelTx.isFetched) &&
+    (!wantMachineryFuel || machineryFuelTx.isFetched);
   const { data: workshopKpis } = useWorkshopKpis(hasWorkshop);
   const { data: driverStats } = useDriverStats(hasDrivers);
   const { data: routeStats } = useRouteStats(hasRoutes);
