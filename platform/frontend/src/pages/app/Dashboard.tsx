@@ -5,6 +5,7 @@ import {
   Fuel,
   Gauge,
   Route,
+  Satellite,
   Truck,
   Users,
   Video,
@@ -58,6 +59,7 @@ import { useModules } from "@/hooks/useModules";
 import { useTenantBranding } from "@/hooks/useTenantBranding";
 import { useAuth } from "@/providers/AuthProvider";
 import { useWialonContext } from "@/hooks/useWialon";
+import { useFleetAssetProfile } from "@/hooks/useFleetAssetProfile";
 import {
   useDriverStats,
   useFuelKpis,
@@ -288,7 +290,19 @@ export default function Dashboard() {
     live,
     isLoading: fleetLoading,
   } = useFleetUnits();
-  const { connected, configured, ctx } = useWialonContext();
+  const {
+    connected,
+    configured,
+    ctx,
+    tierName,
+    counts: wialonCounts,
+  } = useWialonContext();
+  const assetProfile = useFleetAssetProfile();
+  const accountName = ctx?.accountName || "";
+  const accountUnitCount =
+    (ctx?.sessionMeta as { scopedAccountId?: number } | undefined)?.scopedAccountId
+      ? ctx?.previewAssetCount ?? wialonCounts?.units
+      : wialonCounts?.units ?? ctx?.previewAssetCount;
   const {
     data: alerts,
     isError: alertsError,
@@ -307,11 +321,10 @@ export default function Dashboard() {
     assetId?: string;
   }>(alerts);
 
-  const {
-    data: fuelKpis,
-    isError: fuelKpisError,
-    refetch: refetchFuelKpis,
-  } = useFuelKpis(hasFuel, { from: applied.from, to: applied.to });
+  const { isError: fuelKpisError, refetch: refetchFuelKpis } = useFuelKpis(
+    hasFuel,
+    { from: applied.from, to: applied.to },
+  );
 
   // Fuel totals must match the Fuel module exactly: fetch the SAME category-scoped
   // transactions the Fuel tabs use and merge them, instead of the fleet-wide
@@ -352,10 +365,6 @@ export default function Dashboard() {
       machineryFuelTx.data,
     ],
   );
-  const fuelTxsFetched =
-    (!wantVehicleFuel || vehicleFuelTx.isFetched) &&
-    (!wantGeneratorFuel || generatorFuelTx.isFetched) &&
-    (!wantMachineryFuel || machineryFuelTx.isFetched);
   const { data: workshopKpis } = useWorkshopKpis(hasWorkshop);
   const { data: driverStats } = useDriverStats(hasDrivers);
   const { data: routeStats } = useRouteStats(hasRoutes);
@@ -786,24 +795,14 @@ export default function Dashboard() {
       ),
     [fuelTransactions, applied.from, applied.to, liveLevelsByName],
   );
-  const txsReady = fuelTxsFetched;
-  const apiKpis = fuelKpis as Record<string, number> | undefined;
-
-  const fuelFilled = txsReady
-    ? num(periodFuelKpis.totalFilled)
-    : num(apiKpis?.totalFilled);
-  const fuelUsed = txsReady
-    ? num(periodFuelKpis.totalConsumed)
-    : num(apiKpis?.totalConsumed);
-  const fuelTheftLiters = txsReady
-    ? num(periodFuelKpis.theftVolume)
-    : num(apiKpis?.totalTheftLiters ?? apiKpis?.theftLiters);
-  const fuelTracked = txsReady
-    ? num(periodFuelKpis.vehiclesTracked)
-    : num(apiKpis?.vehiclesTracked);
-  const avgConsumption = num(
-    (txsReady ? periodFuelKpis.avgConsumption : 0) || apiKpis?.avgConsumption,
-  );
+  // Single source of truth: derive every fuel tile from the SAME per-category
+  // transactions + live levels the Fuel module uses. Never fall back to the
+  // unscoped /fuel/kpis endpoint — it double counts group summaries and inflates.
+  const fuelFilled = num(periodFuelKpis.totalFilled);
+  const fuelUsed = num(periodFuelKpis.totalConsumed);
+  const fuelTheftLiters = num(periodFuelKpis.theftVolume);
+  const fuelTracked = num(periodFuelKpis.vehiclesTracked);
+  const avgConsumption = num(periodFuelKpis.avgConsumption);
   const fuelCost = Math.round(fuelUsed * fuelPrice);
   const fuelFillCost = Math.round(fuelFilled * fuelPrice);
 
@@ -1243,6 +1242,25 @@ export default function Dashboard() {
     >
       <div className="mb-1">{toolbar}</div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 -mt-1 mb-3 text-[11px] text-muted-foreground tabular-nums">
+        {connected && accountName && (
+          <>
+            <span className="inline-flex items-center gap-1.5 text-foreground font-medium">
+              <Satellite className="h-3.5 w-3.5 text-primary" />
+              {accountName}
+            </span>
+            {tierName && (
+              <Badge variant="secondary" className="h-5 px-1.5 text-[10px] font-medium">
+                {tierName}
+              </Badge>
+            )}
+            {accountUnitCount != null && (
+              <span>
+                {accountUnitCount} {assetProfile.unitLabelPlural}
+              </span>
+            )}
+            <span className="hidden sm:inline text-border">·</span>
+          </>
+        )}
         <span>Showing {periodLabel}</span>
         {chartsUpdating && (
           <span className="inline-flex items-center gap-1.5 text-primary font-medium">
@@ -1317,7 +1335,7 @@ export default function Dashboard() {
           chartsUpdating && "opacity-60 pointer-events-none",
         )}
       >
-        <WialonContextBanner />
+        <WialonContextBanner errorOnly />
 
         <div className="stat-strip">
           {hasMonitoring && (

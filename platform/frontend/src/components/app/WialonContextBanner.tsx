@@ -8,9 +8,11 @@ import { cn } from '@/lib/utils';
 type Props = {
   className?: string;
   compact?: boolean;
+  /** Render only the disconnected/error state; hide the connected info block. */
+  errorOnly?: boolean;
 };
 
-export function WialonContextBanner({ className, compact }: Props) {
+export function WialonContextBanner({ className, compact, errorOnly }: Props) {
   const { connected, configured, tierName, counts, ctx, isLoading } = useWialonContext();
   const assetProfile = useFleetAssetProfile();
 
@@ -37,6 +39,9 @@ export function WialonContextBanner({ className, compact }: Props) {
       </div>
     );
   }
+
+  // Connected info is surfaced elsewhere (e.g. Dashboard summary strip); skip it here.
+  if (errorOnly) return null;
 
   const scoped = (ctx?.sessionMeta as { scopedAccountId?: number } | undefined)?.scopedAccountId;
   const unitCount = scoped
