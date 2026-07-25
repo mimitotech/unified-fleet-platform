@@ -4,6 +4,8 @@ import { WialonFuelService } from './WialonFuelService.js';
 import { loadTenantWialonCreds } from './tenantWialonCredentials.js';
 import { resolveFuelAssetCategory, type FuelAssetCategory } from './wialonAssetCategory.js';
 import { loadFuelGroupMembership } from './wialonFuelAssetGroups.js';
+import { detectFuelCategorySupport } from './wialonFuelCategoryStructure.js';
+import { scopeFromCredentials } from './WialonReportResolverService.js';
 import {
   unitHasFuelModuleSensors,
   readAllUnitSensors,
@@ -153,12 +155,29 @@ export class WialonFuelFleetService {
       machineryUnitIds: new Set<number>(),
       vehicleUnitIds: new Set<number>(),
     };
+    let categorySupport = {
+      vehicle: true,
+      generator: false,
+      machinery: false,
+      unifiedFleet: true,
+      reasons: {
+        vehicleTemplates: true,
+        generatorTemplates: false,
+        generatorGroups: false,
+        machineryGroups: false,
+      },
+    };
     try {
-      groupMembership = await withWialonClient(creds, (client) =>
-        loadFuelGroupMembership(client, tenantId)
-      );
+      const detected = await withWialonClient(creds, async (client) => {
+        const membership = await loadFuelGroupMembership(client, tenantId);
+        const scope = scopeFromCredentials(tenantId, creds);
+        const support = await detectFuelCategorySupport(client, scope, membership);
+        return { membership, support };
+      });
+      groupMembership = detected.membership;
+      categorySupport = detected.support;
     } catch {
-      /* optional — heuristics still apply */
+      /* optional — default unified vehicle fleet */
     }
 
     const fuelUnits = snap.units.filter((u) => unitHasFuelModuleSensors(u.sens));
@@ -226,6 +245,7 @@ export class WialonFuelFleetService {
         unitId: unit.id,
         groupMembership,
         sensorNames: sensors.map((s) => s.name),
+        categorySupport,
       });
 
       assets.push({
@@ -254,7 +274,12 @@ export class WialonFuelFleetService {
     assets.sort((a, b) => a.name.localeCompare(b.name));
     return {
       assets,
-      summary: computeFleetSummary(assets),
+      summary: computeFleetSummary(assets, {
+        vehicle: categorySupport.vehicle,
+        generator: categorySupport.generator,
+        machinery: categorySupport.machinery,
+        unifiedFleet: categorySupport.unifiedFleet,
+      }),
       fetchedAt: snap.fetchedAt,
       cachedAt,
       fromCache: false,

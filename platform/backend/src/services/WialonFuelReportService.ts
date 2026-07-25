@@ -15,6 +15,11 @@ import type { FuelAssetCategory } from './wialonAssetCategory.js';
 import { isWialonGenerator, isWialonMachinery, isWialonVehicle } from './wialonAssetCategory.js';
 import type { FuelGroupMembership } from './wialonFuelAssetGroups.js';
 import { loadFuelGroupMembership } from './wialonFuelAssetGroups.js';
+import {
+  categorySupported,
+  detectFuelCategorySupport,
+  type FuelCategorySupport,
+} from './wialonFuelCategoryStructure.js';
 import type { FuelTransaction } from './wialonFuelReport/types.js';
 import { WialonFuelFleetService } from './WialonFuelFleetService.js';
 import { applyBalanceConsumption } from './wialonFuelLedger.js';
@@ -152,10 +157,16 @@ function unitsForAssetCategory(
   allUnits: Array<{ id: number; nm: string }>,
   assetCategory?: FuelAssetCategory,
   membership?: FuelGroupMembership,
+  categorySupport?: FuelCategorySupport | null,
 ): Array<{ id: number; nm: string }> {
   if (!assetCategory) return allUnits;
   return allUnits.filter((u) => {
-    const input = { name: u.nm, unitId: u.id, groupMembership: membership };
+    const input = {
+      name: u.nm,
+      unitId: u.id,
+      groupMembership: membership,
+      categorySupport,
+    };
     if (assetCategory === 'generator') return isWialonGenerator(input);
     if (assetCategory === 'machinery') return isWialonMachinery(input);
     return isWialonVehicle(input);
@@ -180,6 +191,17 @@ export class WialonFuelReportService {
     const creds = await loadTenantWialonCreds(tenantId);
     const scope: WialonReportScope = scopeFromCredentials(tenantId, creds);
     const rows = await withWialonClient(creds, async (client: WialonClient) => {
+      const membership = await loadFuelGroupMembership(client, tenantId);
+      const categorySupport = await detectFuelCategorySupport(client, scope, membership);
+
+      // Don't invent category harvests the account isn't configured for (e.g. Mimito machinery).
+      if (opts.assetCategory && !categorySupported(categorySupport, opts.assetCategory)) {
+        console.info(
+          `[FuelReport] Skipping category=${opts.assetCategory} for tenant=${tenantId} (Wialon structure does not support it; unifiedFleet=${categorySupport.unifiedFleet})`,
+        );
+        return [] as FuelTransaction[];
+      }
+
       const { groupTemplate, unitTemplate, expected } = await findFuelReportTemplates(client, scope, {
         assetCategory: opts.assetCategory,
         tenantId,
@@ -201,7 +223,6 @@ export class WialonFuelReportService {
       );
 
       const allUnits = await listAllUnits(client, scope);
-      const membership = await loadFuelGroupMembership(client, tenantId);
       const unitNameToId = new Map(allUnits.map((u) => [u.nm, u.id]));
       const unitIndex = buildUnitNameIndex(allUnits);
       let transactions: FuelTransaction[] = [];
@@ -237,7 +258,12 @@ export class WialonFuelReportService {
         : allUnits;
 
       if (!opts.unitId && opts.assetCategory) {
-        const categoryUnits = unitsForAssetCategory(allUnits, opts.assetCategory, membership);
+        const categoryUnits = unitsForAssetCategory(
+          allUnits,
+          opts.assetCategory,
+          membership,
+          categorySupport,
+        );
         if (categoryUnits.length) {
           targetUnits = categoryUnits;
         } else if (groupTemplate && transactions.length) {

@@ -8,6 +8,8 @@ import {
   CANONICAL_FUEL_REPORTS,
   resolveCanonicalFuelSlots,
 } from './wialonFuelReport/templates.js';
+import { loadFuelGroupMembership } from './wialonFuelAssetGroups.js';
+import { detectFuelCategorySupport } from './wialonFuelCategoryStructure.js';
 import type { WialonReportModule } from './wialonReportTemplateRegistry.js';
 
 type FuelSlotStatus = {
@@ -42,6 +44,8 @@ export class WialonFuelReportCapabilityService {
     const scope = scopeFromCredentials(tenantId, creds);
     return withWialonClient(creds, async (client) => {
       const slotsResolved = await resolveCanonicalFuelSlots(client, scope);
+      const membership = await loadFuelGroupMembership(client, tenantId);
+      const categorySupport = await detectFuelCategorySupport(client, scope, membership);
       const allTemplates = await WialonReportResolverService.listAllTemplates(client, scope, 500);
       const fuelTemplates = allTemplates.filter((t) => t.module === 'fuel' || /fuel/i.test(t.templateName));
 
@@ -118,6 +122,13 @@ export class WialonFuelReportCapabilityService {
         readyCount,
         missingReports: missing,
         uniform: missing.length === 0,
+        supportedCategories: {
+          vehicle: categorySupport.vehicle,
+          generator: categorySupport.generator,
+          machinery: categorySupport.machinery,
+          unifiedFleet: categorySupport.unifiedFleet,
+        },
+        categorySupportReasons: categorySupport.reasons,
         capabilities,
         discoveredFuelTemplates: fuelTemplates.slice(0, 40).map((t) => ({
           templateName: t.templateName,

@@ -22,6 +22,13 @@ export type FuelAssetFlags = {
   isFilling: boolean;
 };
 
+export type FuelCategorySupportSummary = {
+  vehicle: boolean;
+  generator: boolean;
+  machinery: boolean;
+  unifiedFleet: boolean;
+};
+
 export type FuelFleetSummary = {
   totalAssets: number;
   vehicles: number;
@@ -32,6 +39,8 @@ export type FuelFleetSummary = {
   staleReadings: number;
   lowTank: number;
   fillingNow: number;
+  /** Which Fuel tabs this Wialon account supports (templates + dedicated groups). */
+  supportedCategories?: FuelCategorySupportSummary;
 };
 
 export type FuelAssetCategory = 'vehicle' | 'generator' | 'machinery';

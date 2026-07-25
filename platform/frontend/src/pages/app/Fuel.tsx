@@ -14,8 +14,6 @@ import { useFuelModuleConfig, isFuelVarianceEnabled } from '@/hooks/useFuelModul
 
 type FuelTab = 'vehicles' | 'generators' | 'machinery' | 'reports' | 'variance';
 
-const ASSET_TABS: Array<Exclude<FuelTab, 'reports' | 'variance'>> = ['vehicles', 'generators', 'machinery'];
-
 export default function Fuel() {
   const { connected } = useWialonContext();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -39,13 +37,24 @@ export default function Fuel() {
 
   const availableTabs = useMemo<FuelTab[]>(() => {
     const tabs: FuelTab[] = [];
+    const support = fleetSummary?.supportedCategories;
+
     if (!fleetSummary) {
-      tabs.push(...ASSET_TABS);
+      // Until summary loads, show Vehicles only — avoid flashing false Machinery/Generators.
+      tabs.push('vehicles');
+    } else if (support) {
+      // Wialon structure first: only show categories this account is configured for.
+      if (support.vehicle && (fleetSummary.vehicles > 0 || support.unifiedFleet)) tabs.push('vehicles');
+      if (support.generator && fleetSummary.generators > 0) tabs.push('generators');
+      if (support.machinery && fleetSummary.machinery > 0) tabs.push('machinery');
+      // Structure says vehicles exist but counts empty (loading/edge): still show Vehicles.
+      if (tabs.length === 0 && support.vehicle) tabs.push('vehicles');
+      if (tabs.length === 0) tabs.push('vehicles');
     } else {
       if (fleetSummary.vehicles > 0) tabs.push('vehicles');
       if (fleetSummary.generators > 0) tabs.push('generators');
       if (fleetSummary.machinery > 0) tabs.push('machinery');
-      if (tabs.length === 0) tabs.push(...ASSET_TABS);
+      if (tabs.length === 0) tabs.push('vehicles');
     }
     tabs.push('reports');
     if (varianceEnabled) tabs.push('variance');

@@ -1,5 +1,6 @@
 import { extractPlateFromName, looksLikeSiteName } from './unitPlateUtils.js';
 import type { FuelGroupMembership } from './wialonFuelAssetGroups.js';
+import type { FuelCategorySupport } from './wialonFuelCategoryStructure.js';
 
 /** Fuel-module asset categories — units with fuel level sensors only. */
 export type FuelAssetCategory = 'vehicle' | 'generator' | 'machinery';
@@ -20,10 +21,11 @@ function findCustomField(
   return '';
 }
 
-const MACHINERY_NAME_RE =
+/** Kept for group naming / admin tooling — not used to invent Machinery tabs from unit titles. */
+export const MACHINERY_NAME_RE =
   /excavat|crane|compressor|\bpump\b|welder|fork\s*lift|forklift|loader|bulldozer|roller|paver|mixer|grader|back\s*hoe|backhoe|shovel|drill(ing)?\s*rig|plant\b|machiner|\bequip/i;
 
-const GENERATOR_NAME_RE =
+export const GENERATOR_NAME_RE =
   /pearl\s*bank|genset|generator|\bdg\s*set\b|\bgen\s*set\b|\bkva\b|standby\s*power|power\s*pack|bowser|fuel\s*tanker/i;
 
 /** Fuel bowser / tanker — level drops are usually dispensed fuel, not theft. */
@@ -61,8 +63,7 @@ function hasEngineHoursSensor(sensorNames: string[]): boolean {
   return sensorNames.some((n) => ENGINE_SENSOR_RE.test(n));
 }
 
-/** Canonical generator detection — naming, custom fields, engine-hours profile, Wialon groups. */
-export function isWialonGenerator(input: {
+export type FuelAssetClassifyInput = {
   name: string;
   plate?: string;
   customFields?: Record<string, string>;
@@ -72,7 +73,28 @@ export function isWialonGenerator(input: {
   unitId?: number;
   groupMembership?: FuelGroupMembership;
   sensorNames?: string[];
-}): boolean {
+  /**
+   * From Wialon report templates + dedicated groups.
+   * When unifiedFleet / category unsupported, do not invent gen/mach from unit names.
+   */
+  categorySupport?: FuelCategorySupport | null;
+};
+
+/**
+ * Generator detection from Wialon configuration:
+ * 1) dedicated generator unit groups
+ * 2) explicit custom fields
+ * 3) name/sensor heuristics only when this account has genset templates or gen groups
+ */
+export function isWialonGenerator(input: FuelAssetClassifyInput): boolean {
+  const support = input.categorySupport;
+  if (support && !support.generator) {
+    // Unified vehicle-only accounts: never invent generators from names.
+    // Still honor explicit Wialon custom fields if an admin tagged one unit.
+    const explicit = readExplicitCategory(input.customFields || {}, input.flds);
+    return explicit === 'generator';
+  }
+
   if (input.unitId && input.groupMembership?.generatorUnitIds.has(input.unitId)) return true;
 
   const name = (input.name || '').trim();
@@ -94,6 +116,8 @@ export function isWialonGenerator(input: {
 
   if (vehicleType.includes('gen') || unitType.includes('gen')) return true;
   if (model.includes('kva')) return true;
+
+  // Soft heuristics only when Wialon structure supports generators
   if (GENERATOR_NAME_RE.test(nameLower)) return true;
 
   const eh = input.engineHours ?? 0;
@@ -106,17 +130,20 @@ export function isWialonGenerator(input: {
   return false;
 }
 
-export function isWialonMachinery(input: {
-  name: string;
-  plate?: string;
-  customFields?: Record<string, string>;
-  flds?: Record<string, { n?: string; v?: string }>;
-  engineHours?: number;
-  mileage?: number;
-  unitId?: number;
-  groupMembership?: FuelGroupMembership;
-}): boolean {
+/**
+ * Machinery only from Wialon configuration:
+ * dedicated machinery groups or explicit custom fields.
+ * Never invent Machinery from unit names (excavator/backhoe in a shared vehicle report).
+ */
+export function isWialonMachinery(input: FuelAssetClassifyInput): boolean {
   if (isWialonGenerator(input)) return false;
+
+  const support = input.categorySupport;
+  if (support && !support.machinery) {
+    const explicit = readExplicitCategory(input.customFields || {}, input.flds);
+    return explicit === 'machinery';
+  }
+
   if (input.unitId && input.groupMembership?.machineryUnitIds.has(input.unitId)) return true;
 
   const cf = input.customFields || {};
@@ -124,28 +151,12 @@ export function isWialonMachinery(input: {
   if (explicit === 'machinery') return true;
   if (explicit === 'vehicle' || explicit === 'generator') return false;
 
-  const name = (input.name || '').trim();
-  if (MACHINERY_NAME_RE.test(name)) return true;
-
-  const plate = (input.plate || extractPlateFromName(name) || '').trim();
-  const mi = input.mileage ?? 0;
-  const eh = input.engineHours ?? 0;
-
-  if (!plate && mi < 500 && eh > 0) return true;
-
+  // No name / mileage heuristics — excavators in a shared Fuel Report stay vehicles
+  // unless Wialon groups or custom fields say otherwise.
   return false;
 }
 
-export function isWialonVehicle(input: {
-  name: string;
-  plate?: string;
-  mileage?: number;
-  unitId?: number;
-  groupMembership?: FuelGroupMembership;
-  customFields?: Record<string, string>;
-  flds?: Record<string, { n?: string; v?: string }>;
-  engineHours?: number;
-}): boolean {
+export function isWialonVehicle(input: FuelAssetClassifyInput): boolean {
   if (isWialonGenerator(input)) return false;
   if (isWialonMachinery(input)) return false;
   if (input.unitId && input.groupMembership?.vehicleUnitIds.has(input.unitId)) return true;
@@ -154,23 +165,18 @@ export function isWialonVehicle(input: {
   if (explicit === 'vehicle') return true;
   if (explicit === 'generator' || explicit === 'machinery') return false;
 
-  const plate = (input.plate || extractPlateFromName(input.name) || '').trim();
-  if (plate) return true;
-  return (input.mileage ?? 0) > 1000;
+  // Default: anything with fuel sensors that isn't configured as gen/mach is a vehicle.
+  return true;
 }
 
 /** Single classifier for fuel assets (Wialon units with fuel level sensors). */
-export function resolveFuelAssetCategory(input: Parameters<typeof isWialonGenerator>[0]): FuelAssetCategory {
-  if (input.unitId && input.groupMembership?.vehicleUnitIds.has(input.unitId)) {
-    if (!isWialonGenerator(input) && !isWialonMachinery(input)) return 'vehicle';
-  }
+export function resolveFuelAssetCategory(input: FuelAssetClassifyInput): FuelAssetCategory {
   if (isWialonGenerator(input)) return 'generator';
   if (isWialonMachinery(input)) return 'machinery';
-  if (isWialonVehicle(input)) return 'vehicle';
-  return 'machinery';
+  return 'vehicle';
 }
 
 /** @deprecated use resolveFuelAssetCategory */
-export function resolveAssetCategory(input: Parameters<typeof isWialonGenerator>[0]): WialonAssetCategory {
+export function resolveAssetCategory(input: FuelAssetClassifyInput): WialonAssetCategory {
   return resolveFuelAssetCategory(input);
 }

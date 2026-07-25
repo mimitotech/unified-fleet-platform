@@ -24,6 +24,13 @@ export type FuelAssetFlags = {
   isFilling: boolean;
 };
 
+export type FuelCategorySupportSummary = {
+  vehicle: boolean;
+  generator: boolean;
+  machinery: boolean;
+  unifiedFleet: boolean;
+};
+
 export type FuelFleetSummary = {
   totalAssets: number;
   vehicles: number;
@@ -34,6 +41,8 @@ export type FuelFleetSummary = {
   staleReadings: number;
   lowTank: number;
   fillingNow: number;
+  /** Which Fuel tabs this Wialon account supports (templates + dedicated groups). */
+  supportedCategories?: FuelCategorySupportSummary;
 };
 
 const BATTERY = /battery|volt/i;
@@ -103,7 +112,8 @@ export function computeFleetSummary(
     assetType: 'vehicle' | 'generator' | 'machinery';
     fuelPercent: number | null;
     flags: FuelAssetFlags;
-  }>
+  }>,
+  supportedCategories?: FuelCategorySupportSummary,
 ): FuelFleetSummary {
   return {
     totalAssets: assets.length,
@@ -115,6 +125,7 @@ export function computeFleetSummary(
     staleReadings: assets.filter((a) => a.flags.hasStaleReading).length,
     lowTank: assets.filter((a) => a.fuelPercent != null && a.fuelPercent < 25).length,
     fillingNow: assets.filter((a) => a.flags.isFilling).length,
+    supportedCategories,
   };
 }
 

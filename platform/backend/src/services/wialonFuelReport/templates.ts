@@ -110,7 +110,7 @@ function pickFuelTemplate(
       best = t;
     }
   }
-  return bestScore > 0 ? best : null;
+  return bestScore > 25 ? best : null;
 }
 
 export async function findFuelReportTemplates(
