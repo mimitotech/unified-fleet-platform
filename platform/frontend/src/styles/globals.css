@@ -507,6 +507,21 @@
     background: inherit;
     opacity: 0.4;
   }
+
+  /* Login page — continuous client-logo strip */
+  @keyframes login-trust-marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+
+  .login-trust-marquee-track {
+    animation: login-trust-marquee 40s linear infinite;
+    width: max-content;
+  }
+
+  .login-trust-marquee-track:hover {
+    animation-play-state: paused;
+  }
 }
 
 @layer utilities {

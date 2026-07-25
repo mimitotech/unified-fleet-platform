@@ -3,6 +3,7 @@ import { WialonVideoService } from '../services/WialonVideoService.js';
 import { VideoShareLinkService } from '../services/VideoShareLinkService.js';
 import { loadTenantWialonCreds } from '../services/tenantWialonCredentials.js';
 import { LoginSlideService } from '../services/LoginSlideService.js';
+import { LoginTrustLogoService } from '../services/LoginTrustLogoService.js';
 import { success, error } from '../utils/response.js';
 
 const router = Router();
@@ -19,6 +20,23 @@ router.get('/login-slides', async (_req, res) => {
         eyebrow: s.eyebrow,
         imageUrl: s.imageUrl,
         sortOrder: s.sortOrder,
+      })),
+    });
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
+
+/** Enabled client trust logos for the login “trusted by” marquee. */
+router.get('/login-trust-logos', async (_req, res) => {
+  try {
+    const logos = await LoginTrustLogoService.listPublic();
+    return success(res, {
+      logos: logos.map((l) => ({
+        id: l.id,
+        name: l.name,
+        imageUrl: l.imageUrl,
+        sortOrder: l.sortOrder,
       })),
     });
   } catch (e) {

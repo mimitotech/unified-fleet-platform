@@ -93,6 +93,13 @@ async function main() {
         logger.warn(`Login slides schema ensure skipped: ${(e as Error).message}`);
       }
       try {
+        const { LoginTrustLogoService } = await import('./services/LoginTrustLogoService.js');
+        await LoginTrustLogoService.ensureSchema();
+        logger.info('Login trust logos schema ready');
+      } catch (e) {
+        logger.warn(`Login trust logos schema ensure skipped: ${(e as Error).message}`);
+      }
+      try {
         const { ensureWorkshopSchema } = await import('./services/WorkshopSchema.js');
         await ensureWorkshopSchema();
         logger.info('Workshop schema ready (rich fields)');

@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { MetricCard } from '@/components/app/MetricCard';
 import { LoginSlidesAdminPanel } from '@/components/admin/LoginSlidesAdminPanel';
+import { LoginTrustLogosAdminPanel } from '@/components/admin/LoginTrustLogosAdminPanel';
 import { Database, Server, Zap, Radio } from 'lucide-react';
 
 export default function AdminSystemPage() {
@@ -91,8 +92,9 @@ export default function AdminSystemPage() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="login" className="mt-4">
+          <TabsContent value="login" className="mt-4 space-y-6">
             <LoginSlidesAdminPanel />
+            <LoginTrustLogosAdminPanel />
           </TabsContent>
 
           <TabsContent value="email" className="mt-4">

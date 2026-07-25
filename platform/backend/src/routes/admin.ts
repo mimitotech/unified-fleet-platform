@@ -183,6 +183,72 @@ router.delete('/login-slides/:id', async (req: AuthRequest, res) => {
   }
 });
 
+// ─── Login page client trust logos ───────────────────────────────────────────
+
+router.get('/login-trust-logos', async (_req, res) => {
+  try {
+    const { LoginTrustLogoService } = await import('../services/LoginTrustLogoService.js');
+    const logos = await LoginTrustLogoService.listAll();
+    return success(res, { logos });
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
+
+router.post('/login-trust-logos', async (req: AuthRequest, res) => {
+  try {
+    const { LoginTrustLogoService } = await import('../services/LoginTrustLogoService.js');
+    const logo = await LoginTrustLogoService.create(req.body || {});
+    await AuditService.log({
+      userId: req.user?.id,
+      userEmail: req.user?.email,
+      action: 'login_trust_logo.create',
+      resourceType: 'login_trust_logo',
+      resourceId: logo.id,
+      details: { name: logo.name },
+    });
+    return success(res, logo, 201);
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
+
+router.patch('/login-trust-logos/:id', async (req: AuthRequest, res) => {
+  try {
+    const { LoginTrustLogoService } = await import('../services/LoginTrustLogoService.js');
+    const logo = await LoginTrustLogoService.update(String(req.params.id), req.body || {});
+    await AuditService.log({
+      userId: req.user?.id,
+      userEmail: req.user?.email,
+      action: 'login_trust_logo.update',
+      resourceType: 'login_trust_logo',
+      resourceId: logo.id,
+      details: { name: logo.name, isEnabled: logo.isEnabled },
+    });
+    return success(res, logo);
+  } catch (e) {
+    return error(res, (e as Error).message, /not found/i.test((e as Error).message) ? 404 : 400);
+  }
+});
+
+router.delete('/login-trust-logos/:id', async (req: AuthRequest, res) => {
+  try {
+    const { LoginTrustLogoService } = await import('../services/LoginTrustLogoService.js');
+    const ok = await LoginTrustLogoService.remove(String(req.params.id));
+    if (!ok) return error(res, 'Logo not found', 404);
+    await AuditService.log({
+      userId: req.user?.id,
+      userEmail: req.user?.email,
+      action: 'login_trust_logo.delete',
+      resourceType: 'login_trust_logo',
+      resourceId: String(req.params.id),
+    });
+    return success(res, { deleted: true });
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
+
 // ─── Marketplace ─────────────────────────────────────────────────────────────
 
 router.get('/marketplace', async (_req, res) => {

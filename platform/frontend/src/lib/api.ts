@@ -1544,6 +1544,34 @@ export const adminApi = {
     },
   ) => api(`/api/admin/login-slides/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteLoginSlide: (id: string) => api(`/api/admin/login-slides/${id}`, { method: 'DELETE' }),
+  listLoginTrustLogos: () =>
+    api<{ logos: Array<{
+      id: string;
+      name: string;
+      imageUrl: string | null;
+      sortOrder: number;
+      isEnabled: boolean;
+    }> }>('/api/admin/login-trust-logos'),
+  createLoginTrustLogo: (data: {
+    name: string;
+    sortOrder?: number;
+    isEnabled?: boolean;
+    fileName?: string;
+    mimeType?: string;
+    dataBase64?: string;
+  }) => api('/api/admin/login-trust-logos', { method: 'POST', body: JSON.stringify(data) }),
+  updateLoginTrustLogo: (
+    id: string,
+    data: {
+      name?: string;
+      sortOrder?: number;
+      isEnabled?: boolean;
+      fileName?: string;
+      mimeType?: string;
+      dataBase64?: string;
+    },
+  ) => api(`/api/admin/login-trust-logos/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteLoginTrustLogo: (id: string) => api(`/api/admin/login-trust-logos/${id}`, { method: 'DELETE' }),
   getMarketplace: () => api<unknown[]>('/api/admin/marketplace'),
   updateMarketplace: (key: string, isEnabledGlobally: boolean) =>
     api(`/api/admin/marketplace/${key}`, { method: 'PATCH', body: JSON.stringify({ isEnabledGlobally }) }),
