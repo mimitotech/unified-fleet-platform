@@ -156,12 +156,22 @@ export async function findFuelReportTemplates(
         const templates = await WialonReportResolverService.findModuleTemplates(client, scope, 'fuel', {
           includeFallback: true,
         });
-        const groupTemplate =
+        let groupTemplate =
           selectedGroup ||
           toFuelTemplate(pickFuelTemplate(templates, { isGroupReport: true, assetCategory: opts?.assetCategory }));
-        const unitTemplate =
+        let unitTemplate =
           selectedUnit ||
           toFuelTemplate(pickFuelTemplate(templates, { isGroupReport: false, assetCategory: opts?.assetCategory }));
+        if (family !== 'vehicle' && (!groupTemplate || !unitTemplate)) {
+          if (!groupTemplate)
+            groupTemplate = toFuelTemplate(
+              pickFuelTemplate(templates, { isGroupReport: true, assetCategory: undefined }),
+            );
+          if (!unitTemplate)
+            unitTemplate = toFuelTemplate(
+              pickFuelTemplate(templates, { isGroupReport: false, assetCategory: undefined }),
+            );
+        }
         return { groupTemplate, unitTemplate, family, expected };
       }
     } catch {
@@ -173,12 +183,29 @@ export async function findFuelReportTemplates(
     includeFallback: true,
   });
 
-  const groupTemplate = toFuelTemplate(
+  let groupTemplate = toFuelTemplate(
     pickFuelTemplate(templates, { isGroupReport: true, assetCategory: opts?.assetCategory }),
   );
-  const unitTemplate = toFuelTemplate(
+  let unitTemplate = toFuelTemplate(
     pickFuelTemplate(templates, { isGroupReport: false, assetCategory: opts?.assetCategory }),
   );
+
+  // Fallback: accounts that only have generic "Fuel Report(Group)/(Unit)" templates
+  // (no genset-specific ones) should still resolve for machinery/generator. The generic
+  // FLS reports work for any unit type, so fall back to them instead of throwing.
+  if (family !== 'vehicle' && (!groupTemplate || !unitTemplate)) {
+    if (!groupTemplate) {
+      groupTemplate = toFuelTemplate(
+        pickFuelTemplate(templates, { isGroupReport: true, assetCategory: undefined }),
+      );
+    }
+    if (!unitTemplate) {
+      unitTemplate = toFuelTemplate(
+        pickFuelTemplate(templates, { isGroupReport: false, assetCategory: undefined }),
+      );
+    }
+  }
+
   return {
     groupTemplate,
     unitTemplate,

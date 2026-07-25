@@ -207,8 +207,9 @@ export class WialonFuelReportService {
       let transactions: FuelTransaction[] = [];
 
       // Same pipeline for every FLS category: prefer group reports, then unit reports.
+      let groups: Array<{ id: number; nm: string }> = [];
       if (groupTemplate) {
-        const groups = await findFleetGroups(client, scope, { assetCategory: opts.assetCategory });
+        groups = await findFleetGroups(client, scope, { assetCategory: opts.assetCategory });
         const groupTxBatches = await mapWithConcurrency(groups, groupConcurrency, async (group) => {
           try {
             return await processGroupFuelData(client, group, groupTemplate, fromTs, toTs, unitNameToId);
