@@ -65,12 +65,14 @@ export function useWialonUnitDetail(unitId: number | null, enabled: boolean, liv
     queryFn: () => clientApi.getWialonUnitDetail(unitId!),
     enabled: enabled && unitId != null,
     staleTime: live ? LIVE_POLL.unitDetail : 15_000,
-    refetchInterval: enabled && unitId != null && live ? LIVE_POLL.unitDetail : false,
+    refetchInterval:
+      enabled && unitId != null && live ? pollWhenVisible(LIVE_POLL.unitDetail) : false,
     placeholderData: (prev, prevQuery) => {
       const prevId = prevQuery?.queryKey[1];
       return prevId === unitId ? prev : undefined;
     },
     select: (data) => data.detail,
+    retry: 2,
   });
 }
 

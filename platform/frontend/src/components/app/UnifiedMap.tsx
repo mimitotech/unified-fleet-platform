@@ -18,6 +18,7 @@ import { MapUnitDetailCard } from '@/components/fleet/MapUnitDetailCard';
 import { useMovingTrails } from '@/hooks/useMovingTrails';
 import { useWialonUnitTrack } from '@/hooks/useWialonUnitTrack';
 import { useSmoothMapPositions } from '@/hooks/useSmoothMapPositions';
+import { isValidMapCoord, recentTrackWindow, splitTrackSegments } from '@/lib/mapGeo';
 import type { VehicleStatus } from '@/components/shared/StatusBadge';
 
 const DETAIL_CARD_WIDTH = 420;
@@ -43,6 +44,8 @@ export interface MapStatusPoint {
     wialonId?: number;
     iconUgi?: number;
     iconUrl?: string;
+    fuelFormatted?: string;
+    fuelLiters?: number;
     trip?: {
       state?: 0 | 1 | 2;
       currSpeed?: number;
@@ -111,7 +114,9 @@ function MapScaleControl() {
   useEffect(() => {
     const scale = L.control.scale({ metric: true, imperial: false, position: 'bottomleft' });
     scale.addTo(map);
-    return () => scale.remove();
+    return () => {
+      scale.remove();
+    };
   }, [map]);
   return null;
 }
@@ -137,7 +142,7 @@ function MapFleetAutoFit({ points }: { points: MapPoint[] }) {
   return null;
 }
 
-/** Fly to exact unit position on every selection click. */
+/** Fly to exact unit position on selection only — never chase animated frames. */
 function MapFocusOnUnit({
   point,
   enabled,
@@ -150,17 +155,22 @@ function MapFocusOnUnit({
   offsetForCard: boolean;
 }) {
   const map = useMap();
+  const lastFocus = useRef('');
 
   useEffect(() => {
     if (!point || !enabled) return;
+    const sig = `${point.id}:${focusKey}`;
+    if (lastFocus.current === sig) return;
+    lastFocus.current = sig;
 
-    const zoom = Math.max(map.getZoom(), 17);
-    map.flyTo([point.lat, point.lng], zoom, { duration: 0.5, easeLinearity: 0.2 });
+    const zoom = Math.max(map.getZoom(), 16);
+    const { lat, lng } = point;
+    map.flyTo([lat, lng], zoom, { duration: 0.45, easeLinearity: 0.25 });
 
     if (!offsetForCard) return;
 
     window.setTimeout(() => {
-      const target = map.latLngToContainerPoint([point.lat, point.lng]);
+      const target = map.latLngToContainerPoint([lat, lng]);
       const size = map.getSize();
       const cardPad = DETAIL_CARD_WIDTH + 32;
       const idealX = cardPad + (size.x - cardPad) * 0.55;
@@ -168,35 +178,49 @@ function MapFocusOnUnit({
       if (Math.abs(deltaX) > 20) {
         map.panBy([deltaX, 0], { animate: true });
       }
-    }, 520);
-  }, [map, point, enabled, focusKey, offsetForCard]);
+    }, 480);
+    // Intentionally ignore continuous lat/lng updates — selection only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, point?.id, enabled, focusKey, offsetForCard]);
 
   return null;
 }
 
-/** Fit map to blue route + current position when track loads. */
+/** Fit map once on unit selection to a recent track window — never on every live refresh. */
 function MapFitTrackBounds({
   track,
   point,
   enabled,
+  focusKey,
 }: {
   track: [number, number][];
   point: MapPoint | null;
   enabled: boolean;
+  focusKey: number;
 }) {
   const map = useMap();
   const lastFit = useRef<string>('');
 
   useEffect(() => {
     if (!enabled || !point || track.length < 2) return;
-    const sig = `${point.id}:${track.length}:${track[0]?.join(',')}:${track[track.length - 1]?.join(',')}`;
+    if (!isValidMapCoord(point.lat, point.lng)) return;
+    const sig = `${point.id}:${focusKey}`;
     if (lastFit.current === sig) return;
     lastFit.current = sig;
 
-    const bounds = L.latLngBounds(track);
+    const recent = track.slice(-Math.min(track.length, 40));
+    const bounds = L.latLngBounds(recent);
     bounds.extend([point.lat, point.lng]);
-    map.fitBounds(bounds, { padding: [72, 72], maxZoom: 17, animate: true });
-  }, [map, track, point, enabled]);
+    if (!bounds.isValid()) return;
+    // Avoid world-scale zoom if something slipped through.
+    const ne = bounds.getNorthEast();
+    const sw = bounds.getSouthWest();
+    if (Math.abs(ne.lat - sw.lat) > 1.2 || Math.abs(ne.lng - sw.lng) > 1.2) {
+      map.setView([point.lat, point.lng], Math.max(map.getZoom(), 15), { animate: true });
+      return;
+    }
+    map.fitBounds(bounds, { padding: [56, 56], maxZoom: 16, animate: true });
+  }, [map, track, point, enabled, focusKey]);
 
   return null;
 }
@@ -249,10 +273,27 @@ const FleetUnitMarker = memo(function FleetUnitMarker({
   const wialonIconSrc = loadedIcon ?? lastIconRef.current;
   const markerRef = useRef<LeafletMarker>(null);
 
-  const icon = useMemo(
-    () => createFleetIcon(point, selected, wialonIconSrc),
-    [point, selected, wialonIconSrc]
-  );
+  const icon = useMemo(() => {
+    const courseBucket = Math.round((point.course ?? 0) / 15) * 15;
+    const speedBucket = Math.round((point.speed ?? 0) / 5) * 5;
+    return createFleetIcon(
+      { ...point, course: courseBucket, speed: speedBucket },
+      selected,
+      wialonIconSrc,
+    );
+    // Intentionally omit lat/lng so icon does not rebuild every animation frame
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    point.id,
+    point.motion,
+    point.plate,
+    point.name,
+    // Bucketed in createFleetIcon call — still list raw for rebuild when heading changes meaningfully
+    Math.round((point.course ?? 0) / 15),
+    Math.round((point.speed ?? 0) / 5),
+    selected,
+    wialonIconSrc,
+  ]);
 
   useEffect(() => {
     const marker = markerRef.current;
@@ -345,7 +386,7 @@ function UnifiedMapInner({
       .filter((s) => {
         const lat = s.status?.location?.latitude;
         const lng = s.status?.location?.longitude;
-        return lat != null && lng != null && !(lat === 0 && lng === 0);
+        return lat != null && lng != null && isValidMapCoord(lat, lng);
       })
       .map((s) => ({
         id: s.assetId,
@@ -367,11 +408,9 @@ function UnifiedMapInner({
       }));
   }, [statuses]);
 
+  // Smooth markers for display; trails use raw GPS so animated frames never smear the map.
   const displayPoints = useSmoothMapPositions(points);
   const safeDisplayPoints = Array.isArray(displayPoints) ? displayPoints : points;
-
-  const movingTrailsRaw = useMovingTrails(safeDisplayPoints);
-  const movingTrails = safeArray(movingTrailsRaw);
 
   const focusedId = selectedUnitId ?? localDetailId;
   const overlayDetailId = detailPanel === 'overlay' ? focusedId : null;
@@ -381,17 +420,38 @@ function UnifiedMapInner({
   const showTrack = !!focusedId;
   const showHoverCard = !!hoverPoint && hoverPoint.id !== focusedId;
 
+  const movingTrailsRaw = useMovingTrails(points);
+  const liveTrailSegments = useMemo(() => {
+    return movingTrailsRaw
+      .filter((trail) => trail.id === focusedId)
+      .flatMap((trail) =>
+        splitTrackSegments(trail.positions, 800).map((positions, idx) => ({
+          id: `${trail.id}-${idx}`,
+          positions,
+        })),
+      );
+  }, [movingTrailsRaw, focusedId]);
+
   const activeWialonId =
     detailPoint?.wialonId ??
     (detailPoint && Number.isFinite(Number(detailPoint.id)) ? Number(detailPoint.id) : null);
 
-  const { data: wialonTrackRaw } = useWialonUnitTrack(
+  // Short recent-message window (Wialon unit trace), not multi-hour history.
+  const { data: trackData } = useWialonUnitTrack(
     activeWialonId,
     !!detailPoint && showTrack,
-    480,
-    true
+    45,
+    true,
   );
-  const wialonTrack = safeArray<[number, number]>(wialonTrackRaw);
+  const wialonTrackSegments = useMemo(() => {
+    if (trackData.segments.length) return trackData.segments;
+    return splitTrackSegments(trackData.points, 2_500);
+  }, [trackData]);
+  const wialonTrackForFit = useMemo(
+    () => recentTrackWindow(trackData.points, 40),
+    [trackData.points],
+  );
+  const hasWialonTrack = wialonTrackSegments.some((s) => s.length > 1);
 
   const handleMarkerClick = useCallback(
     (point: MapPoint) => {
@@ -441,20 +501,21 @@ function UnifiedMapInner({
         {showGeofences && <MapGeofenceLayer enabled />}
         <MapFitOnSignal points={points} signal={fitSignal} />
         <MapFocusOnUnit
-          point={displayDetailPoint}
-          enabled={!!displayDetailPoint}
+          point={detailPoint}
+          enabled={!!detailPoint}
           focusKey={focusKey}
           offsetForCard={showDetailCard}
         />
         <MapFitTrackBounds
-          track={wialonTrack}
-          point={displayDetailPoint}
-          enabled={showTrack && wialonTrack.length > 1}
+          track={wialonTrackForFit}
+          point={detailPoint}
+          enabled={showTrack && wialonTrackForFit.length > 1}
+          focusKey={focusKey}
         />
         <FitFleetControl points={points} visible={showFitControl} />
-        {movingTrails
-          .filter((trail) => trail.id === focusedId)
-          .map((trail) => (
+        {/* Live breadcrumbs while waiting for Wialon message track */}
+        {!hasWialonTrack &&
+          liveTrailSegments.map((trail) => (
             <Polyline
               key={`trail-glow-${trail.id}`}
               positions={trail.positions}
@@ -467,9 +528,8 @@ function UnifiedMapInner({
               }}
             />
           ))}
-        {movingTrails
-          .filter((trail) => trail.id === focusedId)
-          .map((trail) => (
+        {!hasWialonTrack &&
+          liveTrailSegments.map((trail) => (
             <Polyline
               key={`trail-core-${trail.id}`}
               positions={trail.positions}
@@ -482,33 +542,35 @@ function UnifiedMapInner({
               }}
             />
           ))}
-        {wialonTrack.length > 1 && displayDetailPoint && (
-          <>
+        {displayDetailPoint &&
+          wialonTrackSegments.map((segment, idx) => (
             <Polyline
-              key={`wialon-track-glow-${displayDetailPoint.id}`}
-              positions={wialonTrack}
+              key={`wialon-track-glow-${displayDetailPoint.id}-${idx}`}
+              positions={segment}
               pathOptions={{
                 color: TRAIL_GLOW,
-                weight: 8,
-                opacity: 0.35,
+                weight: 7,
+                opacity: 0.28,
                 lineCap: 'round',
                 lineJoin: 'round',
               }}
             />
+          ))}
+        {displayDetailPoint &&
+          wialonTrackSegments.map((segment, idx) => (
             <Polyline
-              key={`wialon-track-${displayDetailPoint.id}`}
-              positions={wialonTrack}
+              key={`wialon-track-${displayDetailPoint.id}-${idx}`}
+              positions={segment}
               pathOptions={{
                 color: TRACK_COLOR,
-                weight: 5,
-                opacity: 0.95,
+                weight: 4,
+                opacity: 0.92,
                 lineCap: 'round',
                 lineJoin: 'round',
               }}
             />
-          </>
-        )}
-        {displayDetailPoint && (
+          ))}
+        {displayDetailPoint && isValidMapCoord(displayDetailPoint.lat, displayDetailPoint.lng) && (
           <CircleMarker
             key={`pin-${displayDetailPoint.id}`}
             center={[displayDetailPoint.lat, displayDetailPoint.lng]}

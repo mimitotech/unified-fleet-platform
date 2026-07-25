@@ -46,14 +46,29 @@ function mapCalcSensors(calcSensors: CalcSensor[]) {
 
 function mergeSensorValues(slice: WialonUnitSlice, calcSensors: CalcSensor[]) {
   const calcByName = new Map(calcSensors.map((s) => [s.n, s]));
+  const params = slice.lmsg?.params || {};
+
+  const paramFallback = (def: { name: string; param?: string }) => {
+    if (def.param && params[def.param] != null && params[def.param] !== '') {
+      return String(params[def.param]);
+    }
+    // Common Wialon param aliases on last message
+    const aliases = [def.name, def.param, def.name?.toLowerCase()].filter(Boolean) as string[];
+    for (const key of aliases) {
+      if (key && params[key] != null && params[key] !== '') return String(params[key]);
+    }
+    return undefined;
+  };
+
   const fromDefs = slice.sens.map((def) => {
     const calc = calcByName.get(def.name);
+    const fallback = paramFallback(def);
     return {
       id: def.id,
       name: def.name,
       type: def.type,
       param: def.param,
-      value: calc?.v ?? '—',
+      value: calc?.v ?? fallback ?? '—',
       unit: calc?.u ?? def.unit,
     };
   });

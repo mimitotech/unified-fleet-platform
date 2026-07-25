@@ -75,9 +75,23 @@ function sortSensors<T extends { name: string }>(sensors: T[]): T[] {
 }
 
 export function MapUnitDetailCard({ unit, lat, lng, speed, course, live = false, onClose, onOpenPanel, className }: Props) {
-  const wialonId = unit.wialonId ?? (Number.isFinite(Number(unit.id)) ? Number(unit.id) : null);
-  const { data: detail, isPending: detailPending } = useWialonUnitDetail(wialonId, wialonId != null, live);
-  const { data: geocode, isPending: geoPending } = useWialonGeocode(lat, lng, wialonId != null, live);
+  const wialonId =
+    unit.wialonId ?? (Number.isFinite(Number(unit.id)) ? Number(unit.id) : null);
+  const { data: detail, isPending: detailPending, isError: detailError } = useWialonUnitDetail(
+    wialonId,
+    wialonId != null,
+    live,
+  );
+
+  // Prefer authoritative Wialon position for address so animation frames don't thrash geocode.
+  const geoLat = detail?.position?.lat ?? lat;
+  const geoLng = detail?.position?.lng ?? lng;
+  const { data: geocode, isPending: geoPending } = useWialonGeocode(
+    geoLat,
+    geoLng,
+    wialonId != null,
+    live,
+  );
 
   const [copied, setCopied] = useState(false);
 
@@ -114,11 +128,14 @@ export function MapUnitDetailCard({ unit, lat, lng, speed, course, live = false,
     fuelLevel: detail?.fuelLevel ?? unit.fuelLevel,
   });
 
+  const displayLat = geoLat;
+  const displayLng = geoLng;
+
   const copyCoords = useCallback(() => {
-    void navigator.clipboard.writeText(`${lat.toFixed(6)}, ${lng.toFixed(6)}`);
+    void navigator.clipboard.writeText(`${displayLat.toFixed(6)}, ${displayLng.toFixed(6)}`);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }, [lat, lng]);
+  }, [displayLat, displayLng]);
 
   return (
     <div
@@ -163,6 +180,11 @@ export function MapUnitDetailCard({ unit, lat, lng, speed, course, live = false,
       </div>
 
       <div className="flex-1 overflow-y-auto overscroll-contain">
+        {detailError && !detailPending && (
+          <p className="px-4 pt-2 text-[11px] text-destructive">
+            Live detail refresh failed — location below may be briefly stale.
+          </p>
+        )}
         {/* Location — Wialon-style prominent address */}
         <div className="p-4 border-b border-border/50 bg-muted/20">
           <div className="flex gap-2.5">
@@ -187,7 +209,7 @@ export function MapUnitDetailCard({ unit, lat, lng, speed, course, live = false,
               )}
               <div className="flex items-center gap-2 pt-1">
                 <span className="text-xs font-mono text-muted-foreground">
-                  {lat.toFixed(6)}, {lng.toFixed(6)}
+                  {displayLat.toFixed(6)}, {displayLng.toFixed(6)}
                 </span>
                 <Button variant="ghost" size="icon" className="h-6 w-6" onClick={copyCoords} title="Copy coordinates">
                   {copied ? <Check className="h-3 w-3 text-green-600" /> : <Copy className="h-3 w-3" />}

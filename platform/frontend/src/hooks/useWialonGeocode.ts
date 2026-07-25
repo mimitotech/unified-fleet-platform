@@ -11,7 +11,7 @@ export function useWialonGeocode(
   lat: number | null | undefined,
   lng: number | null | undefined,
   enabled = true,
-  live = false
+  live = false,
 ) {
   const geoLat = stableGeocodeCoord(lat);
   const geoLng = stableGeocodeCoord(lng);
@@ -23,7 +23,12 @@ export function useWialonGeocode(
     enabled: ok,
     staleTime: live ? 45_000 : 10 * 60_000,
     gcTime: 30 * 60_000,
-    placeholderData: (prev) => prev,
+    // Only keep prior result when it matches the same rounded coords (avoid stale address on unit switch)
+    placeholderData: (prev, prevQuery) => {
+      const prevLat = prevQuery?.queryKey[1];
+      const prevLng = prevQuery?.queryKey[2];
+      return prevLat === geoLat && prevLng === geoLng ? prev : undefined;
+    },
     select: (data) => data.geocode,
   });
 }

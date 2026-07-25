@@ -1,12 +1,19 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { haversineMeters, isValidMapCoord } from '@/lib/mapGeo';
 
 type Point = { id: string; lat: number; lng: number; motion: string };
 
-const MAX_TRAIL_POINTS = 200;
+const MAX_TRAIL_POINTS = 120;
+const MIN_MOVE_M = 5;
+const MAX_SEGMENT_M = 800;
 
-/** Live breadcrumb trails for moving units between fleet polls. */
+/**
+ * Live breadcrumb trails for moving units.
+ * Feed RAW polled positions (not RAF-smoothed) so trails only follow real GPS.
+ */
 export function useMovingTrails(points: Point[]) {
   const [trails, setTrails] = useState<Map<string, [number, number][]>>(new Map());
+  const lastRawRef = useRef(new Map<string, { lat: number; lng: number }>());
 
   useEffect(() => {
     setTrails((prev) => {
@@ -15,23 +22,40 @@ export function useMovingTrails(points: Point[]) {
       const movingIds = new Set<string>();
 
       for (const p of points) {
-        if (p.motion !== 'moving') continue;
+        if (!isValidMapCoord(p.lat, p.lng)) continue;
+        if (p.motion !== 'moving') {
+          lastRawRef.current.delete(p.id);
+          continue;
+        }
         movingIds.add(p.id);
+
+        const lastRaw = lastRawRef.current.get(p.id);
+        if (lastRaw) {
+          const d = haversineMeters(lastRaw.lat, lastRaw.lng, p.lat, p.lng);
+          if (d < MIN_MOVE_M) continue;
+        }
+        lastRawRef.current.set(p.id, { lat: p.lat, lng: p.lng });
+
         const trail = next.get(p.id) || [];
         const last = trail[trail.length - 1];
-        const moved =
-          !last ||
-          Math.abs(last[0] - p.lat) > 0.00002 ||
-          Math.abs(last[1] - p.lng) > 0.00002;
-        if (moved) {
-          next.set(p.id, [...trail, [p.lat, p.lng]].slice(-MAX_TRAIL_POINTS));
-          changed = true;
+        if (last) {
+          const gap = haversineMeters(last[0], last[1], p.lat, p.lng);
+          if (gap > MAX_SEGMENT_M) {
+            next.set(p.id, [[p.lat, p.lng]]);
+            changed = true;
+            continue;
+          }
+          if (gap < MIN_MOVE_M) continue;
         }
+
+        next.set(p.id, ([...trail, [p.lat, p.lng] as [number, number]] as [number, number][]).slice(-MAX_TRAIL_POINTS));
+        changed = true;
       }
 
       for (const id of next.keys()) {
         if (!movingIds.has(id)) {
           next.delete(id);
+          lastRawRef.current.delete(id);
           changed = true;
         }
       }

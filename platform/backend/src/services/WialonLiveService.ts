@@ -687,6 +687,24 @@ export class WialonLiveService {
         /* sensors optional */
       }
 
+      // Some accounts return empty when sensors=[] — retry with explicit sensor ids.
+      if (!calcSensors.length && item.sens) {
+        const sensorIds = Object.keys(item.sens)
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id) && id > 0);
+        if (sensorIds.length) {
+          try {
+            const sens = await client.request<{ sensors?: Array<{ n: string; v: string; u?: string; t?: number }> }>(
+              'unit/calc_last_message',
+              { unitId, sensors: sensorIds, flags: 1 }
+            );
+            calcSensors = sens.sensors || [];
+          } catch {
+            /* keep empty */
+          }
+        }
+      }
+
       let video: Record<string, unknown> | undefined;
       try {
         video = await client.request<Record<string, unknown>>('unit/get_video_settings', { itemId: unitId });
@@ -938,7 +956,7 @@ export class WialonLiveService {
 
       await client.request('messages/unload', {}).catch(() => undefined);
 
-      return allMessages
+      const mapped = allMessages
         .filter((m) => m.pos && m.pos.y != null && m.pos.x != null)
         .map((m) => {
           const params: Record<string, string | number> = {};
@@ -958,7 +976,39 @@ export class WialonLiveService {
             time: m.t,
             params: Object.keys(params).length ? params : undefined,
           };
+        })
+        .filter((p) => {
+          if (!Number.isFinite(p.lat) || !Number.isFinite(p.lng)) return false;
+          if (Math.abs(p.lat) > 90 || Math.abs(p.lng) > 180) return false;
+          if (p.lat === 0 && p.lng === 0) return false;
+          return true;
         });
+
+      // Drop contiguous GPS teleports so clients never draw continent-spanning polylines.
+      const MAX_JUMP_M = 3_000;
+      const toRad = (d: number) => (d * Math.PI) / 180;
+      const distM = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
+        const dLat = toRad(b.lat - a.lat);
+        const dLng = toRad(b.lng - a.lng);
+        const lat1 = toRad(a.lat);
+        const lat2 = toRad(b.lat);
+        const h =
+          Math.sin(dLat / 2) ** 2 +
+          Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+        return 2 * 6_371_000 * Math.asin(Math.min(1, Math.sqrt(h)));
+      };
+
+      const cleaned: typeof mapped = [];
+      for (const p of mapped) {
+        const prev = cleaned[cleaned.length - 1];
+        if (prev && distM(prev, p) > MAX_JUMP_M) {
+          // Start a new contiguous segment (prefer recent path).
+          cleaned.length = 0;
+        }
+        if (prev && distM(prev, p) < 1) continue;
+        cleaned.push(p);
+      }
+      return cleaned;
     });
   }
 

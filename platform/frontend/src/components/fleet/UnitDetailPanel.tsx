@@ -148,12 +148,15 @@ export function UnitDetailPanel({
   live = false,
   className,
 }: Props) {
-  const wialonId = unit?.wialonId;
-  const enabled = showControls && !!wialonId;
+  const wialonId =
+    unit?.wialonId ??
+    (unit && Number.isFinite(Number(unit.id)) ? Number(unit.id) : undefined);
+  const enabled = showControls && wialonId != null && Number.isFinite(wialonId);
   const {
     data: detail,
     isPending: detailPending,
     isFetching: detailFetching,
+    isError: detailError,
   } = useWialonUnitDetail(wialonId ?? null, enabled, live);
 
   const lat = detail?.position?.lat ?? unit?.lat;
@@ -268,6 +271,11 @@ export function UnitDetailPanel({
         <div className="absolute inset-x-0 top-0 z-20 flex items-center gap-2 px-3 py-2 bg-primary/8 border-b border-primary/20 text-xs text-primary backdrop-blur-sm">
           <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
           <span>Loading asset data…</span>
+        </div>
+      )}
+      {detailError && !loadingAsset && enabled && (
+        <div className="absolute inset-x-0 top-0 z-20 px-3 py-2 bg-destructive/10 border-b border-destructive/20 text-xs text-destructive">
+          Could not refresh live sensors — showing last known fleet data.
         </div>
       )}
       {/* Header */}

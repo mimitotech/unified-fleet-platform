@@ -80,7 +80,7 @@ export function createWialonLiveHandlers(loadCreds: CredsLoader) {
       if (!unitId) return error(res, 'Invalid unit id');
       try {
         const creds = await loadCreds(req);
-        const detail = await WialonLiveService.getUnitDetail(creds, unitId);
+        const detail = await WialonLiveService.getUnitDetailWithAddress(creds, unitId);
         return success(res, { unitId, detail });
       } catch (e) {
         return error(res, (e as Error).message);
