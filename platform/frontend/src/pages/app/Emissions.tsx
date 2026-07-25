@@ -118,8 +118,8 @@ export default function Emissions() {
             ]}
             columns={[
               { key: 'unit', label: 'Asset' },
-              { key: 'co2', label: 'CO₂', align: 'right' },
-              { key: 'fuel', label: 'Fuel', align: 'right' },
+              { key: 'co2', label: 'CO₂ (kg)', align: 'right' },
+              { key: 'fuel', label: 'Fuel (L)', align: 'right' },
             ]}
             rows={(safeArray(byVehicle) as Array<{ vehicle?: string; co2Kg?: number; fuelUsed?: number }>).map((v) => ({
               unit: v.vehicle || '—',

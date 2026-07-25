@@ -13,7 +13,8 @@ import {
 } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import type { LiveReportDef } from '@/lib/reportCatalog';
-import { formatReportCell, tableToCsv, downloadTextFile } from '@/lib/reportUtils';
+import { formatReportCell } from '@/lib/reportUtils';
+import { buildReportCsv, downloadReportCsv } from '@/lib/reportCsv';
 import { renderReportCell } from '@/lib/reportCellStyles';
 import { useTenantBranding } from '@/hooks/useTenantBranding';
 import { notify } from '@/lib/notify';
@@ -64,18 +65,29 @@ export function LiveReportTable({
     });
 
   const exportCsv = () => {
-    downloadTextFile(
-      tableToCsv({
-        index: 0,
-        name: def.id,
-        label: def.label,
-        columns: def.columns.map((c) => ({ key: c.key, label: c.label })),
-        rows,
-        totalRows: rows.length,
-      }),
-      `${filenameBase()}.csv`,
-      'text/csv',
-    );
+    const csv = buildReportCsv({
+      meta: {
+        title: def.label,
+        moduleLabel,
+        clientName: branding.name,
+        periodLabel: periodLabel || undefined,
+        objectLabel: objectLabel || undefined,
+        generatedAt: fetchedAt ? new Date(fetchedAt) : new Date(),
+        notes: [def.description, emptyHint].filter((n): n is string => Boolean(n?.trim())),
+        extraMeta: [
+          { label: 'Report id', value: def.id },
+          ...(fetchedAt ? [{ label: 'Fetched at', value: format(new Date(fetchedAt), 'yyyy-MM-dd HH:mm:ss') }] : []),
+        ],
+      },
+      columns: def.columns.map((c) => ({ key: c.key, label: c.label })),
+      rows,
+      formatCell: (_key, value) => {
+        if (value == null || value === '') return '';
+        if (typeof value === 'number' || typeof value === 'boolean') return value;
+        return formatReportCell(value);
+      },
+    });
+    downloadReportCsv(csv, `${filenameBase()}.csv`);
   };
 
   const exportPdf = async (mode: 'download' | 'print') => {

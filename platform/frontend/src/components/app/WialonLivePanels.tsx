@@ -22,6 +22,9 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import { buildReportCsv, columnsFromRows, downloadReportCsv } from '@/lib/reportCsv';
+import { buildReportFilename } from '@/lib/reportFilename';
+import { useTenantBranding } from '@/hooks/useTenantBranding';
 
 function LiveHeader({
   title,
@@ -49,19 +52,6 @@ function LiveHeader({
       </div>
     </CardHeader>
   );
-}
-
-function downloadCsv(rows: Record<string, unknown>[], filename: string) {
-  if (!rows.length) return;
-  const headers = Object.keys(rows[0]);
-  const csv = [headers.join(','), ...rows.map((r) => headers.map((h) => JSON.stringify(r[h] ?? '')).join(','))].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 export function WialonLiveUnitsPanel() {
@@ -180,6 +170,7 @@ export function WialonRoutesPanel() {
 }
 
 export function WialonReportsPanel() {
+  const branding = useTenantBranding();
   const { connected } = useWialonContext();
   const { data, isLoading, isError } = useWialonReportTemplates(connected);
   const { data: units } = useWialonUnits(connected);
@@ -191,6 +182,11 @@ export function WialonReportsPanel() {
   const template = useMemo(
     () => data?.templates?.find((t) => `${t.resourceId}-${t.id}` === selectedTemplate),
     [data?.templates, selectedTemplate]
+  );
+
+  const selectedUnitName = useMemo(
+    () => units?.units?.find((u) => String(u.id) === selectedUnit)?.name,
+    [units?.units, selectedUnit],
   );
 
   if (!connected) return null;
@@ -218,6 +214,36 @@ export function WialonReportsPanel() {
         },
         onError: (e) => notify.error('Report failed', e.message),
       }
+    );
+  };
+
+  const exportReportCsv = () => {
+    if (!reportRows.length) return;
+    const columns = columnsFromRows(reportRows);
+    const csv = buildReportCsv({
+      meta: {
+        title: template?.name || 'Wialon live report',
+        moduleLabel: 'Wialon',
+        clientName: branding.name,
+        periodLabel: 'Last 7 days',
+        objectLabel: selectedUnitName || selectedUnit || undefined,
+        generatedAt: new Date(),
+        extraMeta: [
+          ...(template?.resourceName ? [{ label: 'Resource', value: template.resourceName }] : []),
+          ...(template ? [{ label: 'Template id', value: String(template.id) }] : []),
+        ],
+        notes: ['Live Wialon template export for the selected unit over the last 7 days.'],
+      },
+      columns,
+      rows: reportRows,
+    });
+    downloadReportCsv(
+      csv,
+      `${buildReportFilename({
+        clientName: branding.name,
+        reportName: template?.name || 'Wialon_Report',
+        unitName: selectedUnitName,
+      })}.csv`,
     );
   };
 
@@ -256,7 +282,7 @@ export function WialonReportsPanel() {
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <p className="text-sm font-medium">{reportRows.length} rows</p>
-                  <Button size="sm" variant="outline" onClick={() => downloadCsv(reportRows, 'fleet-report.csv')}>
+                  <Button size="sm" variant="outline" onClick={exportReportCsv}>
                     Download CSV
                   </Button>
                 </div>

@@ -11,7 +11,7 @@ import { BrandedReportFooter, BrandedReportHeader, BrandedReportDocument } from 
 import { DomainReportCharts } from '@/components/reports/DomainReportCharts';
 import type { DomainChartSpec } from '@/lib/domainReportCharts';
 import { buildReportFilename } from '@/lib/reportFilename';
-import { downloadTextFile } from '@/lib/reportUtils';
+import { buildReportCsv, downloadReportCsv, type ReportCsvColumn } from '@/lib/reportCsv';
 
 export type ModuleReportDef = {
   id: string;
@@ -33,6 +33,46 @@ type Column = {
   align?: 'left' | 'right';
   sortable?: boolean;
 };
+
+const CSV_HELPER_KEYS = new Set([
+  'count',
+  'fuelN',
+  'engineOnN',
+  'makeKey',
+  'distanceKm',
+  'radiusM',
+]);
+
+function humanizeCsvKey(key: string): string {
+  return key
+    .replace(/_/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Declared columns first, then any extra data keys present on rows (full CSV detail). */
+function expandCsvColumns(
+  columns: Column[],
+  rows: ModuleReportRow[],
+): ReportCsvColumn[] {
+  const out: ReportCsvColumn[] = columns.map((c) => ({ key: c.key, label: c.label }));
+  const seen = new Set(out.map((c) => c.key));
+  for (const row of rows) {
+    for (const key of Object.keys(row)) {
+      if (seen.has(key) || key.startsWith('_') || CSV_HELPER_KEYS.has(key)) continue;
+      seen.add(key);
+      out.push({ key, label: humanizeCsvKey(key) });
+    }
+  }
+  // Prefer numeric distance/radius helpers when the display column is a formatted string
+  if (!seen.has('distanceKm') && rows.some((r) => r.distanceKm != null)) {
+    out.push({ key: 'distanceKm', label: 'Distance (km)' });
+  }
+  if (!seen.has('radiusM') && rows.some((r) => r.radiusM != null)) {
+    out.push({ key: 'radiusM', label: 'Radius (m)' });
+  }
+  return out;
+}
 
 type Props = {
   moduleLabel: string;
@@ -88,12 +128,6 @@ function rowDayIso(value: unknown): string | null {
   const parsed = Date.parse(raw);
   if (!Number.isNaN(parsed)) return new Date(parsed).toISOString().slice(0, 10);
   return null;
-}
-
-function escapeCsv(value: unknown): string {
-  const s = value == null ? '' : String(value);
-  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
 }
 
 export function ModuleReportsShell({
@@ -217,11 +251,39 @@ export function ModuleReportsShell({
   };
 
   const exportCsv = () => {
-    const header = columns.map((c) => escapeCsv(c.label)).join(',');
-    const body = filteredRows
-      .map((row) => columns.map((c) => escapeCsv(row[c.key] ?? '')).join(','))
-      .join('\n');
-    downloadTextFile(`${header}\n${body}\n`, `${reportFilenameBase()}.csv`, 'text/csv');
+    const filters = [
+      { label: 'From', value: fromDate },
+      { label: 'To', value: toDate },
+      { label: 'Asset', value: asset === 'all' ? 'All assets' : asset },
+      { label: 'Report type', value: active?.title || kind },
+    ];
+    if (q.trim()) filters.push({ label: 'Search', value: q.trim() });
+    if (sortKey) filters.push({ label: 'Sort', value: `${sortKey} (${sortDir})` });
+
+    const csvColumns = expandCsvColumns(columns, filteredRows);
+
+    const csv = buildReportCsv({
+      meta: {
+        title: active?.title || moduleLabel,
+        moduleLabel,
+        clientName: branding.name,
+        periodLabel: `${fromDate} → ${toDate}`,
+        objectLabel: asset !== 'all' ? asset : 'All assets',
+        generatedAt: new Date(),
+        notes: [
+          active?.blurb,
+          footerNote,
+          csvColumns.length > columns.length
+            ? 'CSV includes every available detail field for the filtered rows.'
+            : undefined,
+        ].filter((n): n is string => Boolean(n?.trim())),
+        kpis: kpis.map((k) => ({ label: k.label, value: k.value })),
+        filters,
+      },
+      columns: csvColumns,
+      rows: filteredRows,
+    });
+    downloadReportCsv(csv, `${reportFilenameBase()}.csv`);
   };
 
   const exportPreview = async (mode: 'download' | 'print') => {

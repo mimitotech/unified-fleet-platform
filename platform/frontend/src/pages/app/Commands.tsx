@@ -154,7 +154,7 @@ export default function Commands() {
               { key: 'command', label: 'Command' },
               { key: 'status', label: 'Status' },
             ]}
-            rows={(safeArray(history) as Array<Record<string, unknown>>).slice(0, 80).map((h) => {
+            rows={(safeArray(history) as Array<Record<string, unknown>>).slice(0, 500).map((h) => {
               const raw = String(h.createdAt || h.created_at || '');
               const ts = Date.parse(raw);
               const day = Number.isNaN(ts) ? '' : new Date(ts).toISOString().slice(0, 10);
@@ -163,6 +163,8 @@ export default function Commands() {
                 asset: String(h.assetName || h.asset_name || '—'),
                 command: String(h.command || '—'),
                 status: String(h.status || '—'),
+                params: h.params != null ? JSON.stringify(h.params) : '',
+                user: String(h.userName || h.user_name || h.createdBy || ''),
                 _day: day,
                 count: 1,
               };

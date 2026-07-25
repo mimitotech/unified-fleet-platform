@@ -1,3 +1,5 @@
+import { buildReportCsv, columnsFromRows } from '@/lib/reportCsv';
+
 export type WialonReportColumn = { key: string; label: string; type?: string };
 
 export type WialonReportTable = {
@@ -95,17 +97,34 @@ export function formatReportCell(value: unknown): string {
   return String(value);
 }
 
-export function tableToCsv(table: WialonReportTable): string {
-  const cols = table.columns.length
-    ? table.columns
-    : table.rows[0]
-      ? Object.keys(table.rows[0]).map((k) => ({ key: k, label: k }))
-      : [];
-  const headers = cols.map((c) => c.label);
-  const lines = table.rows.map((row) =>
-    cols.map((c) => JSON.stringify(row[c.key] ?? '')).join(',')
+/** Prefer buildReportCsv / downloadReportCsv from reportCsv.ts for new callers. */
+export function tableToCsv(table: WialonReportTable, meta?: {
+  title?: string;
+  moduleLabel?: string;
+  clientName?: string;
+  periodLabel?: string;
+  objectLabel?: string;
+  generatedAt?: Date | string;
+}): string {
+  const columns = columnsFromRows(
+    table.rows,
+    table.columns.length
+      ? table.columns.map((c) => ({ key: c.key, label: c.label }))
+      : undefined,
   );
-  return [headers.join(','), ...lines].join('\n');
+  return buildReportCsv({
+    meta: {
+      title: meta?.title || table.label || table.name || 'Report',
+      moduleLabel: meta?.moduleLabel,
+      clientName: meta?.clientName,
+      periodLabel: meta?.periodLabel,
+      objectLabel: meta?.objectLabel,
+      generatedAt: meta?.generatedAt,
+      extraMeta: table.name ? [{ label: 'Source table', value: table.name }] : undefined,
+    },
+    columns,
+    rows: table.rows,
+  });
 }
 
 export function downloadTextFile(content: string, filename: string, mime = 'text/plain') {

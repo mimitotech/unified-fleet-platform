@@ -15,6 +15,9 @@ import { VehicleGroupRow } from './VehicleGroupRow';
 import { TransactionDetailModal } from '../TransactionDetailModal';
 import { FuelPerTripModal } from './FuelPerTripModal';
 import { fuelTableMinWidthPx } from './fuelTableCells';
+import { useTenantBranding } from '@/hooks/useTenantBranding';
+import { buildReportCsv, downloadReportCsv } from '@/lib/reportCsv';
+import { buildReportFilename } from '@/lib/reportFilename';
 
 export function FuelTransactionsTable({
   transactions,
@@ -35,6 +38,7 @@ export function FuelTransactionsTable({
   onToDateChange,
   visibleColumns,
 }: FuelTransactionsTableProps) {
+  const branding = useTenantBranding();
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedVehicles, setExpandedVehicles] = useState<Set<string>>(new Set());
   const [selectedTransaction, setSelectedTransaction] = useState<FuelTransaction | null>(null);
@@ -95,65 +99,120 @@ export function FuelTransactionsTable({
   };
 
   const exportToCSV = () => {
-    const headers = [
-      'Date',
-      'Time',
-      unitLabel,
-      'Driver',
-      'Location',
-      'Filled (Main)',
-      'Filled (Reserve)',
-      'Filled (Station)',
-      'Variance',
-      'Used (Main)',
-      'Used (Reserve)',
-      'Level (Main)',
-      'Level (Reserve)',
-      'Total Level',
-      'Drop (Main)',
-      'Drop (Reserve)',
-      'Total Drop',
-      'Total Used',
-      'Type',
-      'Cost',
-      'Card No',
+    const columns = [
+      { key: 'date', label: 'Date' },
+      { key: 'time', label: 'Time' },
+      { key: 'unitName', label: unitLabel },
+      { key: 'unitId', label: `${unitLabel} ID` },
+      { key: 'driver', label: 'Driver' },
+      { key: 'location', label: 'Location' },
+      { key: 'latitude', label: 'Latitude' },
+      { key: 'longitude', label: 'Longitude' },
+      { key: 'section', label: 'Section' },
+      { key: 'tank', label: 'Tank' },
+      { key: 'filledMain', label: 'Filled Main (L)' },
+      { key: 'filledReserve', label: 'Filled Reserve (L)' },
+      { key: 'filledStation', label: 'Filled Station (L)' },
+      { key: 'variance', label: 'Variance (L)' },
+      { key: 'usedMain', label: 'Used Main (L)' },
+      { key: 'usedReserve', label: 'Used Reserve (L)' },
+      { key: 'totalUsed', label: 'Total Used (L)' },
+      { key: 'levelMain', label: 'Level Main (L)' },
+      { key: 'levelReserve', label: 'Level Reserve (L)' },
+      { key: 'totalLevel', label: 'Total Level (L)' },
+      { key: 'dropMain', label: 'Drop Main (L)' },
+      { key: 'dropReserve', label: 'Drop Reserve (L)' },
+      { key: 'totalDrop', label: 'Total Drop (L)' },
+      { key: 'mileage', label: 'Mileage (km)' },
+      { key: 'duration', label: 'Duration' },
+      { key: 'avgConsumption', label: 'Avg consumption' },
+      { key: 'odometer', label: 'Odometer' },
+      { key: 'fuelType', label: 'Fuel type' },
+      { key: 'pricePerLiter', label: 'Price / L (UGX)' },
+      { key: 'cost', label: 'Cost (UGX)' },
+      { key: 'cardNo', label: 'Card No' },
+      { key: 'sensor', label: 'Sensor' },
+      { key: 'transactionId', label: 'Transaction ID' },
     ];
 
     const rows = filteredTransactions.map((t) => {
       const vals = getTransactionDisplayValues(t);
-      return [
-        format(new Date(t.timestamp * 1000), 'yyyy-MM-dd'),
-        formatTransactionTime(t),
-        `"${t.unitName}"`,
-        `"${t.driverName || ''}"`,
-        `"${t.location}"`,
-        vals.filledMain > 0 ? vals.filledMain.toFixed(1) : '',
-        vals.filledReserve > 0 ? vals.filledReserve.toFixed(1) : '',
-        vals.filledStation > 0 ? vals.filledStation.toFixed(1) : '',
-        vals.variance !== 0 ? vals.variance.toFixed(1) : '',
-        vals.usedMain > 0 ? vals.usedMain.toFixed(1) : '',
-        vals.usedReserve > 0 ? vals.usedReserve.toFixed(1) : '',
-        vals.levelMain > 0 ? vals.levelMain.toFixed(0) : '',
-        vals.levelReserve > 0 ? vals.levelReserve.toFixed(0) : '',
-        vals.totalLevel > 0 ? vals.totalLevel.toFixed(0) : '',
-        vals.dropMain > 0 ? vals.dropMain.toFixed(1) : '',
-        vals.dropReserve > 0 ? vals.dropReserve.toFixed(1) : '',
-        vals.totalDrop > 0 ? vals.totalDrop.toFixed(1) : '',
-        vals.totalUsed > 0 ? vals.totalUsed.toFixed(1) : '',
-        vals.fuelType,
-        vals.totalCost > 0 ? vals.totalCost.toFixed(0) : '',
-        `"${vals.cardNumber}"`,
-      ].join(',');
+      return {
+        date: format(new Date(t.timestamp * 1000), 'yyyy-MM-dd'),
+        time: formatTransactionTime(t),
+        unitName: t.unitName,
+        unitId: t.unitId,
+        driver: t.driverName || '',
+        location: t.location || '',
+        latitude: t.latitude ?? '',
+        longitude: t.longitude ?? '',
+        section: t.section || '',
+        tank: t.tank || '',
+        filledMain: vals.filledMain,
+        filledReserve: vals.filledReserve,
+        filledStation: vals.filledStation,
+        variance: vals.variance,
+        usedMain: vals.usedMain,
+        usedReserve: vals.usedReserve,
+        totalUsed: vals.totalUsed,
+        levelMain: vals.levelMain,
+        levelReserve: vals.levelReserve,
+        totalLevel: vals.totalLevel,
+        dropMain: vals.dropMain,
+        dropReserve: vals.dropReserve,
+        totalDrop: vals.totalDrop,
+        mileage: t.mileage ?? '',
+        duration: t.duration || '',
+        avgConsumption: t.avgConsumption ?? '',
+        odometer: t.odometer ?? '',
+        fuelType: vals.fuelType || '',
+        pricePerLiter: t.pricePerLiter ?? '',
+        cost: vals.totalCost,
+        cardNo: vals.cardNumber || '',
+        sensor: t.sensor || '',
+        transactionId: t.id,
+      };
     });
 
-    const csvContent = [headers.join(','), ...rows].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `fuel-transactions-${format(new Date(), 'yyyy-MM-dd')}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const totalFilled = rows.reduce((s, r) => s + (Number(r.filledMain) || 0) + (Number(r.filledReserve) || 0), 0);
+    const totalUsed = rows.reduce((s, r) => s + (Number(r.totalUsed) || 0), 0);
+    const totalDrop = rows.reduce((s, r) => s + (Number(r.totalDrop) || 0), 0);
+    const totalCost = rows.reduce((s, r) => s + (Number(r.cost) || 0), 0);
+
+    const csv = buildReportCsv({
+      meta: {
+        title: 'Fuel Transactions',
+        moduleLabel: 'Fuel',
+        clientName: branding.name,
+        periodLabel: `${fromDate} → ${toDate}`,
+        objectLabel: 'Filtered transactions',
+        generatedAt: new Date(),
+        filters: [
+          { label: 'From', value: fromDate },
+          { label: 'To', value: toDate },
+          ...(searchTerm.trim() ? [{ label: 'Search', value: searchTerm.trim() }] : []),
+        ],
+        kpis: [
+          { label: 'Transactions', value: rows.length },
+          { label: 'Filled (L)', value: Number(totalFilled.toFixed(1)) },
+          { label: 'Used (L)', value: Number(totalUsed.toFixed(1)) },
+          { label: 'Drop / theft (L)', value: Number(totalDrop.toFixed(1)) },
+          { label: 'Cost (UGX)', value: Math.round(totalCost) },
+        ],
+        notes: [`Exported ${rows.length} transaction row(s) matching current filters.`],
+      },
+      columns,
+      rows,
+    });
+
+    downloadReportCsv(
+      csv,
+      `${buildReportFilename({
+        clientName: branding.name,
+        reportName: 'Fuel_Transactions',
+        date: toDate || format(new Date(), 'yyyy-MM-dd'),
+      })}.csv`,
+    );
   };
 
   const tableMinWidth = useMemo(() => fuelTableMinWidthPx(visibleColumns), [visibleColumns]);

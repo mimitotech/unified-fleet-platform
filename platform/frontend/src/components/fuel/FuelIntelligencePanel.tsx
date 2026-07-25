@@ -55,6 +55,9 @@ import {
 import { ArrowDownUp, ChevronDown, Download, Printer, Settings2 } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
+import { useTenantBranding } from '@/hooks/useTenantBranding';
+import { buildMultiSectionReportCsv, downloadReportCsv } from '@/lib/reportCsv';
+import { buildReportFilename } from '@/lib/reportFilename';
 
 type Props = {
   from: string;
@@ -186,6 +189,7 @@ function buildPrintHtml(params: {
 }
 
 export function FuelIntelligencePanel({ from, to, assetCategory, enabled = true }: Props) {
+  const branding = useTenantBranding();
   const [selectedUnitId, setSelectedUnitId] = useState<number | undefined>(undefined);
   const [periodMode, setPeriodMode] = useState<PeriodMode>('daily');
   const [assetSearch, setAssetSearch] = useState('');
@@ -440,29 +444,83 @@ export function FuelIntelligencePanel({ from, to, assetCategory, enabled = true 
 
   const exportCsv = () => {
     const rows = performanceRows;
-    const csv = [
-      ['Unit', 'Category', 'Consumed_L', 'Filled_L', 'Theft_L', 'Runtime_h', 'Mileage_km', 'Avg_L_100km', 'EfficiencyScore'],
-      ...rows.map((r) => [
-        r.unitName,
-        r.assetCategory,
-        r.consumed.toFixed(2),
-        r.filled.toFixed(2),
-        r.theft.toFixed(2),
-        r.runtimeHours.toFixed(2),
-        r.mileage.toFixed(2),
-        r.avgConsumption.toFixed(2),
-        r.efficiencyScore.toFixed(2),
-      ]),
-    ]
-      .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','))
-      .join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `fuel-performance-${from}-to-${to}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const csv = buildMultiSectionReportCsv({
+      meta: {
+        title: 'Fuel Intelligence Performance',
+        moduleLabel: 'Fuel',
+        clientName: branding.name,
+        periodLabel: `${from} → ${to}`,
+        objectLabel: assetCategory ? String(assetCategory) : 'All categories',
+        generatedAt: new Date(),
+        notes: [periodSummary.text, activePreset.description].filter(Boolean),
+        filters: [
+          { label: 'View preset', value: activePreset.label },
+          { label: 'Sort', value: sortBy },
+          ...(assetSearch.trim() ? [{ label: 'Search', value: assetSearch.trim() }] : []),
+          ...(assetCategory ? [{ label: 'Category', value: String(assetCategory) }] : []),
+        ],
+        kpis: [
+          { label: 'Assets', value: rows.length },
+          { label: 'Consumed (L)', value: Number(rows.reduce((s, r) => s + r.consumed, 0).toFixed(1)) },
+          { label: 'Filled (L)', value: Number(rows.reduce((s, r) => s + r.filled, 0).toFixed(1)) },
+          { label: 'Theft / loss (L)', value: Number(rows.reduce((s, r) => s + r.theft, 0).toFixed(1)) },
+          { label: 'Runtime (h)', value: Number(rows.reduce((s, r) => s + r.runtimeHours, 0).toFixed(1)) },
+          { label: 'Mileage (km)', value: Number(rows.reduce((s, r) => s + r.mileage, 0).toFixed(1)) },
+          { label: 'Anomalies', value: anomalies.length },
+        ],
+      },
+      sections: [
+        {
+          name: 'Asset performance',
+          columns: [
+            { key: 'unitName', label: 'Asset' },
+            { key: 'assetCategory', label: 'Category' },
+            { key: 'consumed', label: 'Consumed (L)' },
+            { key: 'filled', label: 'Filled (L)' },
+            { key: 'theft', label: 'Theft / loss (L)' },
+            { key: 'runtimeHours', label: 'Runtime (h)' },
+            { key: 'mileage', label: 'Mileage (km)' },
+            { key: 'avgConsumption', label: 'Avg L/100km' },
+            { key: 'efficiencyScore', label: 'Efficiency score' },
+          ],
+          rows: rows.map((r) => ({
+            unitName: r.unitName,
+            assetCategory: r.assetCategory,
+            consumed: Number(r.consumed.toFixed(2)),
+            filled: Number(r.filled.toFixed(2)),
+            theft: Number(r.theft.toFixed(2)),
+            runtimeHours: Number(r.runtimeHours.toFixed(2)),
+            mileage: Number(r.mileage.toFixed(2)),
+            avgConsumption: Number(r.avgConsumption.toFixed(2)),
+            efficiencyScore: Number(r.efficiencyScore.toFixed(2)),
+          })),
+        },
+        {
+          name: 'Anomaly ranking',
+          columns: [
+            { key: 'unitName', label: 'Asset' },
+            { key: 'severityScore', label: 'Severity score' },
+            { key: 'reason', label: 'Why' },
+            { key: 'action', label: 'Recommended action' },
+          ],
+          rows: anomalies.map((a) => ({
+            unitName: a.unitName,
+            severityScore: Number(a.severityScore.toFixed(2)),
+            reason: a.reason,
+            action: a.action,
+          })),
+        },
+      ],
+    });
+
+    downloadReportCsv(
+      csv,
+      `${buildReportFilename({
+        clientName: branding.name,
+        reportName: `Fuel_Intelligence_${activePreset.label}`,
+        date: to,
+      })}.csv`,
+    );
   };
 
   return (

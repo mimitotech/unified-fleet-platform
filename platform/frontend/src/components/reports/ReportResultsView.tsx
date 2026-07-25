@@ -15,7 +15,14 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { WialonReportChart, WialonReportResult, WialonReportTable } from '@/lib/reportUtils';
-import { formatReportCell, numericColumns, tableToCsv, downloadTextFile } from '@/lib/reportUtils';
+import { formatReportCell, numericColumns } from '@/lib/reportUtils';
+import {
+  buildMultiSectionReportCsv,
+  buildReportCsv,
+  columnsFromRows,
+  downloadReportCsv,
+  type ReportCsvSection,
+} from '@/lib/reportCsv';
 import { cn } from '@/lib/utils';
 import { useTenantBranding } from '@/hooks/useTenantBranding';
 import { notify } from '@/lib/notify';
@@ -391,7 +398,53 @@ export function ReportResultsView({ data, templateName, unitName, moduleLabel = 
       date: new Date().toISOString().slice(0, 10),
       unitName,
     });
-    downloadTextFile(tableToCsv(table), `${name}.csv`, 'text/csv');
+
+    const sections: ReportCsvSection[] = (tables.length > 1 ? tables : [table]).map((t) => ({
+      name: t.label || t.name || `Table ${t.index + 1}`,
+      columns: columnsFromRows(
+        t.rows,
+        t.columns.length ? t.columns.map((c) => ({ key: c.key, label: c.label })) : undefined,
+      ),
+      rows: t.rows,
+    }));
+
+    const kpiSource = tables.length > 1 ? table : table;
+    const nums = numericColumns(kpiSource).slice(0, 8);
+
+    const meta = {
+      title: templateName || table.label || table.name || 'Report results',
+      moduleLabel,
+      clientName: branding.name,
+      periodLabel,
+      objectLabel: unitName || undefined,
+      generatedAt: summary.generatedAt,
+      notes: [
+        tables.length > 1
+          ? `Full export includes ${tables.length} tables (${summary.rowCount} total rows). Active tab at export: ${table.label || table.name}.`
+          : undefined,
+        summary.chartCount > 0
+          ? `${summary.chartCount} chart(s) are available in PDF export; CSV includes tabular data only.`
+          : undefined,
+      ].filter((n): n is string => Boolean(n)),
+      kpis: nums.map((n) => ({
+        label: `${n.label} (sum)`,
+        value: Number(n.sum.toFixed(2)),
+      })),
+      extraMeta: [
+        { label: 'Tables', value: String(summary.tableCount) },
+        { label: 'Charts', value: String(summary.chartCount) },
+      ],
+    };
+
+    const csv =
+      sections.length > 1
+        ? buildMultiSectionReportCsv({ meta, sections })
+        : buildReportCsv({
+            meta,
+            columns: sections[0]?.columns || [],
+            rows: sections[0]?.rows || [],
+          });
+    downloadReportCsv(csv, `${name}.csv`);
   };
 
   const exportBranded = async (mode: 'download' | 'print') => {
@@ -478,7 +531,7 @@ export function ReportResultsView({ data, templateName, unitName, moduleLabel = 
               onClick={() => exportTableCsv(activeTable)}
             >
               <Download className="h-3.5 w-3.5 mr-1" />
-              CSV
+              {tables.length > 1 ? 'CSV (all tables)' : 'CSV'}
             </Button>
           )}
           <Button

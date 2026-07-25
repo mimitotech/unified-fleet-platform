@@ -466,6 +466,7 @@ export default function Surveillance() {
                       columns={[
                         { key: 'name', label: 'Unit' },
                         { key: 'cameras', label: 'Cameras', align: 'right' },
+                        { key: 'coverage', label: 'Coverage' },
                         { key: 'uid', label: 'Device ID' },
                       ]}
                       rows={unitList.map((u) => {
