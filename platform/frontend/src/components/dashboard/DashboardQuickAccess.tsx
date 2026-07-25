@@ -16,7 +16,7 @@ export function DashboardQuickAccess({ enabledKeys }: Props) {
   if (!links.length) return null;
 
   return (
-    <div className="space-y-2.5">
+    <div className="space-y-2.5" data-no-print>
       <DashboardSectionLabel>Quick access · your modules</DashboardSectionLabel>
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-2.5">
         {links.map((link, i) => {

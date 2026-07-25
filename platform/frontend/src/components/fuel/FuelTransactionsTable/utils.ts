@@ -1,6 +1,11 @@
 import type { FuelTransaction } from '@/types/entities';
 import type { TransactionDisplayValues } from './FuelTransactionsTable/types';
 export { getTransactionColumnValues as getTransactionDisplayValues } from '../fuelColumnMetrics';
+import {
+  getDefaultModuleDateRange,
+  localDateIso,
+  shiftLocalDays,
+} from '@/lib/defaultDateRange';
 
 /** Format currency for Uganda */
 export const formatCurrency = (amount: number) => {
@@ -27,34 +32,16 @@ export const formatTransactionTime = (t: { timestamp?: number; time?: string }):
   return t.time ?? '';
 };
 
-function formatLocalDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-/** Default Fuel window: last 7 days — matches typical Wialon report availability. */
-export const getDefaultDateRange = () => {
-  const today = new Date();
-  const todayStr = formatLocalDate(today);
-  const from = new Date(today.getTime() - 6 * 86400000);
-  return {
-    fromDate: formatLocalDate(from),
-    toDate: todayStr,
-    todayStr,
-  };
-};
+/** Default Fuel window: last 7 days — same as Dashboard / Alerts inbox. */
+export const getDefaultDateRange = () => getDefaultModuleDateRange();
 
 export type FuelQuickRange = 'today' | '7' | '14' | '30';
 
 export function getFuelRangeForPreset(preset: FuelQuickRange): { fromDate: string; toDate: string; todayStr: string } {
-  const today = new Date();
-  const todayStr = formatLocalDate(today);
+  const todayStr = localDateIso();
   if (preset === 'today') {
     return { fromDate: todayStr, toDate: todayStr, todayStr };
   }
-  const from = new Date(today);
-  from.setDate(from.getDate() - (Number(preset) - 1));
-  return { fromDate: formatLocalDate(from), toDate: todayStr, todayStr };
+  const days = Number(preset) - 1;
+  return { fromDate: shiftLocalDays(todayStr, -days), toDate: todayStr, todayStr };
 }

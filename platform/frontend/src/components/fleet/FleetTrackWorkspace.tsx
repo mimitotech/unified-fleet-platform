@@ -18,6 +18,7 @@ import {
 import { cn } from '@/lib/utils';
 import { UnitTypeIcon } from '@/components/fleet/UnitTypeIcon';
 import { formatReadingValue } from '@/lib/formatReading';
+import { getDefaultModuleDateRange } from '@/lib/defaultDateRange';
 import { Loader2, Maximize2, Minimize2, Pause, Play, SkipBack, SkipForward } from 'lucide-react';
 
 const PERIODS: { id: TrackPeriod; label: string; unit: string }[] = [
@@ -28,23 +29,6 @@ const PERIODS: { id: TrackPeriod; label: string; unit: string }[] = [
 ];
 
 const SPEEDS = [1, 2, 4, 8, 16, 32, 100] as const;
-
-function todayIso() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-function shiftDays(iso: string, days: number) {
-  const d = new Date(`${iso}T12:00:00`);
-  d.setDate(d.getDate() + days);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
 
 function SectionTitle({ children }: { children: ReactNode }) {
   return (
@@ -63,11 +47,13 @@ type Props = {
 
 export function FleetTrackWorkspace({ units, selectedId, onSelectId, className }: Props) {
   const { connected } = useWialonContext();
+  const defaults = getDefaultModuleDateRange();
   const [rangeMode, setRangeMode] = useState<'relative' | 'absolute'>('relative');
+  // Default track window: last 7 days (same as Dashboard / Fuel).
   const [period, setPeriod] = useState<TrackPeriod>('day');
-  const [amount, setAmount] = useState(1);
-  const [fromDate, setFromDate] = useState(() => shiftDays(todayIso(), -1));
-  const [toDate, setToDate] = useState(() => todayIso());
+  const [amount, setAmount] = useState(7);
+  const [fromDate, setFromDate] = useState(defaults.fromDate);
+  const [toDate, setToDate] = useState(defaults.toDate);
   const [q, setQ] = useState('');
   const [playIndex, setPlayIndex] = useState(0);
   const [playing, setPlaying] = useState(false);

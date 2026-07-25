@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -97,6 +97,7 @@ import { LIVE_POLL, livePollLabel } from "@/lib/liveRefresh";
 import { safeArray } from "@/lib/safeArray";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { SectionPrintButtons } from "@/components/shared/SectionPrintButtons";
 
 const SECTION = "space-y-2.5";
 
@@ -338,11 +339,15 @@ export default function Dashboard() {
   // unscoped harvest (which inflates via group summaries + balance-derived used).
   const { data: fuelSummary } = useFuelFleetSummary();
   const fuelSupport = fuelSummary?.supportedCategories;
-  const wantVehicleFuel = hasFuel;
+  // Only pull categories this account actually exposes on the Fuel tabs.
+  // Never guess from name heuristics while support is loading — that briefly
+  // enabled empty generator/machinery queries that returned the full fleet and
+  // stacked the same fills onto Dashboard KPIs.
+  const wantVehicleFuel = hasFuel && (fuelSupport ? fuelSupport.vehicle !== false : true);
   const wantGeneratorFuel =
-    hasFuel && (fuelSupport ? fuelSupport.generator : (fuelSummary?.generators ?? 0) > 0);
+    hasFuel && fuelSupport?.generator === true && (fuelSummary?.generators ?? 0) > 0;
   const wantMachineryFuel =
-    hasFuel && (fuelSupport ? fuelSupport.machinery : (fuelSummary?.machinery ?? 0) > 0);
+    hasFuel && fuelSupport?.machinery === true && (fuelSummary?.machinery ?? 0) > 0;
 
   // Same React Query keys the Fuel module tabs use, so refresh / warming / invalidation
   // keep Dashboard and Fuel on identical transaction sets for the same period.
@@ -806,6 +811,11 @@ export default function Dashboard() {
     [units],
   );
 
+  const fuelRosterNames = useMemo(
+    () => (units ?? []).map((u) => u.name).filter(Boolean),
+    [units],
+  );
+
   // Period KPIs from the same transactions + live levels as the Fuel module,
   // so dashboard totals always match the Fuel page for the same date range.
   // For single-category clients (e.g. Mimito vehicles-only) this is exactly the
@@ -817,8 +827,9 @@ export default function Dashboard() {
         applied.from,
         applied.to,
         liveLevelsByName,
+        fuelRosterNames,
       ),
-    [fuelTransactions, applied.from, applied.to, liveLevelsByName],
+    [fuelTransactions, applied.from, applied.to, liveLevelsByName, fuelRosterNames],
   );
   // Single source of truth: derive every fuel tile from the SAME per-category
   // transactions + live levels the Fuel module uses. Never fall back to the
@@ -1188,6 +1199,7 @@ export default function Dashboard() {
   const periodLabel = `${applied.from} → ${applied.to}`;
 
   const chartsUpdating = executing;
+  const printContentRef = useRef<HTMLDivElement>(null);
 
   const toolbar = (
     <DashboardToolbar
@@ -1207,6 +1219,15 @@ export default function Dashboard() {
       arrangeMode={arrangeMode}
       onArrangeMode={setArrangeMode}
       onResetLayout={resetLayout}
+      printActions={
+        <SectionPrintButtons
+          contentRef={printContentRef}
+          title={`${branding.name || "Client"} Dashboard ${applied.from} to ${applied.to}`}
+          filename={`${branding.name || "Dashboard"}_dashboard_${applied.from}_${applied.to}`}
+          primaryColor={brand}
+          size="sm"
+        />
+      }
     />
   );
 
@@ -1354,6 +1375,7 @@ export default function Dashboard() {
         />
       )}
 
+      <div ref={printContentRef} className="space-y-0">
       <AnimatedPage
         key={`dash-period-${applied.from}-${applied.to}-${executeFlash}`}
         className={cn(
@@ -2492,6 +2514,7 @@ export default function Dashboard() {
 
         <DashboardQuickAccess enabledKeys={enabled} />
       </AnimatedPage>
+      </div>
     </AppLayout>
   );
 }

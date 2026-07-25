@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { useFleetData } from '@/hooks/useFleetData';
 import { useStationaryFleetData } from '@/hooks/useStationaryFleetData';
 import { useRefreshFuelTransactions, useLiveFuelReadings } from '@/services/fleet';
@@ -24,6 +24,8 @@ import { clientFacingText } from '@/lib/clientFacingText';
 import type { FuelTabDateRangeProps } from './fuelTabTypes';
 import type { StationaryFuelType } from './useStationaryFuelHooks';
 import type { FuelTableUnit } from './FuelTransactionsTable/types';
+import { SectionPrintButtons } from '@/components/shared/SectionPrintButtons';
+import { useTenantBranding } from '@/hooks/useTenantBranding';
 
 const LABELS: Record<FuelAssetCategory, { unit: string; plural: string }> = {
   vehicle: { unit: 'Vehicle', plural: 'vehicles' },
@@ -71,6 +73,8 @@ export function CoreFuelTab({
 }: CoreFuelTabProps) {
   const labels = LABELS[assetCategory];
   const isVehicle = assetCategory === 'vehicle';
+  const branding = useTenantBranding();
+  const printContentRef = useRef<HTMLDivElement>(null);
 
   const fleet = useFleetData({
     startDate: fromDate,
@@ -107,9 +111,21 @@ export function CoreFuelTab({
     : categoryFleet.isFuelBackgroundRefreshing;
   const fuelError = isVehicle ? fleet.fuelError : categoryFleet.fuelError;
 
+  const assetNames = useMemo(
+    () => units.map((u) => u.name).filter(Boolean).sort((a, b) => a.localeCompare(b)),
+    [units],
+  );
+
   const reportKpis = useMemo(
-    () => computePeriodFuelKpis(fuelTransactions, fromDate, toDate, unitFuelMapByName),
-    [fuelTransactions, fromDate, toDate, unitFuelMapByName],
+    () =>
+      computePeriodFuelKpis(
+        fuelTransactions,
+        fromDate,
+        toDate,
+        unitFuelMapByName,
+        assetNames,
+      ),
+    [fuelTransactions, fromDate, toDate, unitFuelMapByName, assetNames],
   );
 
   const filteredFuelTransactions = useMemo(
@@ -140,11 +156,6 @@ export function CoreFuelTab({
           10,
       ) / 10,
     [liveUnits],
-  );
-
-  const assetNames = useMemo(
-    () => (isVehicle ? fleet.vehicles.map((v) => v.name) : categoryFleet.units.map((u) => u.name)),
-    [isVehicle, fleet.vehicles, categoryFleet.units],
   );
 
   /** Same low-fuel alert model for every asset category (FLS %). */
@@ -199,6 +210,20 @@ export function CoreFuelTab({
 
   return (
     <div className="space-y-4 min-w-0 max-w-full">
+      <div className="flex flex-wrap items-center justify-between gap-2" data-no-print>
+        <p className="text-[11px] text-muted-foreground">
+          {labels.plural} · {fromDate} → {toDate}
+        </p>
+        <SectionPrintButtons
+          contentRef={printContentRef}
+          title={`${branding.name || 'Client'} Fuel ${labels.plural} ${fromDate} to ${toDate}`}
+          filename={`${branding.name || 'Fuel'}_fuel_${assetCategory}_${fromDate}_${toDate}`}
+          primaryColor={branding.primaryColor}
+          size="xs"
+        />
+      </div>
+
+      <div ref={printContentRef} className="space-y-4 min-w-0 max-w-full">
       {fuelError && !isFuelWarming && (
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
           Report data unavailable
@@ -298,6 +323,7 @@ export function CoreFuelTab({
         onFromDateChange={onFromDateChange}
         onToDateChange={onToDateChange}
       />
+      </div>
     </div>
   );
 }

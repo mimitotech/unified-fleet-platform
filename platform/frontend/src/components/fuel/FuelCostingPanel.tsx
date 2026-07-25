@@ -81,8 +81,16 @@ export function FuelCostingPanel({
     return [...set].sort((a, b) => a.localeCompare(b));
   }, [assetNames, transactions]);
 
+  // Same roster the transactions table uses — never inflate costing with
+  // out-of-category or orphan summary rows.
+  const rosterTx = useMemo(() => {
+    if (!assetNames.length) return transactions;
+    const allow = new Set(assetNames.map((n) => n.trim().toLowerCase()).filter(Boolean));
+    return transactions.filter((t) => allow.has((t.unitName || '').trim().toLowerCase()));
+  }, [transactions, assetNames]);
+
   const rows = useMemo(() => {
-    const ranged = filterFuelTransactionsByDate(transactions, fromDate, toDate);
+    const ranged = filterFuelTransactionsByDate(rosterTx, fromDate, toDate);
     return names.map((unitName) => {
       const cols = aggregateUnitFuelColumns(
         ranged.filter((t) => t.unitName === unitName),
@@ -104,14 +112,14 @@ export function FuelCostingPanel({
         stationSpend: Math.round(stationSpend),
       };
     });
-  }, [transactions, fromDate, toDate, liveLevels, price, names]);
+  }, [rosterTx, fromDate, toDate, liveLevels, price, names]);
 
   const filtered = selected === 'all' ? rows : rows.filter((r) => r.fullName === selected);
 
   // Fleet-wide totals use the same KPI + price helpers as the Dashboard so
   // Fill cost / Use cost never drift when the filter is "All".
   const fleetTotals = useMemo(() => {
-    const kpis = computePeriodFuelKpis(transactions, fromDate, toDate, liveLevels);
+    const kpis = computePeriodFuelKpis(rosterTx, fromDate, toDate, liveLevels, assetNames);
     const priced = applyPriceToKpis(kpis, price);
     return {
       filled: Math.round(kpis.totalFilled * 10) / 10,
@@ -120,7 +128,7 @@ export function FuelCostingPanel({
       usedCost: priced.usageCost,
       stationSpend: 0,
     };
-  }, [transactions, fromDate, toDate, liveLevels, price]);
+  }, [rosterTx, fromDate, toDate, liveLevels, price]);
 
   const totals =
     selected === 'all'
@@ -156,9 +164,8 @@ export function FuelCostingPanel({
             Fuel costing · {unitLabel.toLowerCase()}s only
           </CardTitle>
           <p className="text-xs text-muted-foreground mt-0.5">
-            One price for the whole system · fill cost and use cost stay separate · same period as the
-            table. The Dashboard totals every fuel category, so it reads higher when this account also
-            runs generators or machinery.
+            One price for the whole system · fill cost and use cost stay separate · same period and
+            category as the table above.
           </p>
         </div>
         <PeriodAssetControls

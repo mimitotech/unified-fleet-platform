@@ -417,16 +417,18 @@ export default function AlertsPage() {
                     className={cn(
                       'cv-auto group px-3 py-1.5 flex items-start gap-2 border-l-[3px] transition-colors hover:bg-muted/30',
                       severity.row,
-                      alert.acknowledged && 'opacity-55',
+                      alert.acknowledged && 'bg-muted/15',
                     )}
                   >
-                    {!alert.acknowledged && (
+                    {!alert.acknowledged ? (
                       <Checkbox
                         checked={isSel}
                         onCheckedChange={() => toggleOne(alert.id)}
                         className="mt-1 shrink-0"
                         aria-label="Select alert"
                       />
+                    ) : (
+                      <span className="w-4 shrink-0 mt-1" aria-hidden />
                     )}
                     <div className={cn('mt-0.5 rounded border p-0.5 shrink-0', severity.badge)}>
                       <SeverityIcon className="h-3 w-3" />

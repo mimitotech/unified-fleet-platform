@@ -12,6 +12,7 @@ import { DomainReportCharts } from '@/components/reports/DomainReportCharts';
 import type { DomainChartSpec } from '@/lib/domainReportCharts';
 import { buildReportFilename } from '@/lib/reportFilename';
 import { buildReportCsv, downloadReportCsv, type ReportCsvColumn } from '@/lib/reportCsv';
+import { getDefaultReportDateRange } from '@/lib/defaultDateRange';
 
 export type ModuleReportDef = {
   id: string;
@@ -108,13 +109,7 @@ type Props = {
 };
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function daysAgo(n: number) {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
+  return getDefaultReportDateRange().todayStr;
 }
 
 function rowDayIso(value: unknown): string | null {
@@ -161,8 +156,9 @@ export function ModuleReportsShell({
   const [localKind, setLocalKind] = useState(reports[0]?.id ?? 'executive');
   const kind = selectedReportId ?? localKind;
   const setKind = onSelectedReportIdChange ?? setLocalKind;
-  const [localFrom, setLocalFrom] = useState(defaultFrom || daysAgo(6));
-  const [localTo, setLocalTo] = useState(defaultTo || todayIso());
+  const reportDefault = getDefaultReportDateRange();
+  const [localFrom, setLocalFrom] = useState(defaultFrom || reportDefault.fromDate);
+  const [localTo, setLocalTo] = useState(defaultTo || reportDefault.toDate);
   const [localAsset, setLocalAsset] = useState('all');
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');

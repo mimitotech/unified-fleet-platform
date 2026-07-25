@@ -308,10 +308,14 @@ export class UfpFleetService implements IFleetService {
     if (filters?.assetCategory) {
       // Scope to this category's fuel assets when the live asset list is available.
       // Prevents machinery events (excavator/backhoe) from appearing on the Vehicles tab.
+      // When the category has zero assets, return [] — never fall through to the full
+      // fleet report (that duplicated vehicle fills onto Dashboard totals).
       try {
         const assets = await this.getFuelAssets();
         const categoryAssets = assets.filter((a) => a.assetType === filters.assetCategory);
-        if (categoryAssets.length) {
+        if (!categoryAssets.length) {
+          transactions = [];
+        } else {
           const idSet = new Set(categoryAssets.map((a) => String(a.unitId)));
           const byName = new Map(
             categoryAssets.map((a) => [a.name.trim().toLowerCase(), a] as const),

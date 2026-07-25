@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { LayoutGrid, Loader2, MoreVertical, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,6 +38,7 @@ export function DashboardToolbar({
   arrangeMode = false,
   onArrangeMode,
   onResetLayout,
+  printActions,
 }: {
   todayStr: string;
   draftFrom: string;
@@ -54,6 +56,7 @@ export function DashboardToolbar({
   arrangeMode?: boolean;
   onArrangeMode?: (next: boolean) => void;
   onResetLayout?: () => void;
+  printActions?: ReactNode;
 }) {
   const menuItems = DASHBOARD_WIDGET_DEFS.filter((def) => {
     if (def.id === "users_by_role") return isAdmin;
@@ -72,7 +75,8 @@ export function DashboardToolbar({
             Choose a range, then Execute — charts and KPIs update together
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-1.5 self-start sm:self-auto">
+        <div className="flex flex-wrap items-center gap-1.5 self-start sm:self-auto" data-no-print>
+          {printActions}
           {onArrangeMode && (
             <Button
               type="button"

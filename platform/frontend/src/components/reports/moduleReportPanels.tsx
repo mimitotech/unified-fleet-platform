@@ -12,6 +12,7 @@ import { CHART } from '@/lib/chartColors';
 import { useBatchWialonGeocode } from '@/hooks/useBatchWialonGeocode';
 import { tankPercentFromLiters, usablePercent } from '@/lib/fuelLevel';
 import { localDateIso } from '@/lib/localDate';
+import { getDefaultReportDateRange } from '@/lib/defaultDateRange';
 import type { FleetUnit } from '@/lib/fleetUnits';
 
 function statusLabel(status: string, stationary: boolean) {
@@ -324,12 +325,9 @@ export function DriversModuleReports() {
 export function AlertsModuleReports() {
   const branding = useTenantBranding();
   const todayStr = localDateIso();
-  const [fromDate, setFromDate] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 6);
-    return localDateIso(d);
-  });
-  const [toDate, setToDate] = useState(todayStr);
+  const reportDefault = getDefaultReportDateRange();
+  const [fromDate, setFromDate] = useState(reportDefault.fromDate);
+  const [toDate, setToDate] = useState(reportDefault.toDate);
   const { data: alerts, refetch, isFetching } = useAlerts(500, true, {
     from: `${fromDate}T00:00:00`,
     to: `${toDate}T23:59:59`,
@@ -423,15 +421,17 @@ export function AlertsModuleReports() {
   const filteredRows = useMemo(() => {
     let rows = [...baseRows];
     if (reportId === 'critical') {
-      rows = rows.filter((r) => r.severity === 'critical' || r.severity === 'emergency');
+      rows = rows.filter(
+        (r) =>
+          r.status === 'Open' &&
+          (r.severity === 'critical' || r.severity === 'emergency'),
+      );
     } else if (reportId === 'fuel') {
       rows = rows.filter((r) => /fuel/.test(String(r.type)));
     } else if (reportId === 'open') {
       rows = rows.filter((r) => r.status === 'Open');
-    } else if (reportId === 'safety') {
-      rows = rows.filter((r) =>
-        /harsh|speed|idle|eco|geofence|sos|corner|accel|brak/.test(String(r.type)),
-      );
+    } else if (reportId === 'acked') {
+      rows = rows.filter((r) => r.status === 'Acknowledged');
     }
     rows = rows.filter((r) => {
       if (!r._day) return true;
@@ -453,7 +453,10 @@ export function AlertsModuleReports() {
 
   const kpis = useMemo(
     () => [
-      { label: 'In view', value: filteredRows.length },
+      {
+        label: 'Open',
+        value: filteredRows.filter((r) => r.status === 'Open').length,
+      },
       {
         label: 'Open critical',
         value: filteredRows.filter(
@@ -462,11 +465,11 @@ export function AlertsModuleReports() {
             (r.severity === 'critical' || r.severity === 'emergency'),
         ).length,
       },
-      { label: 'Open', value: filteredRows.filter((r) => r.status === 'Open').length },
       {
         label: 'Fuel events',
         value: filteredRows.filter((r) => /fuel/.test(String(r.type))).length,
       },
+      { label: 'In period', value: filteredRows.length },
     ],
     [filteredRows],
   );
@@ -488,11 +491,31 @@ export function AlertsModuleReports() {
       onRun={() => void refetch()}
       running={isFetching}
       reports={[
-        { id: 'executive', title: 'All alerts', blurb: 'Full inbox with severity, type and asset.' },
-        { id: 'critical', title: 'Critical only', blurb: 'Critical and emergency events.' },
-        { id: 'fuel', title: 'Fuel events', blurb: 'Fillings and sudden drops only.' },
-        { id: 'safety', title: 'Safety & driving', blurb: 'Harsh events, idling, speeding, eco.' },
-        { id: 'open', title: 'Open alerts', blurb: 'Not yet acknowledged.' },
+        {
+          id: 'executive',
+          title: 'Inbox (period)',
+          blurb: 'Same live events as the inbox for the selected dates.',
+        },
+        {
+          id: 'open',
+          title: 'Open only',
+          blurb: 'Still waiting for acknowledgement.',
+        },
+        {
+          id: 'critical',
+          title: 'Open critical',
+          blurb: 'Open critical and emergency only.',
+        },
+        {
+          id: 'fuel',
+          title: 'Fuel fill & drop',
+          blurb: 'Sensor fill and sudden-drop leaf events.',
+        },
+        {
+          id: 'acked',
+          title: 'Acknowledged',
+          blurb: 'Already handled in this period.',
+        },
       ]}
       kpis={kpis}
       columns={[
@@ -502,23 +525,23 @@ export function AlertsModuleReports() {
         { key: 'type', label: 'Type' },
         { key: 'severity', label: 'Severity' },
         { key: 'status', label: 'Status' },
-        { key: 'source', label: 'Source' },
-        { key: 'detail', label: 'Details' },
       ]}
       rows={filteredRows}
       emptyMessage="No alerts for this filter, asset and period."
       extraPreview={
-        <div className="space-y-2">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-            Asset performance · alert analytics
-          </p>
-          <AlertsReportCharts
-            rows={filteredRows}
-            fromDate={fromDate}
-            toDate={toDate}
-            primaryColor={branding.primaryColor}
-          />
-        </div>
+        filteredRows.length > 0 ? (
+          <div className="space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+              Alert analytics
+            </p>
+            <AlertsReportCharts
+              rows={filteredRows}
+              fromDate={fromDate}
+              toDate={toDate}
+              primaryColor={branding.primaryColor}
+            />
+          </div>
+        ) : null
       }
     />
   );

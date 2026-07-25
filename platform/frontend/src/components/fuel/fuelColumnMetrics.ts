@@ -309,20 +309,31 @@ export function aggregateUnitFuelColumns(
 /**
  * Fleet-wide period KPIs — uses the same per-unit aggregation as collapsed table rows
  * so KPI tiles always match the table totals for the selected date range.
+ *
+ * Pass `allowedUnitNames` (category roster) to ignore orphan / out-of-category
+ * summary rows the same way the Fuel transactions table does.
  */
 export function computePeriodFuelKpis(
   transactions: FuelTransaction[],
   fromDate?: string,
   toDate?: string,
   liveLevelsByName?: Map<string, number>,
+  allowedUnitNames?: string[],
 ): FuelReportKpis {
   const periodTxs = filterFuelTransactionsByDate(transactions, fromDate, toDate);
+  const allow =
+    allowedUnitNames && allowedUnitNames.length
+      ? new Set(allowedUnitNames.map((n) => n.trim().toLowerCase()).filter(Boolean))
+      : null;
   const byUnit = new Map<string, FuelTransaction[]>();
 
   for (const t of periodTxs) {
-    const list = byUnit.get(t.unitName) ?? [];
+    const key = (t.unitName || '').trim();
+    if (!key) continue;
+    if (allow && !allow.has(key.toLowerCase())) continue;
+    const list = byUnit.get(key) ?? [];
     list.push(t);
-    byUnit.set(t.unitName, list);
+    byUnit.set(key, list);
   }
 
   let totalFilled = 0;
