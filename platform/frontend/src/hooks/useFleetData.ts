@@ -17,6 +17,7 @@
 
 import { useMemo } from 'react';
 import { useVehicles, useFuelTransactions } from '@/services/fleet';
+import { tankPercentFromLiters, usablePercent } from '@/lib/fuelLevel';
 import type { Vehicle, FuelTransaction } from '@/types';
 
 // ============================================================================
@@ -25,7 +26,8 @@ import type { Vehicle, FuelTransaction } from '@/types';
 
 export interface VehicleFuelInfo {
   level: number;
-  percent: number;
+  /** Null when the tank capacity is unknown or the reading is not a real level. */
+  percent: number | null;
   tankCapacity: number;
   status: 'critical' | 'warning' | 'ok';
 }
@@ -114,30 +116,28 @@ export function useFleetData(options?: FleetDataOptions): FleetDataResult {
       const tankCapacity =
         v.fuelInfo?.tankCapacity && v.fuelInfo.tankCapacity > 0 ? v.fuelInfo.tankCapacity : 0;
       let level = 0;
-      let percent = 0;
+      let reported: number | null = null;
 
       if (v.fuelInfo) {
         level = Number(v.fuelInfo.level) || 0;
-        percent = Number(v.fuelInfo.percentage) || 0;
+        reported = usablePercent(Number(v.fuelInfo.percentage));
       } else if (v.fuelUnit === 'liters') {
         level = Number(v.fuel) || 0;
       } else {
-        percent = Number(v.fuel) || 0;
-        if (tankCapacity > 0 && percent > 0) level = (percent / 100) * tankCapacity;
+        reported = usablePercent(Number(v.fuel));
+        if (tankCapacity > 0 && reported != null) level = (reported / 100) * tankCapacity;
       }
 
-      // Prefer calibrated tank capacity for % — never invent a 100 L default.
-      if ((percent <= 0 || percent > 100) && level > 0 && tankCapacity > 0) {
-        percent = Math.min(100, (level / tankCapacity) * 100);
-      }
-      if (percent > 100) percent = 100;
+      // Litres against the declared capacity, or nothing — an asset without fuel
+      // monitoring must not be given a percent it never reported.
+      const percent = reported ?? tankPercentFromLiters(level, tankCapacity);
 
       const status: 'critical' | 'warning' | 'ok' =
-        percent <= 15 ? 'critical' : percent <= 30 ? 'warning' : 'ok';
+        percent == null ? 'ok' : percent <= 15 ? 'critical' : percent <= 30 ? 'warning' : 'ok';
 
       map.set(v.id, {
         level: Math.round(level * 10) / 10,
-        percent: Math.round(percent * 10) / 10,
+        percent: percent == null ? null : Math.round(percent * 10) / 10,
         tankCapacity,
         status,
       });

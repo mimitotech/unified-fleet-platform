@@ -155,7 +155,7 @@ export function FuelDrainAlerts({ alerts }: FuelDrainAlertsProps) {
 
   return (
     <>
-      <div className="fleet-card border-destructive/40 py-2.5">
+      <div className="fleet-card branded-panel border-destructive/40 py-2.5">
         <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
           <div className="flex items-center gap-1.5 min-w-0">
             <AlertTriangle className="w-4 h-4 text-destructive shrink-0" />

@@ -73,6 +73,8 @@ export type WialonFuelAssetRow = {
   sensorSummary: string;
   fillingLiters: number | null;
   fuelPercent: number | null;
+  /** Capacity declared in Wialon; null when the account never configured one. */
+  tankCapacity?: number | null;
   engineHours: number | null;
   updatedAt: string | null;
 };

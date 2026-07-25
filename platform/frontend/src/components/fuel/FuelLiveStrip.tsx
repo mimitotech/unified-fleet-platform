@@ -46,7 +46,7 @@ export function FuelLiveStrip({ units, unitLabel, isLoading }: FuelLiveStripProp
   const withFuel = units.filter((u) => (u.fuelLiters ?? 0) > 0 || (u.fuelPercent ?? 0) > 0);
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="branded-panel overflow-hidden shadow-none">
       <CardHeader className="py-2.5 px-4">
         <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
           <Fuel className="h-4 w-4 text-primary shrink-0" />

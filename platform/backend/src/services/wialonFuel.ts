@@ -183,7 +183,7 @@ export function fuelFromSearchItem(item: WialonSearchItem): {
   const totalLiters = totalLitersFromReadings(sensors);
   const capacity = tankCapacityFromItem(item);
   const fuelLevelPercent =
-    capacity && capacity > 0 ? fuelPercentFromLitres(totalLiters, capacity) : undefined;
+    capacity && capacity > 0 ? (fuelPercentFromLitres(totalLiters, capacity) ?? undefined) : undefined;
 
   return {
     live: {
@@ -312,13 +312,15 @@ export function extractFuelLevel(
   tankCapacity?: number
 ): number | undefined {
   if (fuelLiters != null && fuelLiters >= 0 && tankCapacity && tankCapacity > 0) {
-    return fuelPercentFromLitres(fuelLiters, tankCapacity);
+    const pct = fuelPercentFromLitres(fuelLiters, tankCapacity);
+    if (pct != null) return pct;
   }
 
   if (liveLls?.length) {
     const liters = liveLls.reduce((sum, r) => sum + (r.level ?? r.value ?? 0), 0);
     if (liters >= 0 && tankCapacity && tankCapacity > 0) {
-      return fuelPercentFromLitres(liters, tankCapacity);
+      const pct = fuelPercentFromLitres(liters, tankCapacity);
+      if (pct != null) return pct;
     }
   }
 

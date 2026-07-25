@@ -21,11 +21,24 @@ export function unitSliceToSearchItem(unit: WialonUnitSlice): WialonSearchItem {
     if (Number.isFinite(n)) prms[p.key] = { v: n, ct: p.calcTime, at: p.actualTime };
   }
 
+  // Preserve custom / property fields so tank capacity declarations
+  // (TANK CAPACITY, MAIN TANK CAPACITY, Capacidad, …) stay available without
+  // a second Wialon search. Never invent fields — only copy what the slice has.
+  const flds: NonNullable<WialonSearchItem['flds']> = {};
+  for (const f of unit.flds ?? []) {
+    if (!f?.name) continue;
+    flds[String(f.id ?? f.name)] = { id: f.id, n: f.name, v: String(f.value ?? '') };
+  }
+
+  const prp = unit.prp && Object.keys(unit.prp).length ? { ...unit.prp } : undefined;
+
   return {
     id: unit.id,
     nm: unit.name,
     sens: Object.keys(sens).length ? sens : undefined,
     prms: Object.keys(prms).length ? prms : undefined,
+    flds: Object.keys(flds).length ? flds : undefined,
+    prp,
     cnm: unit.counters?.mileage,
     cneh: unit.counters?.engineHours,
     pos: unit.position

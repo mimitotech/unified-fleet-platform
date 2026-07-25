@@ -8,6 +8,7 @@ import {
   readAllUnitSensors,
   totalLitersFromReadings,
   tankCapacityFromItem,
+  fuelPercentFromLitres,
 } from './wialonFuelSensorUtils.js';
 
 type CalcSensor = { n: string; v: string; u?: string; t?: number };
@@ -204,7 +205,7 @@ export function parseWialonUnitDetail(
     fuel.levelLiters = calibratedLiters;
     fuel.levelFormatted = `${calibratedLiters} L`;
     if (capacity && capacity > 0) {
-      fuel.level = Math.min(100, Math.max(0, Math.round((calibratedLiters / capacity) * 100)));
+      fuel.level = fuelPercentFromLitres(calibratedLiters, capacity) ?? undefined;
     }
   }
 
@@ -220,13 +221,8 @@ export function parseWialonUnitDetail(
     fuelLevel:
       (fuel.level != null ? fuel.level : undefined) ??
       slice.fuelLevel ??
-      (fuel.levelLiters != null &&
-      capacity &&
-      capacity > 0 &&
-      fuel.levelLiters <= capacity * 1.2
-        ? Math.round((fuel.levelLiters / capacity) * 100)
-        : fuel.levelLiters != null && fuel.levelLiters <= 100
-          ? Math.round(fuel.levelLiters)
-          : undefined),
+      (fuel.levelLiters != null && capacity && capacity > 0
+        ? (fuelPercentFromLitres(fuel.levelLiters, capacity) ?? undefined)
+        : undefined),
   };
 }

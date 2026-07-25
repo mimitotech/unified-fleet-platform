@@ -69,9 +69,12 @@ import {
   useWorkshopKpis,
 } from "@/hooks/useDomain";
 import {
-  useFuelTransactions as useCategoryFuelTransactions,
+  useFuelTransactions,
+  useGeneratorFuelTransactions,
+  useMachineryFuelTransactions,
   useFuelFleetSummary,
 } from "@/services/fleet";
+import { applyPriceToKpis } from "@/components/fuel/fuelReportStats";
 import { useWialonGeofencesLive } from "@/hooks/useWialonLive";
 import { clientApi, getTenantSlug } from "@/lib/api";
 import { ALERT_SEVERITY, FLEET_STATUS } from "@/lib/chartColors";
@@ -337,16 +340,18 @@ export default function Dashboard() {
   const wantMachineryFuel =
     hasFuel && (fuelSupport ? fuelSupport.machinery : (fuelSummary?.machinery ?? 0) > 0);
 
-  const vehicleFuelTx = useCategoryFuelTransactions(
+  // Same React Query keys the Fuel module tabs use, so refresh / warming / invalidation
+  // keep Dashboard and Fuel on identical transaction sets for the same period.
+  const vehicleFuelTx = useFuelTransactions(
     { startDate: applied.from, endDate: applied.to, assetCategory: "vehicle" },
     { enabled: wantVehicleFuel },
   );
-  const generatorFuelTx = useCategoryFuelTransactions(
-    { startDate: applied.from, endDate: applied.to, assetCategory: "generator" },
+  const generatorFuelTx = useGeneratorFuelTransactions(
+    { startDate: applied.from, endDate: applied.to },
     { enabled: wantGeneratorFuel },
   );
-  const machineryFuelTx = useCategoryFuelTransactions(
-    { startDate: applied.from, endDate: applied.to, assetCategory: "machinery" },
+  const machineryFuelTx = useMachineryFuelTransactions(
+    { startDate: applied.from, endDate: applied.to },
     { enabled: wantMachineryFuel },
   );
 
@@ -760,13 +765,16 @@ export default function Dashboard() {
   }, [alertList, accent, brand]);
 
   /* —— Fuel —— */
-  // Live tank litres per asset name — same signal the Fuel module feeds into
-  // its KPI aggregation so balance-derived consumption matches across modules.
+  // Live tank litres by unit name AND plate — same keys the Fuel module builds
+  // so balance-derived consumption and plausibility filters stay identical.
   const liveLevelsByName = useMemo(() => {
     const m = new Map<string, number>();
     for (const u of units ?? []) {
       const liters = num(u.fuelLiters);
-      if (u.name && liters > 0) m.set(u.name, liters);
+      if (!(liters > 0)) continue;
+      if (u.name) m.set(u.name, liters);
+      const plate = (u.plate || "").trim();
+      if (plate) m.set(plate, liters);
     }
     return m;
   }, [units]);
@@ -785,6 +793,8 @@ export default function Dashboard() {
 
   // Period KPIs from the same transactions + live levels as the Fuel module,
   // so dashboard totals always match the Fuel page for the same date range.
+  // For single-category clients (e.g. Mimito vehicles-only) this is exactly the
+  // Vehicles tab. For multi-category accounts it is the sum of each Fuel tab.
   const periodFuelKpis = useMemo(
     () =>
       computePeriodFuelKpis(
@@ -803,8 +813,9 @@ export default function Dashboard() {
   const fuelTheftLiters = num(periodFuelKpis.theftVolume);
   const fuelTracked = num(periodFuelKpis.vehiclesTracked);
   const avgConsumption = num(periodFuelKpis.avgConsumption);
-  const fuelCost = Math.round(fuelUsed * fuelPrice);
-  const fuelFillCost = Math.round(fuelFilled * fuelPrice);
+  const priced = applyPriceToKpis(periodFuelKpis, fuelPrice);
+  const fuelCost = priced.usageCost;
+  const fuelFillCost = priced.fillCost;
 
   // avg L/100km is meaningless for generators/machinery (no mileage) — fall
   // back to plain consumed litres so the insight is never "avg 0 L/100".

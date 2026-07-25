@@ -1,5 +1,6 @@
 import type { AssetStatusEntry } from '@/hooks/useAssets';
 import { extractPlateFromName } from '@/lib/plateUtils';
+import { tankPercentFromLiters } from '@/lib/fuelLevel';
 import { isWialonGenerator } from '@/lib/wialonAssetCategory';
 
 export type WialonFld = { id: number; name: string; value: string };
@@ -235,10 +236,7 @@ export function formatFuelDisplay(
     }
   }
 
-  const pctFromCapacity =
-    litres != null && capacity != null && capacity > 0
-      ? Math.min(100, Math.max(0, Math.round((litres / capacity) * 100)))
-      : null;
+  const pctFromCapacity = tankPercentFromLiters(litres, capacity);
   const pct =
     pctFromCapacity ??
     (capacity == null && unit.fuelLevel != null && unit.fuelLevel > 0 && unit.fuelLevel <= 100
@@ -271,10 +269,7 @@ function snapshotUnitToFleetUnit(u: FleetSnapshotUnit): FleetUnit {
   const plate = u.plate || extractPlateFromName(u.name);
   const fuelLiters = u.fuel?.levelLiters;
   const tankCapacity = u.tankCapacity;
-  const fuelLevel =
-    fuelLiters != null && tankCapacity != null && tankCapacity > 0
-      ? Math.min(100, Math.max(0, Math.round((fuelLiters / tankCapacity) * 100)))
-      : u.fuelLevel;
+  const fuelLevel = tankPercentFromLiters(fuelLiters, tankCapacity) ?? u.fuelLevel;
   return {
     id: u.id,
     wialonId: u.wialonId ?? (Number.isFinite(Number(u.id)) ? Number(u.id) : undefined),

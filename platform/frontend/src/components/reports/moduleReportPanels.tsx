@@ -10,6 +10,7 @@ import { useTenantBranding } from '@/hooks/useTenantBranding';
 import type { DomainChartSpec } from '@/lib/domainReportCharts';
 import { CHART } from '@/lib/chartColors';
 import { useBatchWialonGeocode } from '@/hooks/useBatchWialonGeocode';
+import { tankPercentFromLiters, usablePercent } from '@/lib/fuelLevel';
 import type { FleetUnit } from '@/lib/fleetUnits';
 
 function statusLabel(status: string, stationary: boolean) {
@@ -25,22 +26,17 @@ function isStationaryUnit(u: Pick<FleetUnit, 'stationary' | 'assetCategory'>): b
   );
 }
 
+function fuelPct(u: FleetUnit): number | null {
+  return tankPercentFromLiters(u.fuelLiters, u.tankCapacity) ?? usablePercent(u.fuelLevel);
+}
+
 function fuelPctDisplay(u: FleetUnit): string {
-  if (u.fuelLiters != null && u.tankCapacity != null && u.tankCapacity > 0) {
-    return `${Math.min(100, Math.round((u.fuelLiters / u.tankCapacity) * 100))}%`;
-  }
-  if (u.fuelLevel != null && u.fuelLevel > 0 && u.fuelLevel <= 100) {
-    return `${Math.round(u.fuelLevel)}%`;
-  }
-  return '—';
+  const pct = fuelPct(u);
+  return pct == null ? '—' : `${Math.round(pct)}%`;
 }
 
 function fuelPctNumber(u: FleetUnit): number {
-  if (u.fuelLiters != null && u.tankCapacity != null && u.tankCapacity > 0) {
-    return Math.min(100, Math.round((u.fuelLiters / u.tankCapacity) * 100));
-  }
-  if (u.fuelLevel != null && u.fuelLevel > 0 && u.fuelLevel <= 100) return u.fuelLevel;
-  return 0;
+  return fuelPct(u) ?? 0;
 }
 
 type MonitoringKind = 'executive' | 'status' | 'fuel' | 'location';

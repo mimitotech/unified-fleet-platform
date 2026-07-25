@@ -27,9 +27,14 @@ const EXCLUDE_NAME = /consum|consumption|rate|flow|used|economy|efficiency|mpg|l
 /** FLS companion sensors — not fuel volume. */
 const NON_FUEL_SENSOR = /battery|temperature|\btemp\b|volt|voltage|pressure|humidity|signal|rssi|gsm|acceler/i;
 
+/** Wialon sensor type keys (API language is English regardless of UI labels). */
+const FUEL_LEVEL_TYPE_RE = /fuel\s*level/i;
+
 /**
  * True only for Wialon fuel LEVEL sensors (tank volume).
+ * Prefers the Wialon type key (language-stable), then name heuristics.
  * Excludes FLS Battery, FLS Temperature, consumption/rate sensors, etc.
+ * Custom display names never invent a reading — they only help match sensors.
  */
 export function isFuelLevelSensor(name?: string, type?: string | number): boolean {
   const n = (name || '').toLowerCase().trim();
@@ -38,11 +43,19 @@ export function isFuelLevelSensor(name?: string, type?: string | number): boolea
   if (EXCLUDE_NAME.test(n)) return false;
   if (NON_FUEL_SENSOR.test(n)) return false;
 
-  if (t.includes('fuel level') || t === 'fuel level') return true;
+  // Canonical Wialon type first — works for every client locale.
+  if (FUEL_LEVEL_TYPE_RE.test(t)) return true;
+
   if (/^fuel level\b/i.test(n)) return true;
-  if (/^fls$/i.test(n)) return true;
-  if (/fuel tank|tank level|diesel level|diesel tank|level \(l\)|level\(l\)/i.test(n)) return true;
+  if (/^(?:fls|lls)\d*$/i.test(n)) return true;
+  if (/fuel tank|tank level|diesel level|diesel tank|bowser level|level \(l\)|level\(l\)/i.test(n)) {
+    return true;
+  }
   if (/\btank\b/i.test(n) && /\b(level|fuel|diesel|lit)/i.test(n)) return true;
+  // Multilingual level labels only when the unit looks like volume.
+  if (/\b(?:nivel|niveau|nível|füllstand)\b/i.test(n) && /\b(?:combustible|carburant|diesel|tanque|tank|fuel)\b/i.test(n)) {
+    return true;
+  }
 
   return false;
 }
@@ -169,23 +182,17 @@ export function splitFuelTankLevels(readings: WialonUnitSensorReading[]): {
   };
 }
 
+/**
+ * Match capacity fields by meaning, not one English spelling.
+ * Covers Wialon custom fields (flds), profile fields (pflds), and property keys (prp).
+ * Does NOT match cargo profile keys — those are excluded below.
+ */
 const CAPACITY_NAME_RE =
-  /(?:tank|fuel).*(?:capacity|volume|max|full)|(?:capacity|volume|max|full).*(?:tank|fuel)|tank[_\s-]?cap(?:acity)?|fuel[_\s-]?tank|fuel[_\s-]?capacity|^\s*(?:capacity|volume|tank\s*size|full\s*tank)\s*$/i;
+  /tank[_\s-]?cap(?:acity)?|fuel[_\s-]?(?:tank[_\s-]?)?cap(?:acity)?|(?:tank|fuel|diesel|bowser|fls)[_\s-]?(?:size|vol(?:ume)?|max|full|capacity)|(?:capacity|volume|size|vol|max|full)\b.*\b(?:tank|fuel|diesel|bowser|fls)|(?:capacidad|capacidade|capacit[eé]|volumen|ёмкост\w*|tankvolumen|tankgröße)\b.*\b(?:tanque|tank|fuel|combustible|carburant|diesel|réservoir|deposito)|(?:tanque|tank|combustible|carburant)\b.*\b(?:capacidad|capacidade|capacit[eé]|volumen|ёмкост\w*)|^\s*(?:capacity|volume|tank\s*size|fuel\s*capacity|full\s*tank|capacidad|capacidade)\s*$/i;
 
-const PRP_CAPACITY_KEYS = [
-  'tank_capacity',
-  'fuel_tank_capacity',
-  'tankCapacity',
-  'fuel_capacity',
-  'fuelCapacity',
-  'tank_volume',
-  'fuel_volume',
-  'tank_max',
-  'fuel_max',
-  'max_fuel',
-  'full_tank',
-  'tank_full',
-];
+/** Wialon cargo / body profile fields — never treat as fuel tank capacity. */
+const CAPACITY_NAME_EXCLUDE =
+  /carrying_capacity|effective_capacity|gross_vehicle_weight|engine_displacement|\bcargo\b|\bpayload\b/i;
 
 function parsePositiveLitres(raw: unknown): number | undefined {
   if (raw == null || String(raw).trim() === '') return undefined;
@@ -202,57 +209,99 @@ function calibrationMaxLitres(tbl: unknown): number | undefined {
 }
 
 /**
- * Tank capacity (litres) from Wialon calibration max, custom/profile fields, or unit props.
- * Prefers summing only true fuel-level sensors' calibration maxima.
+ * Which physical tank a capacity field refers to, so multi-tank declarations
+ * ("MAIN TANK CAPACITY" + "RESERVE TANK CAPACITY") sum while synonyms for the
+ * same tank ("MAIN TANK CAPACITY" + "TANK CAPACITY") do not double-count.
+ * Only an explicit reserve/secondary tank is additive.
  */
-export function tankCapacityFromItem(item: WialonSearchItem): number | undefined {
-  let maxCap = 0;
-  if (item.sens) {
-    for (const sensor of Object.values(item.sens)) {
-      if (!sensor?.n || !isFuelLevelSensor(sensor.n, sensor.t)) continue;
+function capacitySlotKey(name: string): string {
+  return RESERVE_TANK_RE.test(name) ? 'reserve' : 'primary';
+}
 
-      const fromTbl = calibrationMaxLitres(sensor.tbl);
-      if (fromTbl != null) {
-        maxCap += fromTbl;
-        continue;
-      }
-
-      const fromC = parsePositiveLitres(sensor.c);
-      const fromMax = parsePositiveLitres(sensor.max);
-      const sensorCap = fromMax ?? fromC;
-      if (sensorCap != null) maxCap += sensorCap;
-    }
+function sumDeclaredCapacity(fields: Array<{ n?: string; v?: unknown }>): number | undefined {
+  const bySlot = new Map<string, number>();
+  for (const f of fields) {
+    const name = f?.n || '';
+    if (!name || CAPACITY_NAME_EXCLUDE.test(name)) continue;
+    if (!CAPACITY_NAME_RE.test(name)) continue;
+    const litres = parsePositiveLitres(f?.v);
+    if (litres == null) continue;
+    const slot = capacitySlotKey(name);
+    bySlot.set(slot, Math.max(bySlot.get(slot) ?? 0, litres));
   }
-  if (maxCap > 0) return Math.round(maxCap * 10) / 10;
+  if (!bySlot.size) return undefined;
+  const total = [...bySlot.values()].reduce((sum, v) => sum + v, 0);
+  return Math.round(total * 10) / 10;
+}
 
-  const namedFields: Array<{ n?: string; v?: string }> = [];
-  if (item.flds) namedFields.push(...Object.values(item.flds));
-  if (item.pflds) namedFields.push(...Object.values(item.pflds));
-
-  for (const f of namedFields) {
-    if (!CAPACITY_NAME_RE.test(f?.n || '')) continue;
-    const n = parsePositiveLitres(f?.v);
-    if (n != null) return n;
+/**
+ * Capacity the operator declared in Wialon (unit custom fields, then profile
+ * fields, then unit properties). Each source is checked in isolation so a
+ * higher-priority declaration is never mixed with a stale lower-priority one.
+ */
+function declaredTankCapacity(item: WialonSearchItem): number | undefined {
+  const sources: Array<Array<{ n?: string; v?: unknown }>> = [
+    item.flds ? Object.values(item.flds) : [],
+    item.pflds ? Object.values(item.pflds) : [],
+    Object.entries(item.prp || {}).map(([n, v]) => ({ n, v })),
+  ];
+  for (const source of sources) {
+    const capacity = sumDeclaredCapacity(source);
+    if (capacity != null) return capacity;
   }
-
-  const prp = item.prp || {};
-  for (const key of PRP_CAPACITY_KEYS) {
-    const n = parsePositiveLitres(prp[key]);
-    if (n != null) return n;
-  }
-  for (const [key, raw] of Object.entries(prp)) {
-    if (!CAPACITY_NAME_RE.test(key)) continue;
-    const n = parsePositiveLitres(raw);
-    if (n != null) return n;
-  }
-
   return undefined;
 }
 
-/** Clamp fuel percent to 0–100. */
-export function fuelPercentFromLitres(litres: number, capacity: number): number {
-  if (!(capacity > 0) || !Number.isFinite(litres)) return 0;
-  return Math.min(100, Math.max(0, Math.round((litres / capacity) * 100)));
+/** Summed calibration maxima of the unit's true fuel-level sensors. */
+function calibratedTankCapacity(item: WialonSearchItem): number | undefined {
+  if (!item.sens) return undefined;
+  let maxCap = 0;
+  for (const sensor of Object.values(item.sens)) {
+    if (!sensor?.n || !isFuelLevelSensor(sensor.n, sensor.t)) continue;
+
+    const fromTbl = calibrationMaxLitres(sensor.tbl);
+    if (fromTbl != null) {
+      maxCap += fromTbl;
+      continue;
+    }
+
+    const sensorCap = parsePositiveLitres(sensor.max) ?? parsePositiveLitres(sensor.c);
+    if (sensorCap != null) maxCap += sensorCap;
+  }
+  return maxCap > 0 ? Math.round(maxCap * 10) / 10 : undefined;
+}
+
+/**
+ * Tank capacity (litres) exactly as configured in Wialon.
+ *
+ * The operator's declared capacity wins: an FLS calibration table only spans the
+ * range the probe was calibrated over, which is routinely far short of the real
+ * tank (a 10,000 L bowser probe calibrated to ~4,400 L would otherwise read full).
+ * Calibration is the fallback for units with no declared field.
+ */
+export function tankCapacityFromItem(item: WialonSearchItem): number | undefined {
+  const declared = declaredTankCapacity(item);
+  const calibrated = calibratedTankCapacity(item);
+
+  if (declared == null) return calibrated;
+  if (calibrated == null) return declared;
+
+  // A probe cannot be calibrated beyond the tank holding it, so a declaration far
+  // below the calibration span is mis-scaled (wrong units, or one tank of several).
+  return calibrated > declared * 2 ? calibrated : declared;
+}
+
+/**
+ * Fuel percent from litres, or null when the pair cannot honestly produce one.
+ *
+ * Never clamps an over-capacity reading down to 100%: litres above the tank mean
+ * the value is uncalibrated (raw ADC counts) or the capacity is wrong, and an
+ * invented "100%" hides that. Callers show litres only when this returns null.
+ */
+export function fuelPercentFromLitres(litres: number, capacity: number): number | null {
+  if (!(capacity > 0) || !Number.isFinite(litres) || litres < 0) return null;
+  if (litres > capacity * 1.1) return null;
+  return Math.min(100, Math.round((litres / capacity) * 100));
 }
 
 export function formatSensorSummary(readings: WialonUnitSensorReading[]): string {

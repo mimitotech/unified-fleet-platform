@@ -31,7 +31,7 @@ export function FuelLevelAlerts({ criticalVehicles, warningVehicles }: FuelLevel
   const hiddenCritical = Math.max(0, criticalVehicles.length - visibleAlerts.filter(v => v.status === 'critical').length);
 
   return (
-    <div className="fleet-card border-warning/40 py-2.5">
+    <div className="fleet-card branded-panel border-warning/40 py-2.5">
       <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
         <div className="flex items-center gap-1.5 min-w-0">
           <AlertTriangle className="w-4 h-4 text-warning shrink-0" />

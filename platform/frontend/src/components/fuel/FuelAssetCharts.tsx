@@ -229,7 +229,7 @@ function ChartCard({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   return (
-    <Card className="branded-panel overflow-hidden border-border/70 shadow-none">
+    <Card className="branded-panel overflow-hidden shadow-none">
       <CardHeader className="py-2.5 px-3 flex flex-row items-start justify-between gap-2 space-y-0">
         <div className="min-w-0">
           <CardTitle className="text-sm font-medium text-primary">{title}</CardTitle>

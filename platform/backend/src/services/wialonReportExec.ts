@@ -75,6 +75,10 @@ export async function execWialonReportTables(
     reportObjectId: input.reportObjectId,
     reportObjectSecId: input.reportObjectSecId ?? 0,
     interval: { from: input.fromTs, to: input.toTs, flags: 0 },
+    // Force English headers so column detection stays on Wialon system types /
+    // English substrings regardless of the account UI language. UI column
+    // labels in our app never feed into this path.
+    lang: 'en',
   };
 
   // Prefer sync when possible (same path as live report preview).

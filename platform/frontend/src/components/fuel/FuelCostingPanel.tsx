@@ -14,7 +14,8 @@ import {
   Legend,
 } from 'recharts';
 import type { FuelTransaction } from '@/types/entities';
-import { aggregateUnitFuelColumns } from './fuelColumnMetrics';
+import { aggregateUnitFuelColumns, computePeriodFuelKpis } from './fuelColumnMetrics';
+import { applyPriceToKpis } from './fuelReportStats';
 import { filterFuelTransactionsByDate } from './fuelTransactionFilters';
 import { PeriodAssetControls } from '@/components/shared/PeriodAssetControls';
 import {
@@ -97,16 +98,34 @@ export function FuelCostingPanel({
   }, [transactions, fromDate, toDate, liveLevels, price, names]);
 
   const filtered = selected === 'all' ? rows : rows.filter((r) => r.fullName === selected);
-  const totals = filtered.reduce(
-    (a, r) => ({
-      fillCost: a.fillCost + r.fillCost,
-      usedCost: a.usedCost + r.usedCost,
-      filled: a.filled + r.filled,
-      used: a.used + r.used,
-      stationSpend: a.stationSpend + r.stationSpend,
-    }),
-    { fillCost: 0, usedCost: 0, filled: 0, used: 0, stationSpend: 0 },
-  );
+
+  // Fleet-wide totals use the same KPI + price helpers as the Dashboard so
+  // Fill cost / Use cost never drift when the filter is "All".
+  const fleetTotals = useMemo(() => {
+    const kpis = computePeriodFuelKpis(transactions, fromDate, toDate, liveLevels);
+    const priced = applyPriceToKpis(kpis, price);
+    return {
+      filled: Math.round(kpis.totalFilled * 10) / 10,
+      used: Math.round(kpis.totalConsumed * 10) / 10,
+      fillCost: priced.fillCost,
+      usedCost: priced.usageCost,
+      stationSpend: 0,
+    };
+  }, [transactions, fromDate, toDate, liveLevels, price]);
+
+  const totals =
+    selected === 'all'
+      ? { ...fleetTotals, stationSpend: rows.reduce((s, r) => s + r.stationSpend, 0) }
+      : filtered.reduce(
+          (a, r) => ({
+            fillCost: a.fillCost + r.fillCost,
+            usedCost: a.usedCost + r.usedCost,
+            filled: a.filled + r.filled,
+            used: a.used + r.used,
+            stationSpend: a.stationSpend + r.stationSpend,
+          }),
+          { fillCost: 0, usedCost: 0, filled: 0, used: 0, stationSpend: 0 },
+        );
 
   const chartWidth = Math.max(
     480,
@@ -119,7 +138,7 @@ export function FuelCostingPanel({
   };
 
   return (
-    <Card className="branded-panel border-border/70 shadow-none">
+    <Card className="branded-panel shadow-none">
       <CardHeader className="py-3 px-4 space-y-3">
         <div>
           <CardTitle className="text-sm font-medium text-primary">Fuel costing</CardTitle>

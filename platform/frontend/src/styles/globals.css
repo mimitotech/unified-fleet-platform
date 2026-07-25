@@ -174,18 +174,21 @@
 
 @layer components {
   .fleet-card {
-    @apply bg-card/90 backdrop-blur-sm border border-border/80 rounded-xl p-4 transition-all duration-300 shadow-sm;
-    border-color: hsl(var(--primary) / 0.12);
+    @apply bg-card/90 backdrop-blur-sm border rounded-xl p-4 transition-all duration-300 shadow-sm;
+    border-color: hsl(var(--primary) / 0.22);
+    border-style: solid;
   }
 
   .branded-tabs {
-    @apply inline-flex flex-wrap h-auto min-h-9 items-center gap-0.5 rounded-lg border border-primary/15 bg-primary/5 p-1;
+    @apply inline-flex flex-wrap h-auto min-h-9 items-center gap-0.5 rounded-lg bg-primary/5 p-1;
+    border: 1px solid hsl(var(--primary) / 0.35);
+    border-style: solid;
   }
 
   .branded-tabs [data-state='active'] {
     background: hsl(var(--primary));
     color: hsl(var(--primary-foreground));
-    box-shadow: 0 1px 2px hsl(var(--primary) / 0.25);
+    box-shadow: none;
   }
 
   .branded-tabs [data-state='inactive']:hover {
@@ -214,12 +217,20 @@
   }
 
   .branded-border {
-    border-color: hsl(var(--primary) / 0.28);
+    border-color: hsl(var(--primary) / 0.35);
+    border-style: solid;
   }
 
+  /**
+   * Solid client-brand border panel — no gradients.
+   * Top accent bar uses the tenant primary color for clear section separation.
+   */
   .branded-panel {
-    border: 1px solid hsl(var(--primary) / 0.18);
+    border: 1px solid hsl(var(--primary) / 0.32);
     border-top: 3px solid hsl(var(--primary));
+    border-style: solid;
+    border-radius: 0.75rem;
+    background: hsl(var(--card));
   }
 
   .fleet-card-hover {
@@ -281,15 +292,25 @@
   }
 
   .fuel-page .fuel-usage-panel {
-    @apply min-w-0 max-w-full;
+    @apply min-w-0 max-w-full branded-panel;
   }
 
   .fuel-page .fleet-card {
-    @apply p-4 overflow-visible;
+    @apply p-4 overflow-visible branded-panel;
+  }
+
+  .fuel-page .fuel-section {
+    @apply branded-panel p-4;
   }
 
   .fuel-page .fuel-kpi-grid {
     @apply grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3;
+  }
+
+  .fuel-page .fuel-kpi-grid > * {
+    border: 1px solid hsl(var(--primary) / 0.28);
+    border-style: solid;
+    border-radius: 0.75rem;
   }
 
   .fuel-page .fuel-alert-grid {

@@ -2,6 +2,7 @@ import type { FleetSnapshotUnit } from '@/lib/fleetUnits';
 import type { FuelInfo, Generator, Machinery, Vehicle } from '@/types';
 import { GENERATOR_STATUS, VEHICLE_STATUS } from '@/types/status';
 import type { WialonFuelAssetRow } from '@/lib/fuelTypes';
+import { tankPercentFromLiters, usablePercent } from '@/lib/fuelLevel';
 
 function buildFuelInfoFromAsset(asset: WialonFuelAssetRow): FuelInfo | undefined {
   const liters = asset.fuelLiters;
@@ -16,23 +17,35 @@ function buildFuelInfoFromAsset(asset: WialonFuelAssetRow): FuelInfo | undefined
     tanks.push({ name: 'Reserve', level: asset.reserveTankLiters });
   }
 
+  const info = resolveFuelInfo(liters, percent, asset.tankCapacity);
+  return { ...info, tanks: tanks.length ? tanks : undefined };
+}
+
+/**
+ * Fuel level, capacity and percent using only what Wialon actually reports.
+ * Capacity falls back to back-deriving it from a real percent, and stays null
+ * otherwise — never a placeholder tank that would turn litres into a percent.
+ */
+function resolveFuelInfo(
+  liters: number | null | undefined,
+  percent: number | null | undefined,
+  declaredCapacity?: number | null,
+): FuelInfo {
   const level = liters ?? 0;
-  let tankCapacity = 100;
-  let percentage = percent ?? 0;
-  if (percent != null && percent > 0 && level > 0) {
-    tankCapacity = Math.round((level / percent) * 100);
-    percentage = percent;
-  } else if (level > 0 && tankCapacity > 0) {
-    percentage = (level / tankCapacity) * 100;
+  const reported = usablePercent(percent);
+
+  let tankCapacity =
+    declaredCapacity != null && declaredCapacity > 0 ? declaredCapacity : null;
+  if (tankCapacity == null && reported != null && level > 0) {
+    tankCapacity = Math.round((level / reported) * 100);
   }
 
   return {
     level,
     unit: 'liters',
-    tankCapacity,
-    percentage,
+    tankCapacity: tankCapacity ?? 0,
+    percentage: reported ?? tankPercentFromLiters(level, tankCapacity) ?? 0,
     capacitySource: 'sensor',
-    tanks: tanks.length ? tanks : undefined,
   };
 }
 
@@ -64,29 +77,16 @@ function customFieldsFromUnit(u: FleetSnapshotUnit): Record<string, string> {
 function buildFuelInfoFromLiters(
   liters: number | null | undefined,
   percent: number | null | undefined,
+  declaredCapacity?: number | null,
 ): FuelInfo | undefined {
   if (liters == null && percent == null) return undefined;
-  const level = liters ?? 0;
-  let tankCapacity = 100;
-  let percentage = percent ?? 0;
-  if (percent != null && percent > 0 && level > 0) {
-    tankCapacity = Math.round((level / percent) * 100);
-    percentage = percent;
-  } else if (level > 0 && tankCapacity > 0) {
-    percentage = (level / tankCapacity) * 100;
-  }
-  return {
-    level,
-    unit: 'liters',
-    tankCapacity,
-    percentage,
-    capacitySource: 'sensor',
-  };
+  return resolveFuelInfo(liters, percent, declaredCapacity);
 }
 
 export function snapshotUnitToVehicle(u: FleetSnapshotUnit): Vehicle {
-  const liters = u.fuel?.levelLiters ?? u.fuelLevel ?? null;
-  const fuelInfo = buildFuelInfoFromLiters(liters, u.fuelLevel);
+  // fuelLevel is a percent — never fall back to it as a litre reading.
+  const liters = u.fuel?.levelLiters ?? null;
+  const fuelInfo = buildFuelInfoFromLiters(liters, u.fuelLevel, u.tankCapacity);
   const id = String(u.wialonId ?? u.id);
 
   return {
@@ -115,8 +115,9 @@ export function snapshotUnitToVehicle(u: FleetSnapshotUnit): Vehicle {
 }
 
 export function snapshotUnitToGenerator(u: FleetSnapshotUnit): Generator {
-  const liters = u.fuel?.levelLiters ?? u.fuelLevel ?? null;
-  const fuelInfo = buildFuelInfoFromLiters(liters, u.fuelLevel);
+  // fuelLevel is a percent — never fall back to it as a litre reading.
+  const liters = u.fuel?.levelLiters ?? null;
+  const fuelInfo = buildFuelInfoFromLiters(liters, u.fuelLevel, u.tankCapacity);
   const id = String(u.wialonId ?? u.id);
   const cf = customFieldsFromUnit(u);
   const siteName = cf.site_name || cf['Site Name'] || u.name;

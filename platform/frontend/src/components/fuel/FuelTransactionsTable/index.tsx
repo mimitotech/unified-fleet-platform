@@ -218,7 +218,7 @@ export function FuelTransactionsTable({
   const tableMinWidth = useMemo(() => fuelTableMinWidthPx(visibleColumns), [visibleColumns]);
 
   return (
-    <div className="fleet-card fuel-usage-panel flex flex-col min-w-0 max-w-full">
+    <div className="fleet-card fuel-usage-panel branded-panel flex flex-col min-w-0 max-w-full">
       <FuelTableHeader
         searchTerm={searchTerm}
         onSearchChange={setSearchTerm}

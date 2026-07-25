@@ -19,6 +19,7 @@ import { effectiveSuddenDropVolume, fuelTheftEventKey } from '@/components/fuel/
 import type { FleetFuelLevel } from '@/components/fuel/FuelLevelAlerts';
 import type { FuelEvent } from '@/types/entities';
 import type { FuelAssetCategory } from '@/lib/fuelTypes';
+import { tankPercentFromLiters, usablePercent } from '@/lib/fuelLevel';
 import { clientFacingText } from '@/lib/clientFacingText';
 import type { FuelTabDateRangeProps } from './fuelTabTypes';
 import type { StationaryFuelType } from './useStationaryFuelHooks';
@@ -34,6 +35,22 @@ function fuelStatusFromPercent(percent: number): 'critical' | 'warning' | 'ok' {
   if (percent <= 15) return 'critical';
   if (percent <= 30) return 'warning';
   return 'ok';
+}
+
+/**
+ * Tank percent for a non-vehicle asset: Wialon's own percent when it is a real
+ * 0–100 reading, else litres against the declared capacity. Null means fuel is
+ * not monitored on this asset — never substitute a placeholder.
+ */
+function resolveTankPercent(
+  unit: { fuelInfo?: { percentage?: number | null; tankCapacity?: number | null } | null; fuelUnit?: string; fuel?: unknown },
+  liters: number,
+): number | null {
+  const reported =
+    usablePercent(unit.fuelInfo?.percentage) ??
+    (unit.fuelUnit === 'percent' && typeof unit.fuel === 'number' ? usablePercent(unit.fuel) : null);
+  if (reported != null) return reported;
+  return tankPercentFromLiters(liters, unit.fuelInfo?.tankCapacity);
 }
 
 export type CoreFuelTabProps = FuelTabDateRangeProps & {
@@ -108,30 +125,19 @@ export function CoreFuelTab({
           id: u.id,
           name: u.name,
           fuelLiters: level > 0 ? level : undefined,
-          fuelPercent: vehicleFuel?.percent,
+          fuelPercent: vehicleFuel?.percent ?? undefined,
         };
       });
     }
 
     return categoryFleet.units.map((u) => {
       const level = unitFuelMapByName.get(u.name) ?? 0;
-      const pctFromInfo = u.fuelInfo?.percentage;
-      const pctFromUnit =
-        u.fuelUnit === 'percent' && typeof u.fuel === 'number' && u.fuel > 0 ? u.fuel : undefined;
-      let fuelPercent = pctFromInfo ?? pctFromUnit;
-      if (
-        (fuelPercent == null || fuelPercent <= 0 || fuelPercent > 100) &&
-        level > 0 &&
-        u.fuelInfo?.tankCapacity &&
-        u.fuelInfo.tankCapacity > 0
-      ) {
-        fuelPercent = Math.min(100, (level / u.fuelInfo.tankCapacity) * 100);
-      }
+      const fuelPercent = resolveTankPercent(u, level);
       return {
         id: u.id,
         name: u.name,
         fuelLiters: level > 0 ? level : undefined,
-        fuelPercent: fuelPercent != null && fuelPercent > 0 ? fuelPercent : undefined,
+        fuelPercent: fuelPercent ?? undefined,
       };
     });
   }, [
@@ -158,41 +164,38 @@ export function CoreFuelTab({
 
   /** Same low-fuel alert model for every asset category (FLS %). */
   const fleetFuelLevels: FleetFuelLevel[] = useMemo(() => {
+    // Assets with no usable percent have no fuel monitoring — leaving them out
+    // keeps them from surfacing as a false 0% critical.
     if (isVehicle) {
-      return fleet.vehicles.map((vehicle) => {
+      return fleet.vehicles.flatMap((vehicle) => {
         const fuelInfo = fleet.vehicleFuelMap.get(vehicle.id);
-        return {
-          vehicleId: vehicle.id,
-          vehicle: vehicle.name,
-          fuelLevel: fuelInfo?.level ?? 0,
-          fuelPercent: fuelInfo?.percent ?? 0,
-          status: fuelInfo?.status ?? 'ok',
-        };
+        const percent = usablePercent(fuelInfo?.percent);
+        if (percent == null) return [];
+        return [
+          {
+            vehicleId: vehicle.id,
+            vehicle: vehicle.name,
+            fuelLevel: fuelInfo?.level ?? 0,
+            fuelPercent: percent,
+            status: fuelInfo?.status ?? fuelStatusFromPercent(percent),
+          },
+        ];
       });
     }
 
-    return categoryFleet.units.map((u) => {
+    return categoryFleet.units.flatMap((u) => {
       const level = unitFuelMapByName.get(u.name) ?? 0;
-      const pctFromInfo = u.fuelInfo?.percentage;
-      const pctFromUnit =
-        u.fuelUnit === 'percent' && typeof u.fuel === 'number' && u.fuel > 0 ? u.fuel : undefined;
-      let fuelPercent = pctFromInfo ?? pctFromUnit ?? 0;
-      if (
-        (fuelPercent <= 0 || fuelPercent > 100) &&
-        level > 0 &&
-        u.fuelInfo?.tankCapacity &&
-        u.fuelInfo.tankCapacity > 0
-      ) {
-        fuelPercent = Math.min(100, (level / u.fuelInfo.tankCapacity) * 100);
-      }
-      const status = fuelStatusFromPercent(fuelPercent);
-      return {
-        vehicleId: u.id,
-        vehicle: u.name,
-        fuelLevel: level,
-        fuelPercent,
-        status,
-      };
+      const percent = resolveTankPercent(u, level);
+      if (percent == null) return [];
+      return [
+        {
+          vehicleId: u.id,
+          vehicle: u.name,
+          fuelLevel: level,
+          fuelPercent: percent,
+          status: fuelStatusFromPercent(percent),
+        },
+      ];
     });
   }, [isVehicle, fleet.vehicles, fleet.vehicleFuelMap, categoryFleet.units, unitFuelMapByName]);
 

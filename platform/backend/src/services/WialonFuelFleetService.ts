@@ -13,6 +13,7 @@ import {
   totalLitersFromReadings,
   splitFuelTankLevels,
   tankCapacityFromItem,
+  fuelPercentFromLitres,
   formatSensorSummary,
   type WialonUnitSensorReading,
 } from './wialonFuelSensorUtils.js';
@@ -48,6 +49,8 @@ export type FuelAssetRow = {
   sensorSummary: string;
   fillingLiters: number | null;
   fuelPercent: number | null;
+  /** Capacity declared in Wialon; null when the account never configured one. */
+  tankCapacity: number | null;
   engineHours: number | null;
   mileage: number | null;
   updatedAt: string | null;
@@ -228,7 +231,7 @@ export class WialonFuelFleetService {
       const capacity = tankCapacityFromItem(rawItem);
       const fuelPercent =
         hasFuelLevel && totalLiters != null && capacity && capacity > 0
-          ? Math.min(100, Math.round((totalLiters / capacity) * 100))
+          ? fuelPercentFromLitres(totalLiters, capacity)
           : null;
 
       const posTime = unit.position?.time;
@@ -265,6 +268,7 @@ export class WialonFuelFleetService {
         sensorSummary: formatSensorSummary(sensors),
         fillingLiters,
         fuelPercent,
+        tankCapacity: capacity ?? null,
         engineHours: unit.counters?.engineHours ?? null,
         mileage: unit.counters?.mileage ?? null,
         updatedAt,
