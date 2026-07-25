@@ -73,6 +73,10 @@ export class AlertOrchestrator {
     from?: Date,
     to?: Date,
   ): Promise<FleetAlert[]> {
+    // Cheap MySQL-safe purge so ghost period-summary rows (wrong EOD clocks)
+    // disappear on a normal inbox load, not only on full Wialon sync.
+    await this.cleanupSpuriousAlerts();
+
     let sql = `SELECT * FROM alerts WHERE tenant_id = $1`;
     const params: unknown[] = [this.tenantId];
     if (acknowledged !== undefined) {
@@ -256,109 +260,110 @@ export class AlertOrchestrator {
    * period-summary fuel totals (wrong timestamp / duplicates).
    * Does NOT delete valid sensor/power/safety alerts just because the title
    * omits a plate — those are scoped by unit id at insert time.
+   *
+   * Each step is isolated so one MySQL-incompatible statement cannot skip the
+   * fuel-sum purge that clears the “today / 02:59:59” ghost alerts.
    */
   private async cleanupSpuriousAlerts(): Promise<void> {
-    try {
-      await query(
-        `DELETE FROM alerts
-         WHERE tenant_id = $1
-           AND source_type = 'wialon'
-           AND (
-             external_id LIKE 'eco-rpt:%'
-             OR description ILIKE '%Eco Driving Report(Group)%'
-             OR description ILIKE '%Eco Driving Report (Group)%'
-           )`,
-        [this.tenantId],
-      );
+    const run = async (label: string, sql: string, params: unknown[] = [this.tenantId]) => {
+      try {
+        await query(sql, params);
+      } catch (e) {
+        console.warn(`[alerts:${this.tenantId}] cleanup ${label}:`, (e as Error).message);
+      }
+    };
 
-      await query(
-        `DELETE FROM alerts a
-         USING fuel_transactions f
-         WHERE a.tenant_id = $1
-           AND f.tenant_id = $1
-           AND a.source_type = 'wialon'
-           AND a.external_id = 'fuel-tx:' || f.id
-           AND (
-             f.sensor LIKE 'wialon_group_summary%'
-             OR f.location LIKE '__period:%'
-           )`,
-        [this.tenantId],
-      );
+    await run(
+      'eco-group',
+      `DELETE FROM alerts
+       WHERE tenant_id = $1
+         AND source_type = 'wialon'
+         AND (
+           external_id LIKE 'eco-rpt:%'
+           OR description LIKE '%Eco Driving Report(Group)%'
+           OR description LIKE '%Eco Driving Report (Group)%'
+         )`,
+    );
 
-      // Period-summary fuel rows used report end-of-day (UTC 23:59:59 → next-day
-      // 02:59:59 in EAT) as the alert clock and a fingerprint that shifted when the
-      // rolling sync window moved — so the same fill reappeared daily as a "new"
-      // open alert, often in the future. Those totals belong in Fuel, not the inbox.
-      await query(
-        `DELETE FROM alerts
-         WHERE tenant_id = $1
-           AND source_type = 'wialon'
-           AND (
-             external_id LIKE 'fuel-sum:%'
-             OR description ILIKE '%for this period%'
-           )`,
-        [this.tenantId],
-      );
+    // Period-summary fuel rows used report end-of-day (UTC 23:59:59 → next-day
+    // 02:59:59 in EAT) as the alert clock — run this early and alone so leftovers
+    // are always purged even if later steps fail on MySQL.
+    await run(
+      'fuel-period-summaries',
+      `DELETE FROM alerts
+       WHERE tenant_id = $1
+         AND source_type = 'wialon'
+         AND (
+           external_id LIKE 'fuel-sum:%'
+           OR description LIKE '%for this period%'
+         )`,
+    );
 
-      // Drop fuel alerts whose clock is still in the future (leftover EOD stamps).
-      await query(
-        `DELETE FROM alerts
-         WHERE tenant_id = $1
-           AND source_type = 'wialon'
-           AND type IN ('fuel_theft', 'fuel_filling')
-           AND occurred_at > NOW() + INTERVAL '2 minutes'`,
-        [this.tenantId],
-      );
+    await run(
+      'fuel-tx-period',
+      `DELETE a FROM alerts a
+       INNER JOIN fuel_transactions f
+         ON f.tenant_id = a.tenant_id
+        AND a.external_id = CONCAT('fuel-tx:', f.id)
+       WHERE a.tenant_id = $1
+         AND a.source_type = 'wialon'
+         AND (
+           COALESCE(f.sensor, '') LIKE 'wialon_group_summary%'
+           OR COALESCE(f.location, '') LIKE '__period:%'
+         )`,
+    );
 
-      await query(
-        `DELETE FROM alerts a
-         USING alerts b
-         WHERE a.tenant_id = $1
-           AND b.tenant_id = $1
-           AND a.source_type = 'wialon'
-           AND b.source_type = 'wialon'
-           AND a.type IN ('fuel_theft', 'fuel_filling')
-           AND b.type = a.type
-           AND a.title = b.title
-           AND a.occurred_at = b.occurred_at
-           AND a.ctid > b.ctid`,
-        [this.tenantId],
-      );
+    await run(
+      'fuel-future',
+      `DELETE FROM alerts
+       WHERE tenant_id = $1
+         AND source_type = 'wialon'
+         AND type IN ('fuel_theft', 'fuel_filling')
+         AND occurred_at > DATE_ADD(NOW(), INTERVAL 2 MINUTE)`,
+    );
 
-      // Migrate legacy type label.
-      await query(
-        `UPDATE alerts SET type = 'fleet_event'
-         WHERE tenant_id = $1 AND type = 'wialon_event'`,
-        [this.tenantId],
-      );
+    await run(
+      'fuel-dupes',
+      `DELETE a FROM alerts a
+       INNER JOIN alerts b
+         ON b.tenant_id = a.tenant_id
+        AND b.source_type = a.source_type
+        AND b.type = a.type
+        AND b.title = a.title
+        AND b.occurred_at = a.occurred_at
+        AND b.id < a.id
+       WHERE a.tenant_id = $1
+         AND a.source_type = 'wialon'
+         AND a.type IN ('fuel_theft', 'fuel_filling')`,
+    );
 
-      // Purge technical counter noise (Engine_Hours, mileage, odometer) — including
-      // rows that have a "Unit: …" description (previous cleanup required empty desc).
-      await query(
-        `DELETE FROM alerts
-         WHERE tenant_id = $1
-           AND (
-             title REGEXP 'engine[_[:space:]-]*hours?'
-             OR description REGEXP 'engine[_[:space:]-]*hours?'
-             OR title REGEXP 'mileage|odometer|gprs[[:space:]_-]*traffic|traffic[[:space:]_-]*counter|moto[[:space:]_-]*hours?'
-             OR (
-               COALESCE(description, '') = ''
-               AND title REGEXP '^(fleet alert|notification|event|evt|task|message|unknown)([[:space:]]*·.*)?$'
-             )
-           )`,
-        [this.tenantId],
-      );
+    await run(
+      'legacy-type',
+      `UPDATE alerts SET type = 'fleet_event'
+       WHERE tenant_id = $1 AND type = 'wialon_event'`,
+    );
 
-      // 30-day retention — prefer live fetch + short DB retention over unbounded storage.
-      await query(
-        `DELETE FROM alerts
-         WHERE tenant_id = $1
-           AND occurred_at < NOW() - INTERVAL '30 days'`,
-        [this.tenantId],
-      );
-    } catch {
-      /* best-effort cleanup */
-    }
+    await run(
+      'noise',
+      `DELETE FROM alerts
+       WHERE tenant_id = $1
+         AND (
+           title REGEXP 'engine[_[:space:]-]*hours?'
+           OR description REGEXP 'engine[_[:space:]-]*hours?'
+           OR title REGEXP 'mileage|odometer|gprs[[:space:]_-]*traffic|traffic[[:space:]_-]*counter|moto[[:space:]_-]*hours?'
+           OR (
+             COALESCE(description, '') = ''
+             AND title REGEXP '^(fleet alert|notification|event|evt|task|message|unknown)([[:space:]]*·.*)?$'
+           )
+         )`,
+    );
+
+    await run(
+      'retention-30d',
+      `DELETE FROM alerts
+       WHERE tenant_id = $1
+         AND occurred_at < DATE_SUB(NOW(), INTERVAL 30 DAY)`,
+    );
   }
 
   /**

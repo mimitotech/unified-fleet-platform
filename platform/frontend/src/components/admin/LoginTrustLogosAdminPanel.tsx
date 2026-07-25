@@ -212,7 +212,7 @@ export function LoginTrustLogosAdminPanel() {
                   onChange={(e) => void onPickImage(e.target.files?.[0] || null)}
                 />
                 <p className="text-[11px] text-muted-foreground mt-1">
-                  PNG/SVG preferred (max 2 MB). Keep logos modest — they appear ~36px tall on login.
+                  PNG/SVG preferred (max 2 MB). Logos display about 48–56px tall on the login strip.
                 </p>
                 {form.previewUrl && (
                   <div className="mt-2 flex h-16 w-40 items-center justify-center rounded-md border border-border/50 bg-white px-3">

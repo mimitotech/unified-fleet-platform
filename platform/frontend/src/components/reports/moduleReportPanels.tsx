@@ -522,6 +522,7 @@ export function AlertsModuleReports() {
         { key: 'when', label: 'Time' },
         { key: 'asset', label: 'Asset' },
         { key: 'title', label: 'Alert' },
+        { key: 'detail', label: 'Details' },
         { key: 'type', label: 'Type' },
         { key: 'severity', label: 'Severity' },
         { key: 'status', label: 'Status' },

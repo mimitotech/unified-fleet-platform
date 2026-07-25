@@ -157,7 +157,11 @@ export default function AlertsPage() {
     () =>
       ((alerts ?? []) as AlertRow[]).filter(
         (a) =>
-          !isNoiseAlertTitle(a.title, a.description, a.type) && isPastOrNow(a.timestamp),
+          !isNoiseAlertTitle(a.title, a.description, a.type) &&
+          isPastOrNow(a.timestamp) &&
+          // Period-summary fuel rows carry report EOD as the clock (often "today
+          // 02:59:59") — real fill times live on leaf events / Fuel module.
+          !/for this period/i.test(String(a.description || '')),
       ),
     [alerts],
   );

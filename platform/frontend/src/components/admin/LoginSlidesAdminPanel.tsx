@@ -176,9 +176,9 @@ export function LoginSlidesAdminPanel() {
         <div>
           <CardTitle>Login slideshow</CardTitle>
           <CardDescription>
-            Images, titles and details shown on the public login page. Use wide landscape photos
-            (about 16:9 or wider). The login screen stretches each image to full width and height —
-            disabled slides stay saved but hidden.
+            Images, titles and details shown on the public login page. Prefer wide landscape photos
+            (about 16:9). The login screen fills the viewport with each image using cover (no
+            stretch) — edges may crop slightly; disabled slides stay saved but hidden.
           </CardDescription>
         </div>
         <Button type="button" size="sm" onClick={startCreate}>
@@ -236,14 +236,15 @@ export function LoginSlidesAdminPanel() {
                   onChange={(e) => void onPickImage(e.target.files?.[0] || null)}
                 />
                 <p className="text-[11px] text-muted-foreground mt-1">
-                  Prefer a wide image so sides fill cleanly when stretched on login (PNG/JPEG/WebP, max 5 MB).
+                  Prefer a wide landscape image (PNG/JPEG/WebP, max 5 MB). Login uses cover fill —
+                  proportions stay correct; very tall or narrow shots may crop at the edges.
                 </p>
                 {form.previewUrl && (
                   <div className="mt-2 aspect-[16/9] w-full max-w-xl rounded-md bg-neutral-900 border border-border/50 overflow-hidden">
                     <img
                       src={form.previewUrl}
                       alt=""
-                      className="h-full w-full object-fill object-center"
+                      className="h-full w-full object-cover object-center"
                     />
                   </div>
                 )}
@@ -304,7 +305,7 @@ export function LoginSlidesAdminPanel() {
               >
                 <div className="h-14 w-28 shrink-0 rounded-md bg-neutral-900 border border-border/40 overflow-hidden">
                   {s.imageUrl ? (
-                    <img src={s.imageUrl} alt="" className="h-full w-full object-fill object-center" />
+                    <img src={s.imageUrl} alt="" className="h-full w-full object-cover object-center" />
                   ) : null}
                 </div>
                 <div className="min-w-0 flex-1">

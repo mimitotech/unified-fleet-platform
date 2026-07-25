@@ -214,8 +214,7 @@ export default function Login() {
           <img
             src={s.src}
             alt=""
-            className="absolute inset-0 block h-full w-full max-w-none"
-            style={{ objectFit: 'fill', objectPosition: 'center' }}
+            className="absolute inset-0 block h-full w-full max-w-none object-cover object-center"
             draggable={false}
           />
         </div>
@@ -259,7 +258,7 @@ export default function Login() {
         <div
           className={cn(
             'absolute left-1/2 z-10 flex -translate-x-1/2 gap-2',
-            hasTrust ? 'bottom-24' : 'bottom-8',
+            hasTrust ? 'bottom-28' : 'bottom-8',
           )}
         >
           {slides.map((s, i) => (
@@ -278,7 +277,7 @@ export default function Login() {
       )}
 
       {/* Centered sign-in card */}
-      <div className={cn('relative z-20 w-full max-w-[340px] px-4', hasTrust && 'mb-16')}>
+      <div className={cn('relative z-20 w-full max-w-[340px] px-4', hasTrust && 'mb-20')}>
         <div className="overflow-hidden rounded-2xl border-2 border-primary/70 bg-white shadow-[0_18px_50px_-16px_rgba(0,66,37,0.55)] ring-1 ring-primary/10">
           {/* Brand header — solid white so the logo reads clearly */}
           <div className="flex flex-col items-center border-b border-primary/12 bg-white px-5 pb-4 pt-5 text-center">
@@ -472,23 +471,26 @@ export default function Login() {
 
       {/* Trusted-by marquee — bottom strip, full-color logos */}
       {hasTrust ? (
-        <div className="absolute inset-x-0 bottom-0 z-20 border-t border-white/25 bg-white/92 backdrop-blur-md">
-          <div className="flex items-center gap-4 px-3 py-2.5 sm:px-6">
-            <p className="hidden shrink-0 text-[10px] font-bold uppercase tracking-[0.18em] text-primary sm:block">
+        <div className="absolute inset-x-0 bottom-0 z-20 border-t border-white/20 bg-[#004225]/92 backdrop-blur-md">
+          <div className="flex items-center gap-3 px-3 py-3 sm:gap-5 sm:px-6 sm:py-3.5">
+            <p
+              className="shrink-0 text-[11px] font-extrabold uppercase tracking-[0.2em] text-white sm:text-xs"
+              style={{ textShadow: '0 1px 6px rgba(0,0,0,0.45)' }}
+            >
               Trusted by
             </p>
-            <div className="min-w-0 flex-1 overflow-hidden">
-              <div className="login-trust-marquee-track flex items-center gap-8 pr-8 sm:gap-10">
+            <div className="min-w-0 flex-1 overflow-hidden rounded-lg bg-white/95 px-3 py-2.5">
+              <div className="login-trust-marquee-track flex items-center gap-10 pr-10 sm:gap-12">
                 {marqueeLogos.map((logo, idx) => (
                   <div
                     key={`${logo.id}-${idx}`}
-                    className="flex h-9 shrink-0 items-center justify-center"
+                    className="flex h-14 shrink-0 items-center justify-center sm:h-16"
                     title={logo.name}
                   >
                     <img
                       src={logo.imageUrl}
                       alt={logo.name}
-                      className="max-h-8 max-w-[112px] object-contain sm:max-w-[124px]"
+                      className="max-h-12 max-w-[160px] object-contain sm:max-h-14 sm:max-w-[200px]"
                       draggable={false}
                     />
                   </div>

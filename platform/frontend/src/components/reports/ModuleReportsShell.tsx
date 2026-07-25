@@ -544,6 +544,7 @@ export function ModuleReportsShell({
                             className={cn(
                               'border border-slate-200 px-2.5 py-1.5',
                               c.align === 'right' && 'text-right tabular-nums',
+                              c.key === 'detail' && 'min-w-[220px] max-w-[420px] whitespace-normal break-words text-[12px] text-slate-700',
                             )}
                           >
                             {row[c.key] ?? '—'}
