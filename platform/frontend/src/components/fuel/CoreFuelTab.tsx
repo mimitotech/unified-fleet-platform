@@ -243,6 +243,12 @@ export function CoreFuelTab({
         </div>
       )}
 
+      {!isFuelWarming && !isFuelLoading && !fuelError && fuelTransactions.length === 0 && (
+        <div className="rounded-lg border border-border/70 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+          No fill, consumption, or drop events for this period yet. Live tank levels above are current; try Refresh if you expect report activity.
+        </div>
+      )}
+
       {isFuelWarming && fuelError && (
         <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-primary">
           Syncing large fleet reports — this can take a few minutes. Live levels update below; period totals will fill in automatically.

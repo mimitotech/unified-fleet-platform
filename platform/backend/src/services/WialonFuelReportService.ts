@@ -251,14 +251,28 @@ export class WialonFuelReportService {
         }
       }
 
-      // Prefer group reports. Bulk per-unit fan-out times out on large fleets — same rule for all categories.
+      // Prefer group reports when they yield data. If the category has no matching
+      // Wialon groups (common for small machinery fleets), fall through to per-unit.
       const LARGE_FLEET = 12;
+      const groupsEmpty = !groups.length;
+      const groupHarvestEmpty = !transactions.length;
       const shouldRunUnitReports = Boolean(
-        unitTemplate && (opts.unitId || (!groupTemplate && targetUnits.length < LARGE_FLEET)),
+        unitTemplate &&
+          (opts.unitId ||
+            (!groupTemplate && targetUnits.length < LARGE_FLEET) ||
+            ((groupsEmpty || groupHarvestEmpty) &&
+              targetUnits.length > 0 &&
+              targetUnits.length < LARGE_FLEET)),
       );
       if (shouldRunUnitReports) {
+        if (groupTemplate && (groupsEmpty || groupHarvestEmpty) && !opts.unitId) {
+          console.info(
+            `[FuelReport] No usable group harvest for category=${opts.assetCategory ?? 'all'} (${targetUnits.length} units) — running per-unit reports`,
+          );
+        }
         const unitsToRun = opts.unitId ? targetUnits : targetUnits.slice(0, LARGE_FLEET);
-        const unitBatches = await mapWithConcurrency(unitsToRun, 1, async (unit) => {
+        const concurrency = Math.min(3, Math.max(1, unitsToRun.length));
+        const unitBatches = await mapWithConcurrency(unitsToRun, concurrency, async (unit) => {
           try {
             return await processUnitFuelData(client, unit, unitTemplate!, fromTs, toTs);
           } catch (err) {

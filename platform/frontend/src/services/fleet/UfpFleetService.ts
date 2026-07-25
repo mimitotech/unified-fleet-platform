@@ -306,9 +306,8 @@ export class UfpFleetService implements IFleetService {
     let transactions = wialonFuelTransactionsToFuelTransactions(data.transactions);
 
     if (filters?.assetCategory) {
-      // Backend already scoped by assetCategory — only patch missing unitIds from the
-      // fuel-assets list. Never drop rows when the client asset list is empty/mismatched
-      // (that was wiping generators/machinery tabs).
+      // Scope to this category's fuel assets when the live asset list is available.
+      // Prevents machinery events (excavator/backhoe) from appearing on the Vehicles tab.
       try {
         const assets = await this.getFuelAssets();
         const categoryAssets = assets.filter((a) => a.assetType === filters.assetCategory);
@@ -317,15 +316,20 @@ export class UfpFleetService implements IFleetService {
           const byName = new Map(
             categoryAssets.map((a) => [a.name.trim().toLowerCase(), a] as const),
           );
-          transactions = transactions.map((t) => {
-            if (t.unitId && idSet.has(String(t.unitId))) return t;
-            const match = byName.get(t.unitName.trim().toLowerCase());
-            if (match) return { ...t, unitId: String(match.unitId || t.unitId) };
-            return t;
-          });
+          transactions = transactions
+            .map((t) => {
+              if (t.unitId && idSet.has(String(t.unitId))) return t;
+              const match = byName.get(t.unitName.trim().toLowerCase());
+              if (match) return { ...t, unitId: String(match.unitId || t.unitId) };
+              return t;
+            })
+            .filter((t) => {
+              if (t.unitId && idSet.has(String(t.unitId))) return true;
+              return byName.has(t.unitName.trim().toLowerCase());
+            });
         }
       } catch {
-        // Keep backend-scoped rows as-is.
+        // Keep backend-scoped rows as-is when asset list is temporarily unavailable.
       }
     } else if (filters?.vehicleId) {
       transactions = transactions.filter((t) => String(t.unitId) === filters.vehicleId);

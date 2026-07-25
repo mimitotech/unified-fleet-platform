@@ -356,9 +356,9 @@ export class FuelDbReadService {
           refresh: opts.refresh ?? false,
         });
         await touchSyncCursor(opts.tenantId, cursorKey, {
-          success: txs.length > 0,
+          success: true,
           rowCount: txs.length,
-          error: txs.length > 0 ? null : 'Wialon report returned 0 fuel rows for this period',
+          error: null,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -401,6 +401,7 @@ export class FuelDbReadService {
         refresh: opts.refresh ?? false,
       });
       const txs = live.transactions ?? [];
+      const cursorKey = syncCursorKey(opts.fromDate, opts.toDate, opts.assetCategory);
       if (txs.length) {
         void WialonFuelDbSyncService.upsertTransactions(
           opts.tenantId,
@@ -409,13 +410,13 @@ export class FuelDbReadService {
         ).catch((err) =>
           logger.warn(`[FuelDbRead] persist live rows failed tenant=${opts.tenantId}`, err),
         );
-        const cursorKey = syncCursorKey(opts.fromDate, opts.toDate, opts.assetCategory);
-        void touchSyncCursor(opts.tenantId, cursorKey, {
-          success: true,
-          rowCount: txs.length,
-          error: null,
-        }).catch(() => undefined);
       }
+      // Always mark harvest complete — empty is a finished result, not eternal warming.
+      void touchSyncCursor(opts.tenantId, cursorKey, {
+        success: true,
+        rowCount: txs.length,
+        error: null,
+      }).catch(() => undefined);
       return txs;
     })().finally(() => {
       liveInflight.delete(key);
@@ -546,6 +547,31 @@ export class FuelDbReadService {
     // ── Cold miss: start live fetch but don't block the HTTP response forever ─
     // Concurrent polls share liveInflight; UI stays responsive and polls until DB fills.
     if (transactions.length === 0 && allowQueue) {
+      const liveKey = `${tenantId}:live:${fromDate}:${toDate}:${opts.assetCategory ?? 'all'}:${opts.unitId ?? ''}`;
+      const liveStillRunning = liveInflight.has(liveKey);
+      const recentlySyncedEmpty =
+        Boolean(cursor?.last_success_at) &&
+        !isStale(cursor) &&
+        Number(cursor?.row_count ?? 0) === 0;
+      const recentlyAttempted =
+        Boolean(cursor?.last_synced_at) &&
+        Date.now() - new Date(cursor!.last_synced_at!).getTime() < ERROR_BACKOFF_MS;
+
+      // Harvest already finished empty for this window — do not keep UI on Updating forever.
+      if (!liveStillRunning && (recentlySyncedEmpty || (recentlyAttempted && Boolean(cursor?.last_success_at)))) {
+        return buildResponse(
+          [],
+          fromDate,
+          toDate,
+          fromTs,
+          toTs,
+          'db',
+          false,
+          false,
+          cursor?.last_success_at,
+        );
+      }
+
       try {
         logger.info(
           `[FuelDbRead] DB empty — live Wialon fallback tenant=${tenantId} ${fromDate}→${toDate} cat=${opts.assetCategory ?? 'all'}`,
@@ -560,15 +586,29 @@ export class FuelDbReadService {
         });
         const LIVE_WAIT_MS = 5_000;
         const liveRows = await Promise.race([
-          livePromise,
+          livePromise.then((rows) => rows as FuelTransaction[] | null),
           new Promise<null>((resolve) => {
             setTimeout(() => resolve(null), LIVE_WAIT_MS);
           }),
         ]);
-        if (liveRows && liveRows.length) {
-          const { txs } = await finalize(liveRows, 'wialon');
+        // Live finished within the wait window (including empty harvest).
+        if (liveRows !== null) {
+          if (liveRows.length) {
+            const { txs } = await finalize(liveRows, 'wialon');
+            return buildResponse(
+              txs,
+              fromDate,
+              toDate,
+              fromTs,
+              toTs,
+              'wialon',
+              false,
+              false,
+              new Date().toISOString(),
+            );
+          }
           return buildResponse(
-            txs,
+            [],
             fromDate,
             toDate,
             fromTs,
@@ -579,6 +619,7 @@ export class FuelDbReadService {
             new Date().toISOString(),
           );
         }
+        // Still running in background — UI may poll briefly.
         this.queueBackgroundSync({
           tenantId,
           fromDate,

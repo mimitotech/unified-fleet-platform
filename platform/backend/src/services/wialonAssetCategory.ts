@@ -21,7 +21,7 @@ function findCustomField(
 }
 
 const MACHINERY_NAME_RE =
-  /excavat|crane|compressor|\bpump\b|welder|fork\s*lift|forklift|loader|bulldozer|roller|paver|mixer|grader|backhoe|shovel|drill(ing)?\s*rig|plant\b|machiner|\bequip/i;
+  /excavat|crane|compressor|\bpump\b|welder|fork\s*lift|forklift|loader|bulldozer|roller|paver|mixer|grader|back\s*hoe|backhoe|shovel|drill(ing)?\s*rig|plant\b|machiner|\bequip/i;
 
 const GENERATOR_NAME_RE =
   /pearl\s*bank|genset|generator|\bdg\s*set\b|\bgen\s*set\b|\bkva\b|standby\s*power|power\s*pack|bowser|fuel\s*tanker/i;

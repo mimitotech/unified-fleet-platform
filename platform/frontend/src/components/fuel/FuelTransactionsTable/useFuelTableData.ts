@@ -48,12 +48,22 @@ export function useFuelTableData({
   }, [periodTransactions, searchTerm]);
 
   const vehicleGroups = useMemo((): VehicleGroup[] => {
+    const allowedNames = new Set(
+      units.map((u) => u.name.trim().toLowerCase()).filter(Boolean),
+    );
+    // When the category unit roster is known, never promote out-of-category
+    // transaction names into this tab (e.g. excavator on Vehicles).
+    const scopeToRoster = allowedNames.size > 0;
+
     const groupMap = new Map<string, FuelTransaction[]>();
 
     for (const t of filteredTransactions) {
-      const list = groupMap.get(t.unitName) ?? [];
+      const key = t.unitName.trim();
+      if (!key) continue;
+      if (scopeToRoster && !allowedNames.has(key.toLowerCase())) continue;
+      const list = groupMap.get(key) ?? [];
       list.push(t);
-      groupMap.set(t.unitName, list);
+      groupMap.set(key, list);
     }
 
     const groups: VehicleGroup[] = [];
