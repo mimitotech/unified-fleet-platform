@@ -89,7 +89,7 @@ export default function TrackSolidCenter() {
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              Each client needs App Key, App Secret, Account ID, and password saved under Tenants → Integrations.
+              Each client needs App Key, App Secret, Account ID, and password saved under Clients → Integrations.
               Devices sync on the fleet scheduler; alarms poll every 2 minutes and can also arrive via webhook.
             </p>
             <div className="flex flex-wrap gap-2">

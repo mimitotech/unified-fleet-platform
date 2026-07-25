@@ -215,7 +215,7 @@ export default function WialonCenter() {
                 Add mother account
               </CardTitle>
               <CardDescription>
-                Each mother token is a separate Wialon top-level account. Tenants pick which mother to use, then link any admin or sub-account in that tree.
+                Each mother token is a separate Wialon top-level account. Clients pick which mother to use, then link any admin or sub-account in that tree.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -259,7 +259,7 @@ export default function WialonCenter() {
                     <TableRow>
                       <TableHead>Name</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead>Tenants</TableHead>
+                      <TableHead>Clients</TableHead>
                       <TableHead>Tier</TableHead>
                       <TableHead className="w-40" />
                     </TableRow>
@@ -442,7 +442,7 @@ export default function WialonCenter() {
           <WialonMotherAccountSelect value={activeMotherId} onChange={setActiveMotherId} className="max-w-md" />
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm">Tenant ↔ Wialon account map</CardTitle>
+              <CardTitle className="text-sm">Client ↔ Wialon account map</CardTitle>
               <CardDescription>Accounts linked under the selected mother token.</CardDescription>
             </CardHeader>
             <CardContent>
@@ -454,7 +454,7 @@ export default function WialonCenter() {
                     <TableRow>
                       <TableHead>Wialon account</TableHead>
                       <TableHead>Active units</TableHead>
-                      <TableHead>MAMS tenant</TableHead>
+                      <TableHead>MAMS client</TableHead>
                       <TableHead />
                     </TableRow>
                   </TableHeader>

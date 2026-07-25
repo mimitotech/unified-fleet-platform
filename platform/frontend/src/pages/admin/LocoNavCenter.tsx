@@ -89,7 +89,7 @@ export default function LocoNavCenter() {
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              Link each client under Tenants → Integrations with a LocoNav User-Authentication token.
+              Link each client under Clients → Integrations with a LocoNav User-Authentication token.
               GPS and video-capable units sync on the fleet scheduler; camera and safety events arrive via webhook.
             </p>
             <div className="flex flex-wrap gap-2">

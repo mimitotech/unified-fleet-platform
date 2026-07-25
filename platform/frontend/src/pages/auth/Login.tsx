@@ -180,14 +180,8 @@ export default function Login() {
           <img
             src={s.src}
             alt=""
-            aria-hidden
-            className="absolute inset-0 h-full w-full scale-110 object-cover object-center blur-2xl brightness-75 saturate-125"
-            draggable={false}
-          />
-          <img
-            src={s.src}
-            alt=""
-            className="absolute inset-0 h-full w-full object-contain object-center"
+            className="absolute inset-0 block h-full w-full max-w-none"
+            style={{ objectFit: 'fill', objectPosition: 'center' }}
             draggable={false}
           />
         </div>

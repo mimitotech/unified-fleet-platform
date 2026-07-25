@@ -4,9 +4,10 @@
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import {
-  Wrench, User, Calendar, Clock, DollarSign, Plus, Trash2,
+  Wrench, User, Calendar, Clock, Plus, Trash2,
   Loader2, Package, Gauge, Route,
 } from 'lucide-react';
+import { UgxPrefix } from '@/components/shared/UgxAffix';
 import {
   Dialog,
   DialogContent,
@@ -136,15 +137,16 @@ function PartRow({ part, onChange, onRemove, disabled }: PartRowProps) {
           className="text-sm"
         />
       </div>
-      <div className="col-span-2">
+      <div className="col-span-2 relative">
         <Input
           type="number"
           min={0}
           value={part.unitCost}
           onChange={(e) => handleUnitCostChange(parseInt(e.target.value, 10) || 0)}
           disabled={disabled}
-          className="text-sm"
+          className="text-sm pl-10"
         />
+        <UgxPrefix className="left-2 text-[10px]" />
       </div>
       <div className="col-span-2 text-right text-sm font-medium">
         {part.totalCost.toLocaleString()} UGX
@@ -643,10 +645,10 @@ export function MaintenanceLogModal({
                         laborCost: parseInt(e.target.value, 10) || 0,
                       }))
                     }
-                    className="pl-9"
+                    className="pl-11"
                     disabled={isSubmitting}
                   />
-                  <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <UgxPrefix />
                 </div>
               </div>
             </div>
@@ -668,7 +670,7 @@ export function MaintenanceLogModal({
                     <div className="col-span-4">Name</div>
                     <div className="col-span-2">Part #</div>
                     <div className="col-span-1">Qty</div>
-                    <div className="col-span-2">Unit Cost</div>
+                    <div className="col-span-2">Unit (UGX)</div>
                     <div className="col-span-2 text-right">Total</div>
                     <div className="col-span-1" />
                   </div>

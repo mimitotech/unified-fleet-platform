@@ -18,7 +18,7 @@ import {
   Pie,
   Cell,
 } from 'recharts';
-import { DollarSign } from 'lucide-react';
+import { UgxLabelIcon } from '@/components/shared/UgxAffix';
 import type { MaintenanceLog, VehicleMaintenanceSummary } from '@/types/workshop';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
@@ -126,8 +126,8 @@ export function MaintenanceCostChart({ logs, vehicleSummaries }: MaintenanceCost
   return (
     <div className="fleet-card">
       <div className="flex items-center gap-2 mb-4">
-        <DollarSign className="w-5 h-5 text-primary" />
-        <h3 className="text-lg font-semibold">Cost Analysis</h3>
+        <UgxLabelIcon className="text-sm text-primary" />
+        <h3 className="text-lg font-semibold">Cost Analysis (UGX)</h3>
       </div>
       
       <Tabs defaultValue="vehicle" className="w-full">

@@ -176,7 +176,9 @@ export function LoginSlidesAdminPanel() {
         <div>
           <CardTitle>Login slideshow</CardTitle>
           <CardDescription>
-            Images, titles and details shown on the public login page. Disabled slides stay saved but hidden.
+            Images, titles and details shown on the public login page. Use wide landscape photos
+            (about 16:9 or wider). The login screen stretches each image to full width and height —
+            disabled slides stay saved but hidden.
           </CardDescription>
         </div>
         <Button type="button" size="sm" onClick={startCreate}>
@@ -233,11 +235,17 @@ export function LoginSlidesAdminPanel() {
                   className="mt-1"
                   onChange={(e) => void onPickImage(e.target.files?.[0] || null)}
                 />
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Prefer a wide image so sides fill cleanly when stretched on login (PNG/JPEG/WebP, max 5 MB).
+                </p>
                 {form.previewUrl && (
-                  <div
-                    className="mt-2 h-28 rounded-md bg-cover bg-center border border-border/50"
-                    style={{ backgroundImage: `url('${form.previewUrl}')` }}
-                  />
+                  <div className="mt-2 aspect-[16/9] w-full max-w-xl rounded-md bg-neutral-900 border border-border/50 overflow-hidden">
+                    <img
+                      src={form.previewUrl}
+                      alt=""
+                      className="h-full w-full object-fill object-center"
+                    />
+                  </div>
                 )}
                 {editingId && !form.dataBase64 && (
                   <p className="text-xs text-muted-foreground mt-1">Leave empty to keep the current image.</p>
@@ -294,9 +302,9 @@ export function LoginSlidesAdminPanel() {
                   !s.isEnabled && 'opacity-60',
                 )}
               >
-                <div className="h-14 w-24 shrink-0 rounded-md bg-neutral-900 border border-border/40 overflow-hidden flex items-center justify-center">
+                <div className="h-14 w-28 shrink-0 rounded-md bg-neutral-900 border border-border/40 overflow-hidden">
                   {s.imageUrl ? (
-                    <img src={s.imageUrl} alt="" className="max-h-full max-w-full object-contain" />
+                    <img src={s.imageUrl} alt="" className="h-full w-full object-fill object-center" />
                   ) : null}
                 </div>
                 <div className="min-w-0 flex-1">

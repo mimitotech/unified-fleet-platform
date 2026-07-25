@@ -49,7 +49,7 @@ export default function WialonConsole() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Tenants with Wialon</CardDescription>
+            <CardDescription>Clients with Wialon</CardDescription>
             <CardTitle className="text-2xl">{isLoading ? '—' : data?.count ?? 0}</CardTitle>
           </CardHeader>
         </Card>
@@ -73,10 +73,10 @@ export default function WialonConsole() {
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
             <Satellite className="h-4 w-4" />
-            Tenant Wialon sessions
+            Client Wialon sessions
           </CardTitle>
           <CardDescription>
-            Configure tokens per tenant under Tenants → Integrations. Mother (Mimito) tokens expose full
+            Configure tokens per client under Clients → Integrations. Mother (Mimito) tokens expose full
             account trees; client tokens scope to a single admin account and its users.
           </CardDescription>
         </CardHeader>
@@ -85,13 +85,13 @@ export default function WialonConsole() {
             <Skeleton className="h-48" />
           ) : !tenants.length ? (
             <p className="text-sm text-muted-foreground py-8 text-center">
-              No tenants have Wialon configured yet.
+              No clients have Wialon configured yet.
             </p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Tenant</TableHead>
+                  <TableHead>Client</TableHead>
                   <TableHead>Wialon account</TableHead>
                   <TableHead>Tier</TableHead>
                   <TableHead>Units</TableHead>

@@ -44,7 +44,7 @@ export function PortalLinksCard({ slug, className }: Props) {
 
         {slug && (
           <div>
-            <Label className="text-xs text-muted-foreground">Tenant slug</Label>
+            <Label className="text-xs text-muted-foreground">Client slug</Label>
             <p className="text-sm font-mono mt-1">{slug}</p>
             <p className="text-[11px] text-muted-foreground mt-1">
               Used when platform staff open the client app via View Client.

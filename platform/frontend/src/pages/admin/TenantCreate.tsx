@@ -82,7 +82,7 @@ export default function TenantCreate() {
               }
             : {}),
         }),
-        { loading: 'Creating tenant...', success: 'Tenant created with Wialon account linked' }
+        { loading: 'Creating client...', success: 'Client created with Wialon account linked' }
       ),
     onSuccess: (data) => {
       const tenant = data as { id?: string };

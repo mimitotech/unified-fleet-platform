@@ -63,8 +63,8 @@ export function WialonConnectionCard() {
           </CardTitle>
           <CardDescription>
             {configuredButBroken
-              ? 'Your fleet connection is configured but the last check failed. Ask your platform administrator to re-verify credentials under Admin → Tenant → Integrations.'
-              : 'Fleet telematics is not connected for this organization. Your platform administrator configures the connection under Admin → Tenant → Integrations.'}
+              ? 'Your fleet connection is configured but the last check failed. Ask your platform administrator to re-verify credentials under Admin → Clients → Integrations.'
+              : 'Fleet telematics is not connected for this organization. Your platform administrator configures the connection under Admin → Clients → Integrations.'}
           </CardDescription>
           {configuredButBroken && ctx?.lastError && (
             <p className="text-sm text-destructive pt-2">{ctx.lastError}</p>

@@ -182,7 +182,7 @@ export default function AdminDashboard() {
       <div className="space-y-4">
         <div className="stat-strip">
           {[
-            { id: 'tenants', title: 'Tenants', value: stats?.totalTenants ?? 0, sub: `${stats?.activeTenants ?? 0} active`, icon: Building2, variant: 'primary' as const },
+            { id: 'tenants', title: 'Clients', value: stats?.totalTenants ?? 0, sub: `${stats?.activeTenants ?? 0} active`, icon: Building2, variant: 'primary' as const },
             { id: 'fleet', title: 'Synced assets', value: stats?.totalVehicles ?? 0, sub: `${stats?.activeVehiclesPct ?? 0}% online`, icon: Truck, variant: 'info' as const },
             { id: 'users', title: 'Users', value: stats?.totalUsers ?? 0, sub: `${stats?.logins24h ?? 0} logins`, icon: Users, variant: 'success' as const },
             { id: 'alerts', title: 'Alerts', value: stats?.pendingAlerts ?? 0, sub: 'pending', icon: AlertTriangle, variant: 'destructive' as const },
@@ -359,7 +359,7 @@ export default function AdminDashboard() {
                   </LineChart>
                 </ChartContainer>
               ) : (
-                <p className="text-xs text-muted-foreground py-12 text-center">Run tenant syncs to build history.</p>
+                <p className="text-xs text-muted-foreground py-12 text-center">Run client syncs to build history.</p>
               )}
             </div>
           </AnalyticsPanel>
@@ -396,7 +396,7 @@ export default function AdminDashboard() {
             </div>
           </AnalyticsPanel>
 
-          <AnalyticsPanel title="Top tenants" description="Synced fleet size ranking" tone="brand" icon={Building2}>
+          <AnalyticsPanel title="Top clients" description="Synced fleet size ranking" tone="brand" icon={Building2}>
             <div className="h-[180px]">
               {topTenantsChart.length > 0 ? (
                 <ChartContainer config={{ count: { label: 'Assets', color: CHART.brand } }} className="h-full w-full">
@@ -409,7 +409,7 @@ export default function AdminDashboard() {
                   </BarChart>
                 </ChartContainer>
               ) : (
-                <p className="text-xs text-muted-foreground py-12 text-center">No tenants yet.</p>
+                <p className="text-xs text-muted-foreground py-12 text-center">No clients yet.</p>
               )}
             </div>
             <div className="mt-1 flex flex-wrap gap-1">
@@ -438,9 +438,9 @@ export default function AdminDashboard() {
             </div>
           </AnalyticsPanel>
 
-          <AnalyticsPanel title="Tenant growth" description="New tenants · 30 days" tone="brand" icon={TrendingUp}>
+          <AnalyticsPanel title="Client growth" description="New clients · 30 days" tone="brand" icon={TrendingUp}>
             <div className="h-[150px]">
-              <ChartContainer config={{ count: { label: 'Tenants', color: CHART.brandAccent } }} className="h-full w-full">
+              <ChartContainer config={{ count: { label: 'Clients', color: CHART.brandAccent } }} className="h-full w-full">
                 <BarChart
                   data={growthHistory.length ? growthHistory.map((d) => ({ ...d, label: formatDay(d.day) })) : [{ label: 'Now', count: Number(stats?.totalTenants ?? 0) }]}
                   margin={{ top: 4, right: 4, left: -20, bottom: 0 }}

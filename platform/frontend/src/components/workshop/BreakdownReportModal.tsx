@@ -4,8 +4,9 @@
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import {
-  AlertTriangle, MapPin, Clock, DollarSign, Loader2, Calendar,
+  AlertTriangle, MapPin, Clock, Loader2, Calendar,
 } from 'lucide-react';
+import { UgxLabelIcon, UgxPrefix } from '@/components/shared/UgxAffix';
 import {
   Dialog,
   DialogContent,
@@ -413,43 +414,51 @@ export function BreakdownReportModal({
 
             <div className="space-y-4">
               <Label className="flex items-center gap-2">
-                <DollarSign className="h-4 w-4" />
-                Costs
+                <UgxLabelIcon />
+                Costs (UGX)
               </Label>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="towingCost" className="text-sm text-muted-foreground">
                     {stationary ? 'Recovery / Call-out Cost (UGX)' : 'Towing Cost (UGX)'}
                   </Label>
-                  <Input
-                    id="towingCost"
-                    type="number"
-                    min={0}
-                    value={formData.towingCost || ''}
-                    onChange={(e) =>
-                      setFormData((prev) => ({
-                        ...prev,
-                        towingCost: parseInt(e.target.value, 10) || 0,
-                      }))
-                    }
-                    disabled={isSubmitting}
-                  />
+                  <div className="relative">
+                    <Input
+                      id="towingCost"
+                      type="number"
+                      min={0}
+                      value={formData.towingCost || ''}
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          towingCost: parseInt(e.target.value, 10) || 0,
+                        }))
+                      }
+                      className="pl-11"
+                      disabled={isSubmitting}
+                    />
+                    <UgxPrefix />
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="repairCost" className="text-sm text-muted-foreground">Repair Cost (UGX)</Label>
-                  <Input
-                    id="repairCost"
-                    type="number"
-                    min={0}
-                    value={formData.repairCost || ''}
-                    onChange={(e) =>
-                      setFormData((prev) => ({
-                        ...prev,
-                        repairCost: parseInt(e.target.value, 10) || 0,
-                      }))
-                    }
-                    disabled={isSubmitting}
-                  />
+                  <div className="relative">
+                    <Input
+                      id="repairCost"
+                      type="number"
+                      min={0}
+                      value={formData.repairCost || ''}
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          repairCost: parseInt(e.target.value, 10) || 0,
+                        }))
+                      }
+                      className="pl-11"
+                      disabled={isSubmitting}
+                    />
+                    <UgxPrefix />
+                  </div>
                 </div>
               </div>
               <div className="bg-muted/50 rounded-lg p-4">

@@ -36,7 +36,7 @@ const STATS = [
   { label: 'Telematics sources', value: 3, suffix: '', icon: Radio },
   { label: 'Asset types unified', value: 12, suffix: '+', icon: Truck },
   { label: 'Live map refresh', value: 15, suffix: 's', icon: MapPin },
-  { label: 'Tenant dashboards', value: 1, suffix: '', icon: Users, display: '∞' },
+  { label: 'Client dashboards', value: 1, suffix: '', icon: Users, display: '∞' },
 ] as const;
 
 export function LiveStatsBar() {
