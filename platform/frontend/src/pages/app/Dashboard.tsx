@@ -313,15 +313,25 @@ export default function Dashboard() {
     from: alertFromIso,
     to: alertToIso,
   });
-  const alertList = safeArray<{
-    id?: string;
-    title?: string;
-    severity?: string;
-    type?: string;
-    timestamp?: string;
-    acknowledged?: boolean;
-    assetId?: string;
-  }>(alerts);
+  const alertList = useMemo(
+    () =>
+      safeArray<{
+        id?: string;
+        title?: string;
+        severity?: string;
+        type?: string;
+        timestamp?: string;
+        acknowledged?: boolean;
+        assetId?: string;
+      }>(alerts).filter((a) => {
+        if (!a.timestamp) return true;
+        const t = new Date(a.timestamp).getTime();
+        if (!Number.isFinite(t)) return false;
+        // Hide future period-end stamps from dashboard critical / charts.
+        return t <= Date.now() + 60_000;
+      }),
+    [alerts],
+  );
 
   // Fuel totals must match the Fuel module exactly: fetch the SAME category-scoped
   // transactions the Fuel tabs use and merge them, instead of the fleet-wide
@@ -618,6 +628,7 @@ export default function Dashboard() {
   const criticalCount = useMemo(
     () =>
       alertList.filter((a) => {
+        if (a.acknowledged) return false;
         const s = String(a.severity || "").toLowerCase();
         return s === "critical" || s === "emergency";
       }).length,

@@ -305,18 +305,21 @@ export function WialonNotificationsPanel() {
   if (!connected) return null;
 
   return (
-    <Card className="border-primary/20 mb-6">
+    <div>
       <LiveHeader
         title="Configured notification rules"
         description="Rules active on this account. When they fire, events appear in the inbox above automatically."
         count={data?.count}
         icon={Bell}
       />
-      <CardContent>
-        {isLoading ? <Skeleton className="h-32" /> : isError ? (
+      <div className="pt-2">
+        {isLoading ? <Skeleton className="h-20" /> : isError ? (
           <p className="text-sm text-destructive">Could not load notifications.</p>
         ) : !data?.notifications?.length ? (
-          <p className="text-sm text-muted-foreground">No notifications for this account.</p>
+          <p className="text-xs text-muted-foreground">
+            No notification rules on this account. Fuel fill/drop leaf events still appear in the
+            inbox when sensors report them; period totals stay in Fuel.
+          </p>
         ) : (
           <Table>
             <TableHeader>
@@ -341,8 +344,8 @@ export function WialonNotificationsPanel() {
             </TableBody>
           </Table>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
 

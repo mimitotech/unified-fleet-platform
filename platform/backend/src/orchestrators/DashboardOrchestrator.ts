@@ -30,7 +30,7 @@ export class DashboardOrchestrator {
     const [alertRows, driverStats, routeStats, fuelStats, workshopStats] = await Promise.all([
       safeQuery<{ critical: number; unack: number }>(
         `SELECT
-           COALESCE(SUM(CASE WHEN severity IN ('critical','emergency') THEN 1 ELSE 0 END), 0) as critical,
+           COALESCE(SUM(CASE WHEN severity IN ('critical','emergency') AND acknowledged = 0 THEN 1 ELSE 0 END), 0) as critical,
            COALESCE(SUM(CASE WHEN acknowledged = 0 THEN 1 ELSE 0 END), 0) as unack
          FROM alerts WHERE tenant_id = $1`,
         [tid],

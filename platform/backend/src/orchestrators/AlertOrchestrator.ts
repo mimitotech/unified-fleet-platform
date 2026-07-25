@@ -285,6 +285,31 @@ export class AlertOrchestrator {
         [this.tenantId],
       );
 
+      // Period-summary fuel rows used report end-of-day (UTC 23:59:59 → next-day
+      // 02:59:59 in EAT) as the alert clock and a fingerprint that shifted when the
+      // rolling sync window moved — so the same fill reappeared daily as a "new"
+      // open alert, often in the future. Those totals belong in Fuel, not the inbox.
+      await query(
+        `DELETE FROM alerts
+         WHERE tenant_id = $1
+           AND source_type = 'wialon'
+           AND (
+             external_id LIKE 'fuel-sum:%'
+             OR description ILIKE '%for this period%'
+           )`,
+        [this.tenantId],
+      );
+
+      // Drop fuel alerts whose clock is still in the future (leftover EOD stamps).
+      await query(
+        `DELETE FROM alerts
+         WHERE tenant_id = $1
+           AND source_type = 'wialon'
+           AND type IN ('fuel_theft', 'fuel_filling')
+           AND occurred_at > NOW() + INTERVAL '2 minutes'`,
+        [this.tenantId],
+      );
+
       await query(
         `DELETE FROM alerts a
          USING alerts b
@@ -336,7 +361,15 @@ export class AlertOrchestrator {
     }
   }
 
-  /** Promote fuel fillings / sudden drops — leaf events plus generator group summaries. */
+  /**
+   * Promote real fuel fill / sudden-drop leaf events into the inbox.
+   *
+   * Period summaries (`wialon_group_summary` / `__period:`) are intentionally
+   * excluded — they carry the report window end as their timestamp (UTC EOD,
+   * which reads as tomorrow morning in East Africa) and re-fingerprint when the
+   * rolling sync window moves, inventing duplicate "future" alerts. Those
+   * totals already live in the Fuel module.
+   */
   private async promoteFuelEventsToAlerts(): Promise<number> {
     let inserted = 0;
     try {
@@ -356,8 +389,8 @@ export class AlertOrchestrator {
       };
 
       const since = Math.floor(Date.now() / 1000) - 7 * 24 * 3600;
+      const nowSec = Math.floor(Date.now() / 1000) + 120;
 
-      // 1) Exact leaf events (vehicles + flat genset event rows).
       const { rows: leafRows } = await query<FuelRow>(
         `SELECT id, unit_id, unit_name, section, filled, sudden_fuel_drop, timestamp,
                 latitude, longitude, sensor, location, time_str
@@ -365,63 +398,30 @@ export class AlertOrchestrator {
          WHERE tenant_id = $1
            AND section IN ('theft', 'filling')
            AND timestamp >= $2
+           AND timestamp <= $3
            AND COALESCE(sensor, '') NOT LIKE 'wialon_group_summary%'
            AND COALESCE(location, '') NOT LIKE '__period:%'
+           AND (
+             COALESCE(filled, 0) > 0
+             OR COALESCE(sudden_fuel_drop, 0) > 0
+           )
          ORDER BY timestamp DESC
          LIMIT 400`,
-        [this.tenantId, since],
-      );
-
-      // 2) Generator / stationary period summaries that never got leaf events.
-      //    Fuel Usage Report(Gensets) often stores only wialon_group_summary rows.
-      const { rows: summaryRows } = await query<FuelRow>(
-        `SELECT id, unit_id, unit_name, section, filled, sudden_fuel_drop, timestamp,
-                latitude, longitude, sensor, location, time_str
-         FROM fuel_transactions f
-         WHERE f.tenant_id = $1
-           AND f.section IN ('theft', 'filling')
-           AND f.timestamp >= $2
-           AND (
-             f.sensor LIKE 'wialon_group_summary%'
-             OR f.location LIKE '__period:%'
-           )
-           AND (
-             COALESCE(f.filled, 0) > 0
-             OR COALESCE(f.sudden_fuel_drop, 0) > 0
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM fuel_transactions leaf
-             WHERE leaf.tenant_id = f.tenant_id
-               AND leaf.unit_id = f.unit_id
-               AND leaf.section = f.section
-               AND leaf.timestamp >= $2
-               AND COALESCE(leaf.sensor, '') NOT LIKE 'wialon_group_summary%'
-               AND COALESCE(leaf.location, '') NOT LIKE '__period:%'
-               AND (
-                 (f.section = 'filling' AND COALESCE(leaf.filled, 0) > 0)
-                 OR (f.section = 'theft' AND COALESCE(leaf.sudden_fuel_drop, 0) > 0)
-               )
-           )
-         ORDER BY f.timestamp DESC
-         LIMIT 200`,
-        [this.tenantId, since],
+        [this.tenantId, since, nowSec],
       );
 
       const seenFingerprints = new Set<string>();
-      const candidates = [...leafRows, ...summaryRows];
 
-      for (const row of candidates) {
+      for (const row of leafRows) {
         const isTheft = row.section === 'theft';
         const vol = isTheft ? Number(row.sudden_fuel_drop || 0) : Number(row.filled || 0);
         if (!(vol > 0)) continue;
 
         const type = isTheft ? 'fuel_theft' : 'fuel_filling';
-        const isSummary =
-          String(row.sensor || '').startsWith('wialon_group_summary') ||
-          String(row.location || '').startsWith('__period:');
-        const fingerprint = isSummary
-          ? `fuel-sum:${row.unit_id}:${type}:${vol.toFixed(2)}:${Number(row.timestamp)}`
-          : fuelEventFingerprint(row.unit_id, type, vol, Number(row.timestamp));
+        const ts = Number(row.timestamp);
+        if (!Number.isFinite(ts) || ts <= 0 || ts > nowSec) continue;
+
+        const fingerprint = fuelEventFingerprint(row.unit_id, type, vol, ts);
         if (seenFingerprints.has(fingerprint)) continue;
         seenFingerprints.add(fingerprint);
 
@@ -449,12 +449,10 @@ export class AlertOrchestrator {
             title: isTheft
               ? `Sudden fuel drop · ${unitLabel} (−${vol} L)`
               : `Fuel filling · ${unitLabel} (+${vol} L)`,
-            description: isSummary
-              ? `${isTheft ? 'Sudden drop' : 'Filling'} of ${vol} L reported from fuel sensors for this period${when}.`
-              : `${isTheft ? 'Sudden drop' : 'Filling'} of ${vol} L reported from fuel sensors${when}.`,
+            description: `${isTheft ? 'Sudden drop' : 'Filling'} of ${vol} L reported from fuel sensors${when}.`,
             latitude: row.latitude ?? undefined,
             longitude: row.longitude ?? undefined,
-            timestamp: new Date(Number(row.timestamp) * 1000),
+            timestamp: new Date(ts * 1000),
             sourceType: 'wialon',
             externalId: fingerprint,
             assetId: assetUuid,

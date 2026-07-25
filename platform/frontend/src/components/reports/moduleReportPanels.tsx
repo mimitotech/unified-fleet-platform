@@ -11,6 +11,7 @@ import type { DomainChartSpec } from '@/lib/domainReportCharts';
 import { CHART } from '@/lib/chartColors';
 import { useBatchWialonGeocode } from '@/hooks/useBatchWialonGeocode';
 import { tankPercentFromLiters, usablePercent } from '@/lib/fuelLevel';
+import { localDateIso } from '@/lib/localDate';
 import type { FleetUnit } from '@/lib/fleetUnits';
 
 function statusLabel(status: string, stationary: boolean) {
@@ -322,11 +323,11 @@ export function DriversModuleReports() {
 
 export function AlertsModuleReports() {
   const branding = useTenantBranding();
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localDateIso();
   const [fromDate, setFromDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() - 6);
-    return d.toISOString().slice(0, 10);
+    return localDateIso(d);
   });
   const [toDate, setToDate] = useState(todayStr);
   const { data: alerts, refetch, isFetching } = useAlerts(500, true, {
@@ -364,14 +365,27 @@ export function AlertsModuleReports() {
   };
 
   const baseRows = useMemo(() => {
-    return list.map((a) => {
+    const now = Date.now() + 60_000;
+    return list
+      .filter((a) => {
+        const desc = String(a.description || '');
+        // Period-summary fuel alerts are purged server-side; hide any leftovers.
+        if (/for this period/i.test(desc)) return false;
+        const t = a.timestamp ? new Date(a.timestamp).getTime() : NaN;
+        if (Number.isFinite(t) && t > now) return false;
+        return true;
+      })
+      .map((a) => {
       const title = a.title || 'Alert';
       const description = a.description || '';
       const severity = a.severity || 'warning';
       const type = a.type || 'event';
       const ts = a.timestamp ? new Date(a.timestamp) : null;
+      // Local calendar day — UTC ISO day put EOD stamps on the wrong report day.
       const day =
-        ts && !Number.isNaN(ts.getTime()) ? ts.toISOString().slice(0, 10) : '';
+        ts && !Number.isNaN(ts.getTime())
+          ? `${ts.getFullYear()}-${String(ts.getMonth() + 1).padStart(2, '0')}-${String(ts.getDate()).padStart(2, '0')}`
+          : '';
       const typeLabel = type
         .replace(/^wialon[_-]?/i, '')
         .replace(/_/g, ' ')
@@ -441,9 +455,12 @@ export function AlertsModuleReports() {
     () => [
       { label: 'In view', value: filteredRows.length },
       {
-        label: 'Critical',
-        value: filteredRows.filter((r) => r.severity === 'critical' || r.severity === 'emergency')
-          .length,
+        label: 'Open critical',
+        value: filteredRows.filter(
+          (r) =>
+            r.status === 'Open' &&
+            (r.severity === 'critical' || r.severity === 'emergency'),
+        ).length,
       },
       { label: 'Open', value: filteredRows.filter((r) => r.status === 'Open').length },
       {

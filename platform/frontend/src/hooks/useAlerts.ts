@@ -92,8 +92,10 @@ export function useAlerts(
     const fresh = list.filter((a) => {
       if (a.acknowledged || seen.has(a.id)) return false;
       const t = new Date(a.timestamp).getTime();
-      // Don't toast ancient re-harvested noise as "new"
-      if (Number.isFinite(t) && Date.now() - t > 48 * 60 * 60 * 1000) return false;
+      // Don't toast ancient re-harvested noise or future period-end stamps as "new"
+      if (!Number.isFinite(t)) return false;
+      const ageMs = Date.now() - t;
+      if (ageMs < 0 || ageMs > 48 * 60 * 60 * 1000) return false;
       if (isNoiseAlertTitle(a.title, a.description, a.type)) return false;
       return true;
     });

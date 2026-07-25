@@ -23,7 +23,6 @@ import {
   Gauge,
   MapPinned,
   PlugZap,
-  Radio,
   ShieldAlert,
   Thermometer,
   WifiOff,
@@ -50,7 +49,10 @@ interface AlertRow {
   acknowledged?: boolean;
 }
 
-const severityStyles: Record<string, { label: string; row: string; badge: string; icon: typeof AlertTriangle }> = {
+const severityStyles: Record<
+  string,
+  { label: string; row: string; badge: string; icon: typeof AlertTriangle }
+> = {
   critical: {
     label: 'Critical',
     row: 'border-l-destructive',
@@ -83,7 +85,7 @@ type CategoryDef = { id: string; label: string; match: (type?: string) => boolea
 const CATEGORY_DEFS: CategoryDef[] = [
   { id: 'safety', label: 'Driving', match: (t) => !!t && /harsh_|speeding|eco_violation|idling|towing|sos/.test(t) },
   { id: 'fuel', label: 'Fuel', match: (t) => !!t && /fuel_/.test(t) },
-  { id: 'power', label: 'Power & generators', match: (t) => !!t && /generator|power_cut|power_restore|battery/.test(t) },
+  { id: 'power', label: 'Power', match: (t) => !!t && /generator|power_cut|power_restore|battery/.test(t) },
   { id: 'geofence', label: 'Geofence', match: (t) => t === 'geofence' },
   { id: 'engine', label: 'Engine', match: (t) => !!t && /ignition_/.test(t) },
   { id: 'sensors', label: 'Sensors', match: (t) => !!t && /sensor|temperature|door|connection|maintenance/.test(t) },
@@ -129,6 +131,12 @@ function prettySource(sourceType?: string) {
   return sourceType!.replace(/_/g, ' ');
 }
 
+/** Drop clocks that have not happened yet (stale period-end stamps). */
+function isPastOrNow(iso: string): boolean {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return false;
+  return t <= Date.now() + 60_000;
+}
 
 const todayStr = () => localDateIso();
 
@@ -148,7 +156,8 @@ export default function AlertsPage() {
   const list = useMemo(
     () =>
       ((alerts ?? []) as AlertRow[]).filter(
-        (a) => !isNoiseAlertTitle(a.title, a.description, a.type),
+        (a) =>
+          !isNoiseAlertTitle(a.title, a.description, a.type) && isPastOrNow(a.timestamp),
       ),
     [alerts],
   );
@@ -167,8 +176,6 @@ export default function AlertsPage() {
   const { modules } = useModules();
   const fuelModuleOn = modules.some((m) => m.moduleKey === 'fuel' && m.isEnabled);
 
-  // Categories present in the current period drive which tabs each client sees.
-  // Always keep Fuel when the fuel module is enabled (generators need it even before first promote).
   const availableCategories = useMemo(() => {
     const present = new Set(list.map((a) => categoryOf(a.type)));
     if (fuelModuleOn) present.add('fuel');
@@ -193,13 +200,14 @@ export default function AlertsPage() {
     for (const c of CATEGORY_DEFS) byCat[c.id] = 0;
     byCat.other = 0;
     for (const a of list) byCat[categoryOf(a.type)] = (byCat[categoryOf(a.type)] ?? 0) + 1;
-    const unacked = list.filter((a) => !a.acknowledged).length;
+    const open = list.filter((a) => !a.acknowledged);
     return {
       total: list.length,
-      critical: list.filter((a) => ['critical', 'emergency'].includes(a.severity)).length,
-      warning: list.filter((a) => a.severity === 'warning').length,
-      unacked,
-      acked: list.length - unacked,
+      // Critical / warning tiles are open-only — acknowledging clears them.
+      openCritical: open.filter((a) => ['critical', 'emergency'].includes(a.severity)).length,
+      openWarning: open.filter((a) => a.severity === 'warning').length,
+      unacked: open.length,
+      acked: list.length - open.length,
       byCat,
     };
   }, [list]);
@@ -261,38 +269,34 @@ export default function AlertsPage() {
         </TabsList>
 
         <TabsContent value="inbox" className="mt-0 space-y-3">
-          {/* Summary strip */}
+          {/* Open-first KPIs — acknowledging clears critical/warning tiles. */}
           <div className="grid gap-2 grid-cols-2 md:grid-cols-4">
-            <div className="fleet-card border-l-4 border-l-primary py-2.5">
-              <p className="text-[11px] text-muted-foreground">Total in period</p>
-              <p className="text-xl font-semibold">{counts.total}</p>
+            <div className="branded-panel px-3 py-2">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Open</p>
+              <p className="text-lg font-semibold tabular-nums leading-tight">{counts.unacked}</p>
             </div>
-            <div className="fleet-card border-l-4 border-l-destructive py-2.5">
-              <p className="text-[11px] text-muted-foreground">Critical</p>
-              <p className="text-xl font-semibold text-destructive">{counts.critical}</p>
+            <div className="branded-panel px-3 py-2 border-l-[3px] border-l-destructive">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Open critical</p>
+              <p className="text-lg font-semibold tabular-nums leading-tight text-destructive">
+                {counts.openCritical}
+              </p>
             </div>
-            <div className="fleet-card border-l-4 border-l-amber-500 py-2.5">
-              <p className="text-[11px] text-muted-foreground">Warnings</p>
-              <p className="text-xl font-semibold text-amber-700">{counts.warning}</p>
+            <div className="branded-panel px-3 py-2 border-l-[3px] border-l-amber-500">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Open warnings</p>
+              <p className="text-lg font-semibold tabular-nums leading-tight text-amber-700">
+                {counts.openWarning}
+              </p>
             </div>
-            <div className="fleet-card border-l-4 border-l-sky-500 py-2.5">
-              <p className="text-[11px] text-muted-foreground">Open</p>
-              <p className="text-xl font-semibold text-sky-700">{counts.unacked}</p>
+            <div className="branded-panel px-3 py-2">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">In period</p>
+              <p className="text-lg font-semibold tabular-nums leading-tight">{counts.total}</p>
+              <p className="text-[10px] text-muted-foreground">{counts.acked} acknowledged</p>
             </div>
           </div>
 
-          {/* Toolbar: period + refresh */}
-          <div className="fleet-card flex flex-wrap items-center justify-between gap-3 py-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium flex items-center gap-2">
-                <Radio className="h-4 w-4 text-primary" />
-                Live alert stream
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Configured notifications for this account — refreshed every few seconds.
-              </p>
-            </div>
-            <div className="flex items-end gap-2 flex-wrap">
+          {/* Period + filters + bulk actions in one branded strip */}
+          <div className="branded-panel px-3 py-2.5 space-y-2.5">
+            <div className="flex flex-wrap items-end justify-between gap-2">
               <PeriodAssetControlsInline
                 fromDate={fromDate}
                 toDate={toDate}
@@ -300,37 +304,40 @@ export default function AlertsPage() {
                 onTo={setToDate}
                 onPreset={applyPreset}
               />
-              <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isFetching} className="h-7">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => refetch()}
+                disabled={isFetching}
+                className="h-7 text-xs"
+              >
                 {isFetching ? 'Syncing…' : 'Refresh'}
               </Button>
             </div>
-          </div>
 
-          {/* Category tabs (client-specific) + status + bulk */}
-          <div className="fleet-card space-y-2.5 py-3">
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-1">
               {availableCategories.map((c) => (
                 <Button
                   key={c.id}
                   type="button"
                   size="sm"
                   variant={activeCategory === c.id ? 'default' : 'outline'}
-                  className={cn('h-7 text-xs', activeCategory !== c.id && 'border-primary/15')}
+                  className={cn('h-6 px-2 text-[11px]', activeCategory !== c.id && 'border-primary/20')}
                   onClick={() => setCategory(c.id)}
                 >
                   {c.label}
-                  <span className="ml-1.5 text-[10px] opacity-80">{counts.byCat[c.id] ?? 0}</span>
+                  <span className="ml-1 tabular-nums opacity-80">{counts.byCat[c.id] ?? 0}</span>
                 </Button>
               ))}
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap gap-1">
                 {(
                   [
-                    ['all', 'All', counts.total],
                     ['open', 'Open', counts.unacked],
                     ['acked', 'Acknowledged', counts.acked],
+                    ['all', 'All', counts.total],
                   ] as const
                 ).map(([id, label, n]) => (
                   <Button
@@ -338,66 +345,65 @@ export default function AlertsPage() {
                     type="button"
                     size="sm"
                     variant={statusFilter === id ? 'secondary' : 'ghost'}
-                    className="h-7 text-xs"
+                    className="h-6 px-2 text-[11px]"
                     onClick={() => setStatusFilter(id)}
                   >
                     {label}
-                    <span className="ml-1.5 tabular-nums opacity-80">{n}</span>
+                    <span className="ml-1 tabular-nums opacity-80">{n}</span>
                   </Button>
                 ))}
               </div>
 
               <div className="flex items-center gap-1.5">
                 {selectableIds.length > 0 && (
-                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none pr-1">
+                  <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none pr-1">
                     <Checkbox checked={allSelected} onCheckedChange={toggleAll} />
-                    Select open
+                    Select
                   </label>
                 )}
                 <Button
                   size="sm"
                   variant="outline"
-                  className="h-7 text-xs"
+                  className="h-6 text-[11px] px-2"
                   disabled={!selectedOpen.length || bulkAck.isPending}
                   onClick={ackSelected}
                 >
-                  <Check className="h-3.5 w-3.5 mr-1" />
-                  Ack selected{selectedOpen.length ? ` (${selectedOpen.length})` : ''}
+                  <Check className="h-3 w-3 mr-1" />
+                  Ack{selectedOpen.length ? ` (${selectedOpen.length})` : ''}
                 </Button>
                 <Button
                   size="sm"
-                  className="h-7 text-xs"
+                  className="h-6 text-[11px] px-2"
                   disabled={!counts.unacked || bulkAck.isPending}
                   onClick={ackAll}
                 >
-                  <CheckCheck className="h-3.5 w-3.5 mr-1" />
+                  <CheckCheck className="h-3 w-3 mr-1" />
                   Ack all
                 </Button>
               </div>
             </div>
           </div>
 
-          {/* List */}
           {isLoading ? (
-            <div className="space-y-2">
-              {[1, 2, 3, 4, 5, 6].map((i) => (
-                <Skeleton key={i} className="h-16 rounded-lg" />
+            <div className="space-y-1.5">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <Skeleton key={i} className="h-12 rounded-md" />
               ))}
             </div>
           ) : filtered.length === 0 ? (
-            <EmptyState
-              icon={Bell}
-              title={list.length === 0 ? 'No alerts in this period' : 'No alerts in this filter'}
-              description={
-                list.length === 0
-                  ? 'Events from vehicles, generators, sensors, geofences, driving behaviour and fuel appear here as they fire on this account. Try widening the period.'
-                  : activeCategory === 'fuel' && (counts.byCat.fuel ?? 0) === 0
-                    ? 'No fuel fill or drop alerts in this period yet. They appear after the next fuel sync from your generators and tanks.'
+            <div className="branded-panel">
+              <EmptyState
+                icon={Bell}
+                title={list.length === 0 ? 'No alerts in this period' : 'No alerts in this filter'}
+                description={
+                  list.length === 0
+                    ? 'Configured notifications and real fuel fill/drop events appear here as they fire. Period totals stay in the Fuel module.'
                     : 'Try another category or clear the status filter.'
-              }
-            />
+                }
+              />
+            </div>
           ) : (
-            <div className="space-y-1.5">
+            <div className="branded-panel divide-y divide-border/40 overflow-hidden p-0">
               {filtered.map((alert) => {
                 const severity = severityStyles[alert.severity] ?? severityStyles.warning;
                 const SeverityIcon = severity.icon;
@@ -409,9 +415,9 @@ export default function AlertsPage() {
                   <div
                     key={alert.id}
                     className={cn(
-                      'cv-auto group rounded-lg border border-border/70 border-l-[3px] bg-card/70 px-3 py-2 flex items-start gap-2.5 transition-colors hover:bg-muted/40',
+                      'cv-auto group px-3 py-1.5 flex items-start gap-2 border-l-[3px] transition-colors hover:bg-muted/30',
                       severity.row,
-                      alert.acknowledged && 'opacity-60',
+                      alert.acknowledged && 'opacity-55',
                     )}
                   >
                     {!alert.acknowledged && (
@@ -422,38 +428,44 @@ export default function AlertsPage() {
                         aria-label="Select alert"
                       />
                     )}
-                    <div className={cn('mt-0.5 rounded-md border p-1 shrink-0', severity.badge)}>
-                      <SeverityIcon className="h-3.5 w-3.5" />
+                    <div className={cn('mt-0.5 rounded border p-0.5 shrink-0', severity.badge)}>
+                      <SeverityIcon className="h-3 w-3" />
                     </div>
 
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-semibold text-sm leading-tight">
+                        <span className="font-medium text-xs leading-tight">
                           {clientFacingText(alert.title)}
                         </span>
-                        <Badge variant="outline" className="capitalize gap-1 bg-card/70 text-[10px] py-0 h-4">
-                          <TypeIcon className="h-2.5 w-2.5" />
+                        <Badge
+                          variant="outline"
+                          className="capitalize gap-1 bg-card/70 text-[9px] py-0 h-3.5 px-1"
+                        >
+                          <TypeIcon className="h-2 w-2" />
                           {prettyType(alert.type)}
                         </Badge>
-                        <Badge variant="outline" className="text-[10px] py-0 h-4">
+                        <Badge variant="outline" className="text-[9px] py-0 h-3.5 px-1">
                           {prettySource(alert.sourceType)}
                         </Badge>
                         {alert.acknowledged && (
-                          <Badge variant="outline" className="bg-success/10 text-success border-success/20 text-[10px] py-0 h-4">
+                          <Badge
+                            variant="outline"
+                            className="bg-success/10 text-success border-success/20 text-[9px] py-0 h-3.5 px-1"
+                          >
                             Acknowledged
                           </Badge>
                         )}
                       </div>
 
                       {alert.description && (
-                        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2 break-words">
+                        <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2 break-words">
                           {clientFacingText(alert.description)}
                         </p>
                       )}
 
-                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground mt-0.5">
+                      <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground mt-0.5">
                         <span className="inline-flex items-center gap-1">
-                          <Clock className="h-3 w-3" />
+                          <Clock className="h-2.5 w-2.5" />
                           {formatDistanceToNow(occurredAt, { addSuffix: true })}
                         </span>
                         <span className="tabular-nums">{format(occurredAt, 'MMM d, HH:mm:ss')}</span>
@@ -466,9 +478,9 @@ export default function AlertsPage() {
                         variant="ghost"
                         onClick={() => ackOne(alert.id)}
                         disabled={acknowledge.isPending}
-                        className="h-7 text-xs shrink-0 opacity-70 group-hover:opacity-100"
+                        className="h-6 text-[11px] shrink-0 opacity-70 group-hover:opacity-100 px-2"
                       >
-                        <Check className="w-3.5 h-3.5 mr-1" />
+                        <Check className="w-3 h-3 mr-0.5" />
                         Ack
                       </Button>
                     )}
@@ -478,7 +490,7 @@ export default function AlertsPage() {
             </div>
           )}
 
-          <div className="fleet-card">
+          <div className="branded-panel p-3">
             <WialonNotificationsPanel />
           </div>
         </TabsContent>
@@ -521,7 +533,7 @@ function PeriodAssetControlsInline({
             type="button"
             size="sm"
             variant="outline"
-            className="h-7 px-2 text-[11px]"
+            className="h-6 px-2 text-[11px]"
             onClick={() => onPreset(id)}
           >
             {label}
@@ -529,23 +541,23 @@ function PeriodAssetControlsInline({
         ))}
       </div>
       <div className="space-y-0.5">
-        <label className="text-[10px] text-muted-foreground block">From</label>
+        <label className="text-[9px] text-muted-foreground block">From</label>
         <input
           type="date"
           value={fromDate}
           max={toDate}
-          className="h-7 w-[132px] rounded-md border border-input bg-background px-2 text-xs"
+          className="h-6 w-[124px] rounded-md border border-input bg-background px-1.5 text-[11px]"
           onChange={(e) => onFrom(e.target.value)}
         />
       </div>
       <div className="space-y-0.5">
-        <label className="text-[10px] text-muted-foreground block">To</label>
+        <label className="text-[9px] text-muted-foreground block">To</label>
         <input
           type="date"
           value={toDate}
           min={fromDate}
           max={todayStr()}
-          className="h-7 w-[132px] rounded-md border border-input bg-background px-2 text-xs"
+          className="h-6 w-[124px] rounded-md border border-input bg-background px-1.5 text-[11px]"
           onChange={(e) => onTo(e.target.value)}
         />
       </div>

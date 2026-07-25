@@ -53,10 +53,13 @@ export function AppLayout({ children, title, subtitle, actions }: AppLayoutProps
   const unackList = alertList.filter((a) => {
     if (a.acknowledged) return false;
     if (isNoiseAlertTitle(a.title, a.description, a.type)) return false;
-    // Bell only shows fresh open alerts (last 24h) — acknowledged never return here.
+    // Bell only shows fresh open alerts from the last 24h. Future stamps
+    // (period-end fuel summaries that landed as tomorrow morning in EAT) used
+    // to pass Date.now()-t < 24h because the difference was negative.
     const t = new Date(a.timestamp).getTime();
-    if (!Number.isFinite(t)) return true;
-    return Date.now() - t < 24 * 60 * 60 * 1000;
+    if (!Number.isFinite(t)) return false;
+    const ageMs = Date.now() - t;
+    return ageMs >= 0 && ageMs < 24 * 60 * 60 * 1000;
   });
   const unack = unackList.length;
   const { dataUpdatedAt, refetch: refetchFleet } = useFleetSnapshot();
