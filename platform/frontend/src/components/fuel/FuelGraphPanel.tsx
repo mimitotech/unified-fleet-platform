@@ -1,19 +1,21 @@
 /**
- * Independent Fuel Graph — prefers native Wialon report charts
- * (Processed fuel level + On/Off from render_json), then full message series.
+ * Fuel Graph — fuel level vs time from data we already have:
+ * 1) the report tables on screen (instant)
+ * 2) cached client fuel transactions for the same period (all assets)
+ *
+ * No per-unit message polling.
  */
 
-import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMemo, useState, useEffect } from 'react';
 import { format } from 'date-fns';
-import { Droplets, Loader2, RefreshCw } from 'lucide-react';
-import { clientApi } from '@/lib/api';
+import { Droplets } from 'lucide-react';
 import { FuelLevelChart } from '@/components/fuel/FuelLevelChart';
 import {
-  WialonProcessedFuelChart,
-  chartHasWialonDatasets,
-} from '@/components/fuel/WialonProcessedFuelChart';
+  fuelTransactionsFromReportTables,
+  mergeFuelGraphTransactions,
+} from '@/lib/fuelGraphFromReport';
 import type { WialonReportChart, WialonReportTable } from '@/lib/reportUtils';
+import { useFuelTransactions } from '@/services/fleet';
 import {
   Select,
   SelectContent,
@@ -21,18 +23,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Button } from '@/components/ui/button';
-import { fuelTransactionsFromReportTables } from '@/lib/fuelGraphFromReport';
-
-function chartPngSrc(data: unknown): string | null {
-  if (!data || typeof data !== 'object') return null;
-  const obj = data as Record<string, unknown>;
-  for (const key of ['image', 'png', 'base64', 'url', 'imageUrl']) {
-    const v = obj[key];
-    if (typeof v === 'string' && (v.startsWith('data:image/') || /^https?:/i.test(v))) return v;
-  }
-  return null;
-}
 
 export type FuelGraphUnitOption = { id: number; name: string };
 
@@ -46,159 +36,141 @@ type Props = {
   fallbackUnitName?: string;
 };
 
+const ALL = '__all__';
+
 export function FuelGraphPanel({
   unitOptions,
   preferredUnitId,
   fromTs,
   toTs,
   tables = [],
-  charts = [],
   fallbackUnitName = 'Asset',
 }: Props) {
-  const options = useMemo(() => {
-    const map = new Map<number, string>();
-    for (const u of unitOptions) {
-      if (Number.isFinite(u.id) && u.id > 0) map.set(u.id, u.name);
-    }
-    return [...map.entries()]
-      .map(([id, name]) => ({ id, name }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [unitOptions]);
+  const fromDate = format(new Date(fromTs * 1000), 'yyyy-MM-dd');
+  const toDate = format(new Date(toTs * 1000), 'yyyy-MM-dd');
 
-  const [unitId, setUnitId] = useState<string>('');
+  // Full client fuel ledger for the period (no assetCategory → all assets).
+  const { data: ledger, isLoading: ledgerLoading, isError, refetch } = useFuelTransactions(
+    { startDate: fromDate, endDate: toDate },
+    { enabled: Boolean(fromDate && toDate) },
+  );
+
+  const fromReport = useMemo(
+    () => fuelTransactionsFromReportTables(tables, fallbackUnitName),
+    [tables, fallbackUnitName],
+  );
+
+  const ledgerRows = useMemo(() => {
+    const rows = ledger?.transactions;
+    return Array.isArray(rows) ? rows : [];
+  }, [ledger]);
+
+  const transactions = useMemo(
+    () => mergeFuelGraphTransactions(fromReport, ledgerRows),
+    [fromReport, ledgerRows],
+  );
+
+  const assetNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const t of transactions) {
+      if (t.unitName?.trim()) names.add(t.unitName.trim());
+    }
+    for (const u of unitOptions) {
+      if (u.name?.trim()) names.add(u.name.trim());
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [transactions, unitOptions]);
+
+  const preferredName = useMemo(() => {
+    if (preferredUnitId) {
+      const hit = unitOptions.find((u) => u.id === preferredUnitId);
+      if (hit?.name) return hit.name;
+    }
+    return assetNames[0] || fallbackUnitName;
+  }, [preferredUnitId, unitOptions, assetNames, fallbackUnitName]);
+
+  const [selected, setSelected] = useState<string>(ALL);
 
   useEffect(() => {
-    if (!options.length) {
-      setUnitId('');
-      return;
-    }
-    setUnitId((prev) => {
-      if (prev && options.some((o) => String(o.id) === prev)) return prev;
-      if (preferredUnitId && options.some((o) => o.id === preferredUnitId)) {
-        return String(preferredUnitId);
-      }
-      return String(options[0].id);
+    setSelected((prev) => {
+      if (prev === ALL) return ALL;
+      if (prev && assetNames.includes(prev)) return prev;
+      return ALL;
     });
-  }, [options, preferredUnitId]);
+  }, [assetNames]);
 
-  const selectedId = Number(unitId);
-  const selectedName = options.find((o) => o.id === selectedId)?.name || fallbackUnitName;
+  const filtered = useMemo(() => {
+    if (selected === ALL) return transactions;
+    return transactions.filter((t) => t.unitName === selected);
+  }, [transactions, selected]);
 
-  const query = useQuery({
-    queryKey: ['fuel-level-series', selectedId, fromTs, toTs],
-    queryFn: () => clientApi.getWialonFuelLevelSeries(selectedId, fromTs, toTs),
-    enabled: Number.isFinite(selectedId) && selectedId > 0 && fromTs < toTs,
-    staleTime: 60_000,
-    refetchOnWindowFocus: false,
-  });
+  const vehicles = useMemo(() => assetNames.map((name) => ({ name })), [assetNames]);
 
-  const reportFallback = useMemo(
-    () => fuelTransactionsFromReportTables(tables, selectedName),
-    [tables, selectedName],
-  );
+  const fillCount = filtered.filter((t) => (t.filled || 0) > 0 || t.section === 'filling').length;
+  const drainCount = filtered.filter(
+    (t) => (t.suddenFuelDrop || 0) > 0 || t.section === 'theft',
+  ).length;
+  const usedSum = filtered.reduce((s, t) => s + (Number(t.fuelUsed) || 0), 0);
 
-  const forUnitFallback = useMemo(() => {
-    const matched = reportFallback.filter(
-      (t) => t.unitName.trim().toLowerCase() === selectedName.trim().toLowerCase(),
-    );
-    return matched.length ? matched : reportFallback;
-  }, [reportFallback, selectedName]);
-
-  const wialonCharts = useMemo(
-    () => charts.filter((c) => chartHasWialonDatasets(c) || Boolean(c.data)),
-    [charts],
-  );
+  // Report tables are enough to render immediately — never block on ledger.
+  const showLoading = ledgerLoading && !fromReport.length && !transactions.length;
 
   return (
-    <div className="space-y-4">
-      {wialonCharts.length > 0 && (
-        <div className="space-y-3">
-          <div>
-            <p className="text-sm font-semibold">Report charts (Wialon)</p>
-            <p className="text-[11px] text-muted-foreground">
-              Same processed fuel / On/Off series from the report template — zoom with the brush.
-            </p>
-          </div>
-          {wialonCharts.map((c) => {
-            if (chartHasWialonDatasets(c)) {
-              return <WialonProcessedFuelChart key={`wj-${c.index}`} chart={c} />;
-            }
-            const img = chartPngSrc(c.data);
-            if (!img) return null;
-            return (
-              <div key={`wp-${c.index}`} className="fleet-card p-3">
-                <p className="mb-2 text-xs font-semibold">{c.name}</p>
-                <img src={img} alt={c.name} className="mx-auto max-w-full rounded-md border bg-white" />
-              </div>
-            );
-          })}
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2" data-no-print>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold">Fuel Graph</p>
+          <p className="text-[11px] text-muted-foreground">
+            Fuel level vs time · filled / consumed / lost · all assets in this period
+            {transactions.length
+              ? ` · ${transactions.length.toLocaleString()} events · ${assetNames.length} assets`
+              : ''}
+            {fillCount || drainCount || usedSum
+              ? ` · ${fillCount} fills · ${drainCount} drains · ${usedSum.toFixed(1)} L used (view)`
+              : ''}
+          </p>
         </div>
-      )}
-
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2" data-no-print>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold">Unit fuel graph</p>
-            <p className="text-[11px] text-muted-foreground">
-              Full message history for one asset · processed level · fill / drain · On/Off when
-              available
-              {query.data
-                ? ` · ${query.data.pointCount.toLocaleString()} points · ${query.data.fillCount} fills · ${query.data.drainCount} drains`
-                : ''}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {options.length > 0 && (
-              <Select value={unitId || undefined} onValueChange={setUnitId}>
-                <SelectTrigger className="h-8 w-[220px] text-xs">
-                  <SelectValue placeholder="Select unit" />
-                </SelectTrigger>
-                <SelectContent className="max-h-72">
-                  {options.map((o) => (
-                    <SelectItem key={o.id} value={String(o.id)}>
-                      {o.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8 text-xs"
-              disabled={query.isFetching || !options.length}
-              onClick={() => void query.refetch()}
-            >
-              {query.isFetching ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="h-3.5 w-3.5" />
-              )}
-            </Button>
-          </div>
-        </div>
-
-        {!options.length ? (
-          <div className="fleet-card py-12 text-center text-muted-foreground">
-            <Droplets className="mx-auto mb-2 h-10 w-10 opacity-30" />
-            <p className="text-sm font-medium">Select a unit to load the fuel graph</p>
-          </div>
-        ) : (
-          <FuelLevelChart
-            transactions={query.data?.points?.length ? undefined : forUnitFallback}
-            seriesPoints={query.data?.points}
-            vehicles={[{ name: query.data?.unitName || selectedName }]}
-            isLoading={query.isLoading}
-            error={query.isError ? (query.error as Error) : null}
-            onRetry={() => void query.refetch()}
-            fromDate={format(new Date(fromTs * 1000), 'yyyy-MM-dd')}
-            toDate={format(new Date(toTs * 1000), 'yyyy-MM-dd')}
-            unitLabel="Asset"
-            dense
-          />
+        {assetNames.length > 0 && (
+          <Select value={selected} onValueChange={setSelected}>
+            <SelectTrigger className="h-8 w-[240px] text-xs">
+              <SelectValue placeholder="All assets" />
+            </SelectTrigger>
+            <SelectContent className="max-h-72">
+              <SelectItem value={ALL}>All assets ({assetNames.length})</SelectItem>
+              {assetNames.map((name) => (
+                <SelectItem key={name} value={name}>
+                  {name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         )}
       </div>
+
+      {!transactions.length && !showLoading ? (
+        <div className="fleet-card py-12 text-center text-muted-foreground">
+          <Droplets className="mx-auto mb-2 h-10 w-10 opacity-30" />
+          <p className="text-sm font-medium">No fuel events in this period</p>
+          <p className="mx-auto mt-1 max-w-md text-xs">
+            Run a fuel report with consumption, fillings, or sudden drops — or wait for the fuel
+            ledger to load for {preferredName}.
+          </p>
+        </div>
+      ) : (
+        <FuelLevelChart
+          transactions={filtered}
+          vehicles={vehicles}
+          isLoading={showLoading}
+          error={isError && !fromReport.length ? new Error('Could not load fuel ledger') : null}
+          onRetry={() => void refetch()}
+          fromDate={fromDate}
+          toDate={toDate}
+          unitLabel="Asset"
+          dense
+          multiUnit={selected === ALL}
+          hideUnitSelect
+        />
+      )}
     </div>
   );
 }

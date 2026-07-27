@@ -1,6 +1,5 @@
 /**
- * Login — media fills left; form column flush on the right; logos strip below.
- * Separated by a thin brand-green vertical line.
+ * Login — balanced media | form (green form pane); logos strip below.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -305,14 +304,13 @@ export default function Login() {
 
   const active = slides[Math.min(slide, Math.max(slides.length - 1, 0))] ?? null;
   const hasTrust = trustLogos.length > 0;
-  const mediaReady = slides.length > 0;
 
   return (
-    <div className="fixed inset-0 flex flex-col overflow-hidden bg-[#f4f7f5]">
-      {/* Media (flexes) + form (fixed right edge) — no leftover green gutter */}
+    <div className="fixed inset-0 flex flex-col overflow-hidden bg-[#004225]">
+      {/* Balanced media | form — both ~half on desktop; form column is brand green */}
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-        {/* Left: media fills all space up to the form */}
-        <section className="relative min-h-[40vh] flex-1 overflow-hidden lg:min-h-0">
+        {/* Left: media — full image visible (contain), green letterbox if needed */}
+        <section className="relative min-h-[42vh] flex-1 overflow-hidden bg-[#004225] lg:min-h-0 lg:w-1/2 lg:flex-none">
           {slides.map((s, i) => (
             <div
               key={s.id}
@@ -325,43 +323,25 @@ export default function Login() {
               <img
                 src={s.src}
                 alt=""
-                className="absolute inset-0 block h-full w-full object-cover object-center"
+                className="absolute inset-0 block h-full w-full object-contain object-center"
                 draggable={false}
               />
             </div>
           ))}
 
-          {mediaReady ? (
-            <div
-              className="pointer-events-none absolute inset-0 z-[1] bg-gradient-to-t from-black/35 via-transparent to-black/15"
-              aria-hidden
-            />
-          ) : (
-            <div className="absolute inset-0 bg-[#004225]" aria-hidden />
-          )}
-
           {active ? (
-            <div className="pointer-events-none absolute inset-x-0 top-0 z-10 p-5 sm:p-8 lg:p-10">
-              <div className="max-w-xl">
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-10 p-5 sm:p-8 lg:p-8">
+              <div className="max-w-lg rounded-lg bg-black/25 px-3 py-2 backdrop-blur-[2px]">
                 {active.eyebrow ? (
-                  <p
-                    className="mb-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-white/90"
-                    style={{ textShadow: '0 1px 8px rgba(0,0,0,0.55)' }}
-                  >
+                  <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-white/90">
                     {active.eyebrow}
                   </p>
                 ) : null}
-                <h2
-                  className="text-2xl font-bold tracking-tight text-white sm:text-3xl lg:text-[2.25rem] lg:leading-tight"
-                  style={{ textShadow: '0 2px 16px rgba(0,0,0,0.55)' }}
-                >
+                <h2 className="text-xl font-bold tracking-tight text-white sm:text-2xl lg:text-[1.75rem] lg:leading-tight">
                   {active.title}
                 </h2>
                 {active.caption ? (
-                  <p
-                    className="mt-2.5 max-w-md text-sm leading-relaxed text-white/95 sm:text-base"
-                    style={{ textShadow: '0 1px 10px rgba(0,0,0,0.5)' }}
-                  >
+                  <p className="mt-1.5 max-w-md text-sm leading-relaxed text-white/95">
                     {active.caption}
                   </p>
                 ) : null}
@@ -370,7 +350,7 @@ export default function Login() {
           ) : null}
 
           {slides.length > 1 && (
-            <div className="absolute bottom-5 left-5 z-10 flex gap-2 sm:left-8 lg:left-10">
+            <div className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 gap-2">
               {slides.map((s, i) => (
                 <button
                   key={s.id}
@@ -387,16 +367,12 @@ export default function Login() {
           )}
         </section>
 
-        {/* Green vertical separator */}
-        <div
-          className="hidden w-[3px] shrink-0 bg-[#004225] lg:block"
-          aria-hidden
-        />
+        <div className="hidden w-[3px] shrink-0 bg-[#00351e] lg:block" aria-hidden />
 
-        {/* Right: form column flush to the viewport edge */}
-        <aside className="relative z-10 flex w-full shrink-0 flex-col justify-center overflow-y-auto border-t border-[#004225]/30 bg-[#f4f7f5] px-6 py-6 sm:px-8 lg:w-[380px] lg:border-t-0 lg:px-8 lg:py-8">
-          <div className="mx-auto w-full max-w-[320px] lg:max-w-none">
-            <div className="overflow-hidden rounded-2xl border-2 border-primary/70 bg-white shadow-[0_18px_50px_-16px_rgba(0,66,37,0.55)] ring-1 ring-primary/10">
+        {/* Right: form on brand green, flush to edge, balanced width */}
+        <aside className="relative z-10 flex w-full shrink-0 flex-col justify-center overflow-y-auto border-t border-white/15 bg-[#004225] px-6 py-7 sm:px-10 lg:w-1/2 lg:border-t-0 lg:px-12 lg:py-8">
+          <div className="mx-auto w-full max-w-[420px]">
+            <div className="overflow-hidden rounded-2xl border-2 border-white/25 bg-white shadow-[0_18px_50px_-16px_rgba(0,0,0,0.45)]">
               <div className="flex flex-col items-center border-b border-primary/12 bg-white px-5 pb-4 pt-5 text-center">
                 <img src={BRAND.logo} alt={BRAND.name} className="h-14 w-auto object-contain" />
                 <h1 className="mt-2 text-xl font-extrabold tracking-tight text-primary">{BRAND.name}</h1>

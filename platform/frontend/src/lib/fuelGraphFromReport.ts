@@ -4,7 +4,7 @@ import type { WialonReportTable } from '@/lib/reportUtils';
 function colIndex(table: WialonReportTable, patterns: RegExp[]): number {
   const cols = table.columns || [];
   for (let i = 0; i < cols.length; i++) {
-    const label = String(cols[i]?.label || cols[i]?.key || '').toLowerCase();
+    const label = String(cols[i]?.label || cols[i]?.key || '').toLowerCase().trim();
     if (patterns.some((p) => p.test(label))) return i;
   }
   return -1;
@@ -19,7 +19,9 @@ function cellAt(row: Record<string, unknown>, table: WialonReportTable, idx: num
 }
 
 function parseLiters(raw: string): number | null {
-  const m = String(raw).replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+  const s = String(raw || '').trim();
+  if (!s || s === '-----' || s === '—' || s === '-') return null;
+  const m = s.replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
   if (!m) return null;
   const n = Number(m[0]);
   return Number.isFinite(n) ? n : null;
@@ -28,7 +30,7 @@ function parseLiters(raw: string): number | null {
 function parseTime(raw: string): number | null {
   const s = String(raw || '').trim();
   if (!s || s === '-----' || s === '—' || s === '-') return null;
-  const t = Date.parse(s.replace(' ', 'T'));
+  const t = Date.parse(s.includes('T') ? s : s.replace(' ', 'T'));
   if (Number.isFinite(t)) return Math.floor(t / 1000);
   return null;
 }
@@ -57,10 +59,49 @@ function emptyTx(
 }
 
 /**
- * Build FuelLevelChart transactions from Wialon report tables
- * (fillings / thefts / consumption with level + time columns).
- * Emits level points so the chart can draw fuel level vs time with
- * green fill / red drain markers (Wialon-style).
+ * Carry-forward main/reserve levels per asset (same pattern as backend enrich).
+ * Ensures consumption rows still plot a continuous fuel-level line.
+ */
+export function enrichFuelGraphLevels(transactions: FuelTransaction[]): FuelTransaction[] {
+  const byUnit = new Map<string, FuelTransaction[]>();
+  for (const tx of transactions) {
+    const key = (tx.unitName || String(tx.unitId) || '').trim() || 'Asset';
+    const list = byUnit.get(key) ?? [];
+    list.push(tx);
+    byUnit.set(key, list);
+  }
+
+  const out: FuelTransaction[] = [];
+  for (const [, unitTxs] of byUnit) {
+    const sorted = [...unitTxs].sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+    let lastMain = 0;
+    let lastReserve = 0;
+
+    for (const tx of sorted) {
+      const final = Number(tx.finalLevel) || 0;
+      const initial = Number(tx.initialLevel) || 0;
+      const levelHint = final > 0 ? final : initial > 0 ? initial : 0;
+
+      if (tx.mainTankLevel != null && tx.mainTankLevel > 0) lastMain = tx.mainTankLevel;
+      else if (tx.tank !== 'reserve' && levelHint > 0) lastMain = levelHint;
+
+      if (tx.reserveTankLevel != null && tx.reserveTankLevel > 0) lastReserve = tx.reserveTankLevel;
+      else if (tx.tank === 'reserve' && levelHint > 0) lastReserve = levelHint;
+
+      out.push({
+        ...tx,
+        mainTankLevel: lastMain > 0 ? lastMain : tx.mainTankLevel,
+        reserveTankLevel: lastReserve > 0 ? lastReserve : tx.reserveTankLevel,
+      });
+    }
+  }
+
+  return out.sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+}
+
+/**
+ * Build chart transactions from the report tables already on screen
+ * (Consumption / Fillings / Sudden Drops). Instant — no extra API.
  */
 export function fuelTransactionsFromReportTables(
   tables: WialonReportTable[],
@@ -72,32 +113,43 @@ export function fuelTransactionsFromReportTables(
   for (const table of tables) {
     const label = `${table.label || ''} ${table.name || ''}`.toLowerCase();
     const isFill = /fill|refuel|charg/.test(label);
-    const isTheft = /theft|drain|drop|drainag/.test(label);
+    const isTheft = /theft|drain|sudden|drop|drainag/.test(label);
     const section: FuelTransaction['section'] = isTheft
       ? 'theft'
       : isFill
         ? 'filling'
         : 'consumption';
 
-    const timeIdx = colIndex(table, [/^time$/, /beginning/, /start/, /date/]);
-    const groupIdx = colIndex(table, [/grouping/, /unit/, /object/, /asset/, /^name$/]);
+    const timeIdx = colIndex(table, [/^time$/, /^date$/, /time$/]);
+    const beginIdx = colIndex(table, [/beginning/, /period start/, /^from$/, /start time/]);
+    const endIdx = colIndex(table, [/^end$/, /period end/, /^to$/, /finish/, /end time/]);
+    const groupIdx = colIndex(table, [/grouping/, /unit/, /object/, /asset/, /^name$/, /vehicle/]);
     const locIdx = colIndex(table, [/location/, /address/, /place/]);
-    const filledIdx = colIndex(table, [/^filled$/, /filled amount/, /filling/, /refuel/]);
-    const dropIdx = colIndex(table, [/sudden/, /drop/, /theft/, /drain/]);
-    const initialIdx = colIndex(table, [/initial/, /start level/, /before/]);
-    const finalIdx = colIndex(table, [/final/, /end level/, /after/, /fuel level/, /^level$/]);
-    const consumedIdx = colIndex(table, [/consumed/, /fuel used/, /^used$/]);
+    const filledIdx = colIndex(table, [/^filled$/, /filled amount/, /fuel filled/, /refuel/]);
+    const dropIdx = colIndex(table, [/sudden/, /drop/, /theft/, /drain/, /drained/]);
+    const initialIdx = colIndex(table, [
+      /initial/,
+      /start level/,
+      /before/,
+      /fuel level at the beginning/,
+    ]);
+    const finalIdx = colIndex(table, [
+      /final/,
+      /end level/,
+      /after/,
+      /fuel level at the end/,
+      /^fuel level$/,
+    ]);
+    const consumedIdx = colIndex(table, [/consumed/, /fuel used/, /^used$/, /consumption/]);
     const mainLevelIdx = colIndex(table, [/main.*level/, /main tank/, /\(main\)/]);
     const reserveLevelIdx = colIndex(table, [/reserve.*level/, /reserve tank/, /\(reserve\)/, /aux/]);
 
     const isReserveTable = /reserve|secondary|tank\s*2|aux/.test(label);
 
     for (const row of table.rows || []) {
-      const timeStr = cellAt(row, table, timeIdx);
-      const ts = parseTime(timeStr);
-      if (ts == null) continue;
-
       const unitName = cellAt(row, table, groupIdx).trim() || fallbackUnitName;
+      if (!unitName || unitName === '-----') continue;
+
       const filled = parseLiters(cellAt(row, table, filledIdx)) ?? 0;
       const drop = parseLiters(cellAt(row, table, dropIdx)) ?? 0;
       const initial = parseLiters(cellAt(row, table, initialIdx));
@@ -105,18 +157,89 @@ export function fuelTransactionsFromReportTables(
       const used = parseLiters(cellAt(row, table, consumedIdx)) ?? 0;
       const mainLvl = parseLiters(cellAt(row, table, mainLevelIdx));
       const reserveLvl = parseLiters(cellAt(row, table, reserveLevelIdx));
-      const level = final ?? initial ?? mainLvl ?? reserveLvl;
-
-      if (!(filled > 0 || drop > 0 || used > 0 || level != null)) continue;
+      const location = cellAt(row, table, locIdx) || '';
 
       const tank: FuelTransaction['tank'] =
         isReserveTable || (reserveLvl != null && mainLvl == null) ? 'reserve' : 'main';
 
+      const eventTime =
+        parseTime(cellAt(row, table, timeIdx)) ??
+        parseTime(cellAt(row, table, endIdx)) ??
+        parseTime(cellAt(row, table, beginIdx));
+      const beginTs = parseTime(cellAt(row, table, beginIdx));
+      const endTs = parseTime(cellAt(row, table, endIdx));
+
+      if (
+        !(
+          filled > 0 ||
+          drop > 0 ||
+          used > 0 ||
+          initial != null ||
+          final != null ||
+          mainLvl != null ||
+          reserveLvl != null
+        )
+      ) {
+        continue;
+      }
+
+      const resolveMain = (lvl: number | null | undefined) =>
+        tank === 'main' ? (lvl ?? mainLvl ?? undefined) : mainLvl ?? undefined;
+      const resolveReserve = (lvl: number | null | undefined) =>
+        tank === 'reserve' ? (lvl ?? reserveLvl ?? undefined) : reserveLvl ?? undefined;
+
+      // Period row: beginning → end with levels / consumed
+      if (beginTs != null && endTs != null && beginTs !== endTs) {
+        if (initial != null || mainLvl != null || reserveLvl != null) {
+          n += 1;
+          const lvl = initial ?? mainLvl ?? reserveLvl ?? 0;
+          out.push(
+            emptyTx({
+              id: `rpt-${table.index}-${n}-b`,
+              unitId: unitName,
+              unitName,
+              section,
+              tank,
+              timestamp: beginTs,
+              time: cellAt(row, table, beginIdx),
+              location,
+              initialLevel: lvl,
+              finalLevel: lvl,
+              mainTankLevel: resolveMain(lvl),
+              reserveTankLevel: resolveReserve(lvl),
+            }),
+          );
+        }
+        n += 1;
+        const endLvl = final ?? mainLvl ?? reserveLvl ?? initial ?? 0;
+        out.push(
+          emptyTx({
+            id: `rpt-${table.index}-${n}-e`,
+            unitId: unitName,
+            unitName,
+            section,
+            tank,
+            timestamp: endTs,
+            time: cellAt(row, table, endIdx),
+            location,
+            filled: filled > 0 ? filled : 0,
+            suddenFuelDrop: drop > 0 ? drop : 0,
+            fuelUsed: used > 0 ? used : 0,
+            initialLevel: initial ?? 0,
+            finalLevel: endLvl,
+            mainTankLevel: resolveMain(endLvl),
+            reserveTankLevel: resolveReserve(endLvl),
+          }),
+        );
+        continue;
+      }
+
+      if (eventTime == null) continue;
+
       n += 1;
       const baseId = `rpt-${table.index}-${n}`;
-      const location = cellAt(row, table, locIdx) || '';
+      const level = final ?? initial ?? mainLvl ?? reserveLvl;
 
-      // Pre-event level (so the line shows the jump at fill/drain time)
       if (initial != null && final != null && initial !== final) {
         out.push(
           emptyTx({
@@ -125,13 +248,13 @@ export function fuelTransactionsFromReportTables(
             unitName,
             section,
             tank,
-            timestamp: Math.max(0, ts - 1),
-            time: timeStr,
+            timestamp: Math.max(0, eventTime - 1),
+            time: cellAt(row, table, timeIdx) || String(eventTime),
             location,
             initialLevel: initial,
             finalLevel: initial,
-            mainTankLevel: tank === 'main' ? initial : mainLvl ?? undefined,
-            reserveTankLevel: tank === 'reserve' ? initial : reserveLvl ?? undefined,
+            mainTankLevel: resolveMain(initial),
+            reserveTankLevel: resolveReserve(initial),
           }),
         );
       }
@@ -143,26 +266,34 @@ export function fuelTransactionsFromReportTables(
           unitName,
           section,
           tank,
-          timestamp: ts,
-          time: timeStr,
+          timestamp: eventTime,
+          time: cellAt(row, table, timeIdx) || String(eventTime),
           location,
           filled: filled > 0 ? filled : 0,
           suddenFuelDrop: drop > 0 ? drop : 0,
           fuelUsed: used > 0 ? used : 0,
           initialLevel: initial ?? 0,
           finalLevel: final ?? level ?? 0,
-          mainTankLevel:
-            tank === 'main'
-              ? (final ?? level ?? mainLvl ?? undefined)
-              : mainLvl ?? undefined,
-          reserveTankLevel:
-            tank === 'reserve'
-              ? (final ?? level ?? reserveLvl ?? undefined)
-              : reserveLvl ?? undefined,
+          mainTankLevel: resolveMain(final ?? level),
+          reserveTankLevel: resolveReserve(final ?? level),
         }),
       );
     }
   }
 
-  return out.sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+  return enrichFuelGraphLevels(out);
+}
+
+/** Merge report-derived points with cached fuel ledger rows (same client assets). */
+export function mergeFuelGraphTransactions(
+  primary: FuelTransaction[],
+  secondary: FuelTransaction[],
+): FuelTransaction[] {
+  const key = (t: FuelTransaction) =>
+    `${t.unitName}|${t.timestamp}|${t.section}|${Number(t.filled) || 0}|${Number(t.fuelUsed) || 0}|${Number(t.suddenFuelDrop) || 0}`;
+  const map = new Map<string, FuelTransaction>();
+  for (const t of secondary) map.set(key(t), t);
+  // Report rows win on collision (exact table the user just ran).
+  for (const t of primary) map.set(key(t), t);
+  return enrichFuelGraphLevels([...map.values()]);
 }
