@@ -1,5 +1,6 @@
 /**
- * Login — balanced media | form (green form pane); logos strip below.
+ * Login — balanced media | form; slide copy on the form side; logos on white.
+ * Layout stays flush (no gutters) across desktop / tablet / mobile.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -10,7 +11,7 @@ import { LoadingButton } from '@/components/shared/LoadingButton';
 import { PasswordInput } from '@/components/shared/PasswordInput';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ArrowLeft, KeyRound, LogIn } from 'lucide-react';
+import { ArrowLeft, ExternalLink, KeyRound, LogIn } from 'lucide-react';
 import { notify } from '@/lib/notify';
 import { BRAND } from '@/lib/branding';
 import { postLoginPath } from '@/lib/authRedirect';
@@ -32,6 +33,8 @@ type TrustLogo = {
 };
 
 type AuthView = 'login' | 'forgot-email' | 'forgot-reset';
+
+const WIALON_HOSTING_URL = 'https://hosting.wialon.com';
 
 const DEFAULT_SLIDES: Slide[] = [
   {
@@ -163,13 +166,9 @@ export default function Login() {
         caption: s.details || '',
       }));
     }
-
-    // While loading / on network error: keep last uploaded slides — never flash stock art.
     if (slidesPending || !slidesFetched || slidesError) {
       return readCachedSlides();
     }
-
-    // API answered successfully with zero enabled slides → built-in fallback only then.
     if (slidesSuccess) return DEFAULT_SLIDES;
     return readCachedSlides();
   }, [remote, slidesPending, slidesFetched, slidesError, slidesSuccess]);
@@ -304,13 +303,14 @@ export default function Login() {
 
   const active = slides[Math.min(slide, Math.max(slides.length - 1, 0))] ?? null;
   const hasTrust = trustLogos.length > 0;
+  const hasSlideCopy = Boolean(active && (active.eyebrow || active.title || active.caption));
 
   return (
     <div className="fixed inset-0 flex flex-col overflow-hidden bg-[#004225]">
-      {/* Balanced media | form — both ~half on desktop; form column is brand green */}
-      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-        {/* Left: media — full image visible (contain), green letterbox if needed */}
-        <section className="relative min-h-[42vh] flex-1 overflow-hidden bg-[#004225] lg:min-h-0 lg:w-1/2 lg:flex-none">
+      {/* Media | form — equal halves on lg+, stacked on small; no outer gutters */}
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
+        {/* Media: image only (copy lives on the form side) */}
+        <section className="relative h-[36vh] min-h-[200px] max-h-[42vh] shrink-0 overflow-hidden bg-[#004225] md:h-auto md:max-h-none md:min-h-0 md:w-1/2 md:flex-none md:shrink">
           {slides.map((s, i) => (
             <div
               key={s.id}
@@ -329,28 +329,8 @@ export default function Login() {
             </div>
           ))}
 
-          {active ? (
-            <div className="pointer-events-none absolute inset-x-0 top-0 z-10 p-5 sm:p-8 lg:p-8">
-              <div className="max-w-lg rounded-lg bg-black/25 px-3 py-2 backdrop-blur-[2px]">
-                {active.eyebrow ? (
-                  <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-white/90">
-                    {active.eyebrow}
-                  </p>
-                ) : null}
-                <h2 className="text-xl font-bold tracking-tight text-white sm:text-2xl lg:text-[1.75rem] lg:leading-tight">
-                  {active.title}
-                </h2>
-                {active.caption ? (
-                  <p className="mt-1.5 max-w-md text-sm leading-relaxed text-white/95">
-                    {active.caption}
-                  </p>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-
           {slides.length > 1 && (
-            <div className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 gap-2">
+            <div className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 gap-1.5 md:bottom-4 md:gap-2">
               {slides.map((s, i) => (
                 <button
                   key={s.id}
@@ -359,7 +339,7 @@ export default function Login() {
                   onClick={() => setSlide(i)}
                   className={cn(
                     'h-1.5 rounded-full transition-all',
-                    i === slide ? 'w-7 bg-white' : 'w-1.5 bg-white/45 hover:bg-white/75',
+                    i === slide ? 'w-6 bg-white md:w-7' : 'w-1.5 bg-white/45 hover:bg-white/75',
                   )}
                 />
               ))}
@@ -367,15 +347,39 @@ export default function Login() {
           )}
         </section>
 
-        <div className="hidden w-[3px] shrink-0 bg-[#00351e] lg:block" aria-hidden />
+        <div className="hidden w-[3px] shrink-0 bg-[#00351e] md:block" aria-hidden />
 
-        {/* Right: form on brand green, flush to edge, balanced width */}
-        <aside className="relative z-10 flex w-full shrink-0 flex-col justify-center overflow-y-auto border-t border-white/15 bg-[#004225] px-6 py-7 sm:px-10 lg:w-1/2 lg:border-t-0 lg:px-12 lg:py-8">
-          <div className="mx-auto w-full max-w-[420px]">
+        {/* Form column — green pane, copy on top, card below */}
+        <aside className="relative z-10 flex min-h-0 w-full flex-1 flex-col overflow-y-auto border-t border-white/15 bg-[#004225] md:w-1/2 md:flex-none md:border-t-0">
+          <div className="mx-auto flex w-full max-w-[440px] flex-1 flex-col justify-center gap-4 px-5 py-5 sm:gap-5 sm:px-8 sm:py-6 lg:px-10 lg:py-7">
+            {/* Slide copy — syncs with media; sits above the form */}
+            {hasSlideCopy && active ? (
+              <div
+                key={active.id}
+                className="animate-fade-in text-white"
+              >
+                {active.eyebrow ? (
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/80 sm:text-[11px]">
+                    {active.eyebrow}
+                  </p>
+                ) : null}
+                <h2 className="text-lg font-bold tracking-tight text-white sm:text-xl lg:text-[1.35rem] lg:leading-snug">
+                  {active.title}
+                </h2>
+                {active.caption ? (
+                  <p className="mt-1 text-xs leading-relaxed text-white/90 sm:text-sm">
+                    {active.caption}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="overflow-hidden rounded-2xl border-2 border-white/25 bg-white shadow-[0_18px_50px_-16px_rgba(0,0,0,0.45)]">
-              <div className="flex flex-col items-center border-b border-primary/12 bg-white px-5 pb-4 pt-5 text-center">
-                <img src={BRAND.logo} alt={BRAND.name} className="h-14 w-auto object-contain" />
-                <h1 className="mt-2 text-xl font-extrabold tracking-tight text-primary">{BRAND.name}</h1>
+              <div className="flex flex-col items-center border-b border-primary/12 bg-white px-5 pb-3.5 pt-4 text-center sm:pb-4 sm:pt-5">
+                <img src={BRAND.logo} alt={BRAND.name} className="h-12 w-auto object-contain sm:h-14" />
+                <h1 className="mt-1.5 text-lg font-extrabold tracking-tight text-primary sm:mt-2 sm:text-xl">
+                  {BRAND.name}
+                </h1>
                 <p className="mt-0.5 text-[11px] font-semibold leading-snug text-primary/70">
                   {view === 'login'
                     ? BRAND.fullName
@@ -385,7 +389,7 @@ export default function Login() {
                 </p>
               </div>
 
-              <div className="p-5 sm:p-6">
+              <div className="p-4 sm:p-5 sm:pt-5">
                 {view === 'login' && (
                   <form onSubmit={handleSubmit} className="space-y-3.5">
                     <div className="space-y-1">
@@ -439,6 +443,30 @@ export default function Login() {
                       <LogIn className="mr-1.5 h-4 w-4" />
                       Sign In
                     </LoadingButton>
+
+                    <div className="relative py-1">
+                      <div className="absolute inset-0 flex items-center" aria-hidden>
+                        <div className="w-full border-t border-slate-200" />
+                      </div>
+                      <div className="relative flex justify-center">
+                        <span className="bg-white px-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                          or
+                        </span>
+                      </div>
+                    </div>
+
+                    <a
+                      href={WIALON_HOSTING_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border-2 border-primary/20 bg-primary/[0.04] text-sm font-bold text-primary transition-colors hover:border-primary/40 hover:bg-primary/[0.08]"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                      Open Wialon Hosting
+                    </a>
+                    <p className="text-center text-[10px] leading-snug text-slate-500">
+                      Already have a telematics console account? Continue at hosting.wialon.com
+                    </p>
                   </form>
                 )}
 
@@ -559,28 +587,25 @@ export default function Login() {
         </aside>
       </div>
 
-      {/* Full-width trusted-by strip */}
+      {/* Trusted-by — solid white strip so logos never sit on green */}
       {hasTrust ? (
-        <div className="relative z-20 shrink-0 border-t border-white/20 bg-[#004225]">
-          <div className="flex items-center gap-3 px-3 py-3 sm:gap-5 sm:px-6 sm:py-3.5">
-            <p
-              className="shrink-0 text-[11px] font-extrabold uppercase tracking-[0.2em] text-white sm:text-xs"
-              style={{ textShadow: '0 1px 6px rgba(0,0,0,0.45)' }}
-            >
+        <div className="relative z-20 shrink-0 border-t border-slate-200 bg-white">
+          <div className="flex items-center gap-3 px-3 py-2.5 sm:gap-4 sm:px-5 sm:py-3">
+            <p className="shrink-0 text-[10px] font-extrabold uppercase tracking-[0.18em] text-primary sm:text-[11px]">
               Trusted by
             </p>
-            <div className="min-w-0 flex-1 overflow-hidden rounded-lg bg-white/95 px-3 py-2.5">
+            <div className="min-w-0 flex-1 overflow-hidden">
               <div className="login-trust-marquee-track flex items-center gap-10 pr-10 sm:gap-12">
                 {marqueeLogos.map((logo, idx) => (
                   <div
                     key={`${logo.id}-${idx}`}
-                    className="flex h-14 shrink-0 items-center justify-center sm:h-16"
+                    className="flex h-11 shrink-0 items-center justify-center bg-white sm:h-12"
                     title={logo.name}
                   >
                     <img
                       src={logo.imageUrl}
                       alt={logo.name}
-                      className="max-h-12 max-w-[160px] object-contain sm:max-h-14 sm:max-w-[200px]"
+                      className="max-h-10 max-w-[140px] bg-white object-contain sm:max-h-11 sm:max-w-[180px]"
                       draggable={false}
                     />
                   </div>

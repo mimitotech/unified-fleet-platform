@@ -183,9 +183,9 @@ export function UnitDetailPanel({
   className,
 }: Props) {
   const { user } = useAuth();
-  // Parameters are admin-facing raw payload; operators use Sensors.
-  const canSeeParameters =
-    user?.role === 'tenant_admin' || isSystemRole(user?.role);
+  // Raw Live parameters (io_*, prior, …) are platform-admin only.
+  // Client portal users — including tenant_admin — use Sensors instead.
+  const canSeeParameters = isSystemRole(user?.role);
 
   const wialonId =
     unit?.wialonId ??
