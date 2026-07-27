@@ -104,6 +104,54 @@ function writeCachedLogos(logos: TrustLogo[]) {
   }
 }
 
+function LoginFleetBackdrop() {
+  return (
+    <div className="login-fleet-backdrop" aria-hidden>
+      <div className="login-fleet-backdrop__base" />
+      <div className="login-fleet-backdrop__grid" />
+      <div className="login-fleet-backdrop__scan" />
+
+      <div className="login-fleet-backdrop__radar">
+        <div className="login-fleet-backdrop__radar-sweep" />
+      </div>
+
+      <svg className="login-fleet-backdrop__svg" viewBox="0 0 400 640" preserveAspectRatio="xMidYMid slice">
+        <path
+          className="login-fleet-backdrop__route-b"
+          d="M40 520 C90 480, 70 400, 130 360 S220 300, 200 240 S140 160, 210 120 S320 90, 360 40"
+        />
+        <path
+          className="login-fleet-backdrop__route-a"
+          d="M20 580 C80 540, 110 470, 160 430 S250 390, 280 320 S260 240, 310 190 S370 140, 390 80"
+        />
+        <path
+          className="login-fleet-backdrop__route-b"
+          d="M60 80 C120 140, 90 200, 150 250 S260 280, 240 360 S180 430, 230 490 S320 540, 350 600"
+        />
+      </svg>
+
+      <div className="login-fleet-backdrop__pin" style={{ left: '18%', top: '22%' }}>
+        <span className="login-fleet-backdrop__pin-ring" />
+        <span className="login-fleet-backdrop__pin-core" />
+      </div>
+      <div className="login-fleet-backdrop__pin" style={{ left: '72%', top: '38%', animationDelay: '0.6s' }}>
+        <span className="login-fleet-backdrop__pin-ring" style={{ animationDelay: '0.6s' }} />
+        <span className="login-fleet-backdrop__pin-core" style={{ animationDelay: '0.6s' }} />
+      </div>
+      <div className="login-fleet-backdrop__pin" style={{ left: '42%', top: '68%', animationDelay: '1.2s' }}>
+        <span className="login-fleet-backdrop__pin-ring" style={{ animationDelay: '1.2s' }} />
+        <span className="login-fleet-backdrop__pin-core" style={{ animationDelay: '1.2s' }} />
+      </div>
+      <div className="login-fleet-backdrop__pin" style={{ left: '78%', top: '78%', animationDelay: '1.8s' }}>
+        <span className="login-fleet-backdrop__pin-ring" style={{ animationDelay: '1.8s' }} />
+        <span className="login-fleet-backdrop__pin-core" style={{ animationDelay: '1.8s' }} />
+      </div>
+
+      <div className="login-fleet-backdrop__orbit" />
+    </div>
+  );
+}
+
 export default function Login() {
   const { signIn } = useAuth();
   const [email, setEmail] = useState('');
@@ -349,9 +397,10 @@ export default function Login() {
 
         <div className="hidden w-[3px] shrink-0 bg-[#00351e] md:block" aria-hidden />
 
-        {/* Form column — green pane, copy on top, card below */}
-        <aside className="relative z-10 flex min-h-0 w-full flex-1 flex-col overflow-y-auto border-t border-white/15 bg-[#004225] md:w-1/2 md:flex-none md:border-t-0">
-          <div className="mx-auto flex w-full max-w-[440px] flex-1 flex-col justify-center gap-4 px-5 py-5 sm:gap-5 sm:px-8 sm:py-6 lg:px-10 lg:py-7">
+        {/* Form column — animated fleet backdrop, copy on top, card below */}
+        <aside className="relative z-10 flex min-h-0 w-full flex-1 flex-col overflow-y-auto border-t border-white/15 md:w-1/2 md:flex-none md:border-t-0">
+          <LoginFleetBackdrop />
+          <div className="relative z-10 mx-auto flex w-full max-w-[440px] flex-1 flex-col justify-center gap-4 px-5 py-5 sm:gap-5 sm:px-8 sm:py-6 lg:px-10 lg:py-7">
             {/* Slide copy — syncs with media; sits above the form */}
             {hasSlideCopy && active ? (
               <div
@@ -464,9 +513,6 @@ export default function Login() {
                       <ExternalLink className="h-3.5 w-3.5 shrink-0" />
                       Open Wialon Hosting
                     </a>
-                    <p className="text-center text-[10px] leading-snug text-slate-500">
-                      Already have a telematics console account? Continue at hosting.wialon.com
-                    </p>
                   </form>
                 )}
 

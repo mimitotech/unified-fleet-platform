@@ -522,6 +522,199 @@
   .login-trust-marquee-track:hover {
     animation-play-state: paused;
   }
+
+  /* Login form pane — live fleet / tracking backdrop */
+  @keyframes login-grid-drift {
+    from { transform: translate3d(0, 0, 0); }
+    to { transform: translate3d(-48px, -48px, 0); }
+  }
+
+  @keyframes login-route-dash {
+    to { stroke-dashoffset: -220; }
+  }
+
+  @keyframes login-route-flow {
+    0% { stroke-dashoffset: 0; opacity: 0.35; }
+    50% { opacity: 0.85; }
+    100% { stroke-dashoffset: -160; opacity: 0.35; }
+  }
+
+  @keyframes login-radar-sweep {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes login-pin-pulse {
+    0%, 100% { transform: scale(1); opacity: 0.55; }
+    50% { transform: scale(1.85); opacity: 0; }
+  }
+
+  @keyframes login-beacon {
+    0%, 100% { opacity: 0.45; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.12); }
+  }
+
+  @keyframes login-orbit {
+    from { transform: rotate(0deg) translateX(38px) rotate(0deg); }
+    to { transform: rotate(360deg) translateX(38px) rotate(-360deg); }
+  }
+
+  @keyframes login-scan-y {
+    0%, 100% { transform: translateY(-8%); opacity: 0; }
+    15% { opacity: 0.35; }
+    50% { transform: translateY(108%); opacity: 0.2; }
+    85% { opacity: 0; }
+  }
+
+  @keyframes login-glow-breathe {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 0.85; }
+  }
+
+  .login-fleet-backdrop {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    isolation: isolate;
+  }
+
+  .login-fleet-backdrop__base {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 90% 70% at 15% 10%, rgba(34, 197, 94, 0.28), transparent 55%),
+      radial-gradient(ellipse 80% 60% at 90% 85%, rgba(16, 185, 129, 0.22), transparent 50%),
+      radial-gradient(ellipse 60% 50% at 50% 50%, rgba(0, 66, 37, 0.4), transparent 70%),
+      linear-gradient(155deg, #003018 0%, #004225 42%, #0a5c38 78%, #00351e 100%);
+  }
+
+  .login-fleet-backdrop__grid {
+    position: absolute;
+    inset: -20%;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.055) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.055) 1px, transparent 1px);
+    background-size: 48px 48px;
+    animation: login-grid-drift 28s linear infinite;
+    mask-image: radial-gradient(ellipse 75% 70% at 50% 45%, #000 20%, transparent 75%);
+  }
+
+  .login-fleet-backdrop__scan {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 28%;
+    background: linear-gradient(
+      180deg,
+      transparent 0%,
+      rgba(134, 239, 172, 0.12) 45%,
+      transparent 100%
+    );
+    animation: login-scan-y 9s ease-in-out infinite;
+  }
+
+  .login-fleet-backdrop__svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  .login-fleet-backdrop__route-a {
+    fill: none;
+    stroke: rgba(134, 239, 172, 0.55);
+    stroke-width: 1.75;
+    stroke-linecap: round;
+    stroke-dasharray: 10 14;
+    animation: login-route-flow 6s linear infinite;
+  }
+
+  .login-fleet-backdrop__route-b {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.28);
+    stroke-width: 1.25;
+    stroke-linecap: round;
+    stroke-dasharray: 4 10;
+    animation: login-route-dash 8s linear infinite;
+  }
+
+  .login-fleet-backdrop__radar {
+    position: absolute;
+    width: min(52vw, 280px);
+    height: min(52vw, 280px);
+    right: -8%;
+    top: 8%;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background:
+      radial-gradient(circle at center, transparent 42%, rgba(255, 255, 255, 0.04) 43%, transparent 44%),
+      radial-gradient(circle at center, transparent 68%, rgba(255, 255, 255, 0.05) 69%, transparent 70%);
+    animation: login-glow-breathe 5s ease-in-out infinite;
+  }
+
+  .login-fleet-backdrop__radar-sweep {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(
+      from 0deg,
+      transparent 0deg,
+      rgba(74, 222, 128, 0.28) 40deg,
+      transparent 70deg
+    );
+    animation: login-radar-sweep 7.5s linear infinite;
+  }
+
+  .login-fleet-backdrop__pin {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    margin: -5px 0 0 -5px;
+  }
+
+  .login-fleet-backdrop__pin-core {
+    position: absolute;
+    inset: 2px;
+    border-radius: 50%;
+    background: #86efac;
+    box-shadow: 0 0 10px rgba(134, 239, 172, 0.85);
+    animation: login-beacon 2.4s ease-in-out infinite;
+  }
+
+  .login-fleet-backdrop__pin-ring {
+    position: absolute;
+    inset: -6px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(134, 239, 172, 0.65);
+    animation: login-pin-pulse 2.8s ease-out infinite;
+  }
+
+  .login-fleet-backdrop__orbit {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    left: 22%;
+    top: 62%;
+    border-radius: 50%;
+    background: #fbbf24;
+    box-shadow: 0 0 12px rgba(251, 191, 36, 0.7);
+    animation: login-orbit 14s linear infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .login-fleet-backdrop__grid,
+    .login-fleet-backdrop__scan,
+    .login-fleet-backdrop__route-a,
+    .login-fleet-backdrop__route-b,
+    .login-fleet-backdrop__radar,
+    .login-fleet-backdrop__radar-sweep,
+    .login-fleet-backdrop__pin-core,
+    .login-fleet-backdrop__pin-ring,
+    .login-fleet-backdrop__orbit {
+      animation: none !important;
+    }
+  }
 }
 
 @layer utilities {
