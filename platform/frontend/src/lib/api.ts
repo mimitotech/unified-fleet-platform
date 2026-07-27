@@ -1369,6 +1369,36 @@ export const clientApi = {
       `/api/client/wialon/fuel/trend${qs ? `?${qs}` : ''}`
     );
   },
+  getWialonFuelLevelSeries: (unitId: number, from: number, to: number) => {
+    const q = new URLSearchParams({
+      unitId: String(unitId),
+      from: String(from),
+      to: String(to),
+    });
+    const days = Math.max(1, Math.ceil((to - from) / 86400));
+    const timeoutMs =
+      days <= 1 ? 60_000 : days <= 7 ? 120_000 : days <= 30 ? 180_000 : 5 * 60_000;
+    return api<{
+      unitId: number;
+      unitName: string;
+      from: number;
+      to: number;
+      pointCount: number;
+      fillCount: number;
+      drainCount: number;
+      points: Array<{
+        t: number;
+        liters: number;
+        processed?: number;
+        main: number | null;
+        reserve: number | null;
+        engineOn?: number | null;
+        event: 'level' | 'refill' | 'drain';
+        delta: number;
+      }>;
+      fetchedAt: string;
+    }>(`/api/client/wialon/fuel/level-series?${q}`, { timeoutMs });
+  },
   getWialonGeneratorEngineHours: (from?: string, to?: string, refresh = false, unitId?: number) => {
     const q = new URLSearchParams();
     if (from) q.set('from', from);

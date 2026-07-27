@@ -1,5 +1,5 @@
 /**
- * Login — split layout: full-bleed media on the left, sign-in form + trust logos on the right.
+ * Login — media left + form right above a full-width “Trusted by” logo strip.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -307,8 +307,10 @@ export default function Login() {
   const mediaReady = slides.length > 0;
 
   return (
-    <div className="fixed inset-0 flex flex-col overflow-hidden bg-[#004225] lg:flex-row">
-      {/* Left: media — full panel, no blur, fills the side */}
+    <div className="fixed inset-0 flex flex-col overflow-hidden bg-[#004225]">
+      {/* Top: media left + form right — ends where the logos strip begins */}
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
+      {/* Left: media */}
       <section className="relative min-h-[38vh] flex-1 overflow-hidden lg:min-h-0 lg:w-[66%] lg:flex-none">
         {slides.map((s, i) => (
           <div
@@ -382,8 +384,8 @@ export default function Login() {
         )}
       </section>
 
-      {/* Right: narrow form + logos beneath — never covers the media */}
-      <aside className="relative z-10 flex w-full flex-col justify-center bg-[#f4f7f5] px-5 py-6 sm:px-8 lg:w-[34%] lg:min-w-[300px] lg:max-w-[400px] lg:flex-none lg:px-7 lg:py-8">
+      {/* Right: form only */}
+      <aside className="relative z-10 flex w-full flex-col justify-center overflow-y-auto bg-[#f4f7f5] px-5 py-6 sm:px-8 lg:w-[34%] lg:min-w-[300px] lg:max-w-[400px] lg:flex-none lg:px-7 lg:py-8">
         <div className="mx-auto w-full max-w-[320px]">
           <div className="overflow-hidden rounded-2xl border-2 border-primary/70 bg-white shadow-[0_18px_50px_-16px_rgba(0,66,37,0.55)] ring-1 ring-primary/10">
             <div className="flex flex-col items-center border-b border-primary/12 bg-white px-5 pb-4 pt-5 text-center">
@@ -568,34 +570,41 @@ export default function Login() {
               </div>
             </div>
           </div>
-
-          {hasTrust ? (
-            <div className="mt-5 overflow-hidden rounded-xl border border-slate-200/80 bg-white px-3 py-3 shadow-sm">
-              <p className="mb-2 text-center text-[9px] font-extrabold uppercase tracking-[0.2em] text-primary">
-                Trusted by
-              </p>
-              <div className="overflow-hidden">
-                <div className="login-trust-marquee-track flex items-center gap-8 pr-8">
-                  {marqueeLogos.map((logo, idx) => (
-                    <div
-                      key={`${logo.id}-${idx}`}
-                      className="flex h-12 shrink-0 items-center justify-center"
-                      title={logo.name}
-                    >
-                      <img
-                        src={logo.imageUrl}
-                        alt={logo.name}
-                        className="max-h-10 max-w-[140px] object-contain sm:max-w-[160px]"
-                        draggable={false}
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          ) : null}
         </div>
       </aside>
+      </div>
+
+      {/* Full-width trusted-by strip — below media + form, never over the media */}
+      {hasTrust ? (
+        <div className="relative z-20 shrink-0 border-t border-white/20 bg-[#004225]">
+          <div className="flex items-center gap-3 px-3 py-3 sm:gap-5 sm:px-6 sm:py-3.5">
+            <p
+              className="shrink-0 text-[11px] font-extrabold uppercase tracking-[0.2em] text-white sm:text-xs"
+              style={{ textShadow: '0 1px 6px rgba(0,0,0,0.45)' }}
+            >
+              Trusted by
+            </p>
+            <div className="min-w-0 flex-1 overflow-hidden rounded-lg bg-white/95 px-3 py-2.5">
+              <div className="login-trust-marquee-track flex items-center gap-10 pr-10 sm:gap-12">
+                {marqueeLogos.map((logo, idx) => (
+                  <div
+                    key={`${logo.id}-${idx}`}
+                    className="flex h-14 shrink-0 items-center justify-center sm:h-16"
+                    title={logo.name}
+                  >
+                    <img
+                      src={logo.imageUrl}
+                      alt={logo.name}
+                      className="max-h-12 max-w-[160px] object-contain sm:max-h-14 sm:max-w-[200px]"
+                      draggable={false}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -487,47 +487,78 @@ export class WialonLiveService {
 
         for (const att of indexesToTry) {
           try {
-            const chart = await client.request<unknown>('report/get_result_chart', {
-              attachmentIndex: att.index,
-              action: 1,
-              width: 900,
-              height: 360,
-              autoScaleY: 1,
-              pixelFrom: 0,
-              pixelTo: 0,
-              flags: 0,
-            });
-            if (chart == null) continue;
-            if (typeof chart === 'object' && !Array.isArray(chart) && !Object.keys(chart as object).length) {
-              continue;
+            // Prefer JSON datasets (processed fuel, on/off, markers) — matches Wialon Hosting charts.
+            let jsonData: Record<string, unknown> | null = null;
+            try {
+              const rendered = await client.request<Record<string, unknown>>('report/render_json', {
+                attachmentIndex: att.index,
+                width: 1100,
+                useCrop: 0,
+              });
+              if (rendered && typeof rendered === 'object' && (rendered.datasets || rendered.markers)) {
+                jsonData = rendered;
+              }
+            } catch {
+              /* fall through to PNG */
             }
 
-            let data: unknown = chart;
-            if (typeof chart === 'string') {
-              const s = chart.trim();
-              data = s.startsWith('data:image/')
-                ? { image: s }
-                : { image: `data:image/png;base64,${s.replace(/\s+/g, '')}` };
-            } else if (Buffer.isBuffer(chart)) {
-              data = { image: `data:image/png;base64,${chart.toString('base64')}` };
-            } else if (typeof chart === 'object') {
-              const obj = chart as Record<string, unknown>;
-              // Normalize common Wialon PNG / base64 fields for the frontend renderer.
-              for (const key of ['image', 'png', 'base64', 'data', 'content'] as const) {
-                const v = obj[key];
-                if (typeof v === 'string' && v.length > 40 && !v.startsWith('data:image/') && !/^https?:/i.test(v)) {
-                  obj[key] = `data:image/png;base64,${v.replace(/\s+/g, '')}`;
+            let imageData: Record<string, unknown> | null = null;
+            try {
+              const chart = await client.request<unknown>('report/get_result_chart', {
+                attachmentIndex: att.index,
+                action: 1,
+                width: 1100,
+                height: 420,
+                autoScaleY: 1,
+                pixelFrom: 0,
+                pixelTo: 0,
+                flags: 0x100 | 0x01,
+              });
+              if (chart != null) {
+                if (typeof chart === 'string') {
+                  const s = chart.trim();
+                  imageData = {
+                    image: s.startsWith('data:image/')
+                      ? s
+                      : `data:image/png;base64,${s.replace(/\s+/g, '')}`,
+                  };
+                } else if (Buffer.isBuffer(chart)) {
+                  imageData = { image: `data:image/png;base64,${chart.toString('base64')}` };
+                } else if (typeof chart === 'object' && !Array.isArray(chart)) {
+                  const obj = { ...(chart as Record<string, unknown>) };
+                  for (const key of ['image', 'png', 'base64', 'data', 'content'] as const) {
+                    const v = obj[key];
+                    if (
+                      typeof v === 'string' &&
+                      v.length > 40 &&
+                      !v.startsWith('data:image/') &&
+                      !/^https?:/i.test(v)
+                    ) {
+                      obj[key] = `data:image/png;base64,${v.replace(/\s+/g, '')}`;
+                    }
+                  }
+                  imageData = obj;
                 }
               }
-              if (!obj.name && att.name) obj.name = att.name;
-              data = obj;
+            } catch {
+              /* optional PNG */
             }
+
+            if (!jsonData && !imageData) continue;
+
+            const data: Record<string, unknown> = {
+              ...(imageData || {}),
+              ...(jsonData || {}),
+              name: att.name,
+            };
+            if (jsonData?.datasets) data.datasets = jsonData.datasets;
+            if (jsonData?.markers) data.markers = jsonData.markers;
+            if (jsonData?.mmi) data.mmi = jsonData.mmi;
+            if (jsonData?.interruptions) data.interruptions = jsonData.interruptions;
 
             chartsOut.push({
               index: att.index,
-              name: String(
-                (typeof data === 'object' && data && (data as { name?: string }).name) || att.name,
-              ),
+              name: String(data.name || att.name),
               data,
             });
           } catch {

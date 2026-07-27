@@ -378,6 +378,25 @@ router.get('/wialon/fuel/events', requireTenant, async (req: TenantRequest, res)
     return error(res, (e as Error).message);
   }
 });
+router.get('/wialon/fuel/level-series', requireTenant, async (req: TenantRequest, res) => {
+  try {
+    req.setTimeout(5 * 60 * 1000);
+    const unitId = Number(req.query.unitId);
+    const from = Number(req.query.from);
+    const to = Number(req.query.to);
+    if (!Number.isFinite(unitId) || unitId <= 0) return error(res, 'unitId is required');
+    if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) {
+      return error(res, 'from and to unix timestamps are required');
+    }
+    const { WialonFuelLevelSeriesService } = await import(
+      '../services/WialonFuelLevelSeriesService.js'
+    );
+    const data = await WialonFuelLevelSeriesService.getSeries(req.tenantId!, { unitId, from, to });
+    return success(res, data);
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
 router.get('/wialon/fuel/trend', requireTenant, async (req: TenantRequest, res) => {
   try {
     const from = req.query.from ? String(req.query.from) : undefined;

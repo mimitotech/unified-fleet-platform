@@ -454,8 +454,12 @@ export function ReportsWorkspace() {
                   <ReportResultsView
                     data={templateResult}
                     templateName={selectedTemplate?.templateName}
-                    moduleLabel="Monitoring"
+                    moduleLabel={
+                      selectedTemplate?.module === 'fuel' ? 'Fuel' : WIALON_MODULE_LABELS[selectedTemplate?.module as keyof typeof WIALON_MODULE_LABELS] || 'Reports'
+                    }
                     unitName={selectedUnitName}
+                    reportObjectId={templateRunParams.reportObjectId}
+                    objectKind={templateRunParams.objectKind}
                     className="flex-1 min-h-0"
                   />
                 )}

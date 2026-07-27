@@ -252,6 +252,8 @@ export function FuelSelectedReportsPanel({
               data={reportResult}
               templateName={selectedReport?.templateName}
               moduleLabel="Fuel"
+              reportObjectId={runParams.reportObjectId}
+              objectKind={runParams.objectKind}
               unitName={
                 selectedReport?.isGroupReport
                   ? catalog?.groups?.find((g) => String(g.id) === selectedGroupId)?.nm

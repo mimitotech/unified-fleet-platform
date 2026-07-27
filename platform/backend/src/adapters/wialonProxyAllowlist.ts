@@ -61,6 +61,8 @@ const ALLOWED = new Set([
   'report/select_result_rows',
   'report/export_result',
   'report/get_result_chart',
+  'report/render_json',
+  'report/get_result_map',
   'report/get_result_map',
   'report/get_result_video',
   'route/get_all_rounds',

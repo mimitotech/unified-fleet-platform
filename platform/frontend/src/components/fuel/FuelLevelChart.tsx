@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Area,
+  Brush,
   CartesianGrid,
+  ComposedChart,
   Customized,
   Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -70,6 +71,19 @@ interface FuelLevelChartProps {
   toDate?: string;
   /** Singular label for the asset picker (Vehicle / Generator / …). */
   unitLabel?: string;
+  /** Continuous message series — taller chart + brush zoom. */
+  dense?: boolean;
+  /** Direct Wialon-style series (preferred over sparse transactions). */
+  seriesPoints?: Array<{
+    t: number;
+    liters: number;
+    processed?: number;
+    main?: number | null;
+    reserve?: number | null;
+    engineOn?: number | null;
+    event?: 'level' | 'refill' | 'drain';
+    delta?: number;
+  }>;
 }
 
 interface ChartDataPoint {
@@ -79,6 +93,8 @@ interface ChartDataPoint {
   dateLabel: string;
   timeLabel: string;
   volume: number | null;
+  processed: number | null;
+  engineOn: number | null;
   eventType: 'level' | 'refill' | 'drain' | 'consumption';
   vehicleName: string;
   location: string;
@@ -121,7 +137,13 @@ function CustomTooltip({
       <p className="text-muted-foreground">{data.vehicleName}</p>
       {data.volume != null && (
         <p className="mt-1.5 text-sm font-semibold text-blue-600">
-          {data.volume.toLocaleString(undefined, { maximumFractionDigits: 1 })} L
+          {(data.processed ?? data.volume).toLocaleString(undefined, { maximumFractionDigits: 2 })} L
+          <span className="ml-1 text-[10px] font-normal text-muted-foreground">processed</span>
+        </p>
+      )}
+      {data.engineOn != null && (
+        <p className="mt-1 text-green-700 font-medium">
+          {data.engineOn > 0 ? 'On' : 'Off'}
         </p>
       )}
       {data.eventType === 'refill' && data.refillAmount != null && (
@@ -129,6 +151,15 @@ function CustomTooltip({
       )}
       {data.eventType === 'drain' && data.drainAmount != null && (
         <p className="mt-1 text-red-600 font-medium">-{Math.abs(data.drainAmount).toFixed(1)} L drain</p>
+      )}
+      {data.eventType === 'consumption' && data.fuelUsed != null && data.fuelUsed > 0 && (
+        <p className="mt-1 text-amber-700 font-medium">-{data.fuelUsed.toFixed(2)} L used</p>
+      )}
+      {data.mainTankLevel != null && (
+        <p className="mt-1 text-muted-foreground">Main {data.mainTankLevel.toFixed(1)} L</p>
+      )}
+      {data.reserveTankLevel != null && (
+        <p className="text-muted-foreground">Reserve {data.reserveTankLevel.toFixed(1)} L</p>
       )}
       {data.location && data.location !== 'Unknown' && (
         <p className="mt-1 text-muted-foreground truncate max-w-[220px]">{data.location}</p>
@@ -210,6 +241,8 @@ export function FuelLevelChart({
   fromDate,
   toDate,
   unitLabel = 'Unit',
+  dense = false,
+  seriesPoints,
 }: FuelLevelChartProps) {
   const unitNames = useMemo(() => {
     const names = new Set<string>();
@@ -218,7 +251,6 @@ export function FuelLevelChart({
     return Array.from(names).sort();
   }, [transactions, vehicles]);
 
-  // Wialon graph is always one unit — default to first unit with volume events.
   const [selectedVehicle, setSelectedVehicle] = useState<string>('');
 
   useEffect(() => {
@@ -234,9 +266,53 @@ export function FuelLevelChart({
     return transactions.filter((tx) => tx.unitName === selectedVehicle);
   }, [transactions, selectedVehicle]);
 
-  const { chartData, refillCount, drainCount, liveVolume } = useMemo(() => {
+  const { chartData, refillCount, drainCount, liveVolume, hasEngine } = useMemo(() => {
+    if (seriesPoints?.length) {
+      let refills = 0;
+      let drains = 0;
+      let hasEng = false;
+      const dataPoints: ChartDataPoint[] = seriesPoints.map((p, i) => {
+        if (p.event === 'refill') refills += 1;
+        if (p.event === 'drain') drains += 1;
+        if (p.engineOn != null) hasEng = true;
+        const txDate = new Date(p.t * 1000);
+        const volume = p.processed ?? p.liters;
+        return {
+          id: `sp-${p.t}-${i}`,
+          timestamp: p.t * 1000,
+          axisLabel: `${format(txDate, 'HH:mm')}\n${format(txDate, 'MM-dd')}`,
+          dateLabel: format(txDate, 'MMM d, yyyy'),
+          timeLabel: format(txDate, 'HH:mm:ss'),
+          volume,
+          processed: p.processed ?? p.liters,
+          engineOn: p.engineOn ?? null,
+          eventType:
+            p.event === 'refill' ? 'refill' : p.event === 'drain' ? 'drain' : 'level',
+          vehicleName: selectedVehicle || unitNames[0] || 'Asset',
+          location: '',
+          refillAmount: p.event === 'refill' ? Math.max(0, p.delta ?? 0) : undefined,
+          drainAmount: p.event === 'drain' ? Math.max(0, -(p.delta ?? 0)) : undefined,
+          mainTankLevel: p.main ?? volume,
+          reserveTankLevel: p.reserve ?? null,
+        };
+      });
+      return {
+        chartData: dataPoints,
+        refillCount: refills,
+        drainCount: drains,
+        liveVolume: dataPoints[dataPoints.length - 1]?.volume ?? null,
+        hasEngine: hasEng,
+      };
+    }
+
     if (!filteredTransactions.length) {
-      return { chartData: [] as ChartDataPoint[], refillCount: 0, drainCount: 0, liveVolume: null as number | null };
+      return {
+        chartData: [] as ChartDataPoint[],
+        refillCount: 0,
+        drainCount: 0,
+        liveVolume: null as number | null,
+        hasEngine: false,
+      };
     }
 
     let refills = 0;
@@ -262,20 +338,19 @@ export function FuelLevelChart({
       let drainAmount: number | undefined;
       let fuelUsed: number | undefined;
 
-      if (filled > 5 || tx.section === 'filling') {
+      if (filled > 0.5 || tx.section === 'filling') {
         eventType = 'refill';
         refillAmount = filled || Math.abs(fuelChange);
         refills += 1;
-      } else if (suddenDrop > 0 || tx.section === 'theft') {
+      } else if (suddenDrop > 0.5 || tx.section === 'theft') {
         eventType = 'drain';
         drainAmount = suddenDrop || Math.abs(fuelChange);
         drains += 1;
-      } else if (fuelChange < 0 || (tx.fuelUsed ?? 0) > 0 || tx.section === 'consumption') {
+      } else if (fuelChange < -0.05 || (tx.fuelUsed ?? 0) > 0 || tx.section === 'consumption') {
         eventType = 'consumption';
         fuelUsed = tx.fuelUsed > 0 ? tx.fuelUsed : Math.abs(fuelChange);
       }
 
-      // Prefer explicit tank levels; otherwise carry last known so the line stays continuous.
       const carriedMain = mainLevel ?? lastMain;
       const carriedReserve = reserveLevel ?? lastReserve;
       const volume =
@@ -283,7 +358,6 @@ export function FuelLevelChart({
           ? null
           : (carriedMain ?? 0) + (carriedReserve ?? 0);
 
-      // Skip pure consumption rows with no volume — they don't move the Wialon volume line.
       if (volume == null && eventType === 'consumption') continue;
 
       dataPoints.push({
@@ -291,8 +365,10 @@ export function FuelLevelChart({
         timestamp: tx.timestamp * 1000,
         axisLabel: `${format(txDate, 'HH:mm')}\n${format(txDate, 'MM-dd')}`,
         dateLabel: format(txDate, 'MMM d, yyyy'),
-        timeLabel: format(txDate, 'HH:mm'),
+        timeLabel: format(txDate, 'HH:mm:ss'),
         volume,
+        processed: volume,
+        engineOn: null,
         eventType,
         vehicleName: tx.unitName,
         location: tx.location || 'Unknown',
@@ -312,8 +388,9 @@ export function FuelLevelChart({
       refillCount: refills,
       drainCount: drains,
       liveVolume: live != null && live > 0 ? live : null,
+      hasEngine: false,
     };
-  }, [filteredTransactions, selectedVehicle, vehicleFuelLevels]);
+  }, [seriesPoints, filteredTransactions, selectedVehicle, vehicleFuelLevels, unitNames]);
 
   // Time-scale points so markers align like Wialon’s continuous timeline.
   const plotData = useMemo(
@@ -327,7 +404,9 @@ export function FuelLevelChart({
   );
 
   const yDomain = useMemo(() => {
-    const vals = plotData.map((d) => d.volume).filter((v): v is number => v != null && v > 0);
+    const vals = plotData
+      .map((d) => d.processed ?? d.volume)
+      .filter((v): v is number => v != null && v > 0);
     if (!vals.length) return ['auto', 'auto'] as const;
     const min = Math.min(...vals);
     const max = Math.max(...vals);
@@ -340,11 +419,11 @@ export function FuelLevelChart({
       <div className={`fleet-card ${className || ''}`}>
         <div className="flex items-center gap-2 mb-4">
           <Droplets className="w-5 h-5 text-primary" />
-          <h3 className="font-semibold">Volume, litres</h3>
+          <h3 className="font-semibold">Processed fuel level</h3>
         </div>
         <div className="h-[320px] flex items-center justify-center gap-2 text-muted-foreground">
           <Loader2 className="w-5 h-5 animate-spin" />
-          <span>Loading fuel volume…</span>
+          <span>Loading processed fuel level…</span>
         </div>
       </div>
     );
@@ -387,9 +466,10 @@ export function FuelLevelChart({
     <div className={`fleet-card ${className || ''}`}>
       <div className="flex flex-col gap-3 mb-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h3 className="font-semibold text-foreground">Volume, litres</h3>
+          <h3 className="font-semibold text-foreground">Processed fuel level</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Tank level over time · fillings (green) · drains (red)
+            Full message series · fillings (green) · drains (red)
+            {hasEngine ? ' · genset/engine On/Off' : ''}
             {fromDate && toDate ? ` · ${fromDate} → ${toDate}` : ''}
           </p>
         </div>
@@ -410,7 +490,7 @@ export function FuelLevelChart({
               <DrainMarkerIcon size={12} /> {drainCount} drain
             </span>
           </div>
-          {unitNames.length > 0 && (
+          {unitNames.length > 1 && !dense && (
             <Select value={selectedVehicle || undefined} onValueChange={setSelectedVehicle}>
               <SelectTrigger className="w-[200px] h-8 text-xs">
                 <Truck className="w-3.5 h-3.5 mr-1.5 shrink-0" />
@@ -428,7 +508,7 @@ export function FuelLevelChart({
         </div>
       </div>
 
-      <div className="h-[360px] min-h-[280px] bg-white rounded-md border border-border/60">
+      <div className={dense ? 'h-[420px] min-h-[320px] bg-white rounded-md border border-border/60' : 'h-[360px] min-h-[280px] bg-white rounded-md border border-border/60'}>
         {!plotData.length ? (
           <div className="h-full flex items-center justify-center text-muted-foreground">
             <div className="text-center px-4">
@@ -441,9 +521,9 @@ export function FuelLevelChart({
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart
+            <ComposedChart
               data={plotData}
-              margin={{ top: 28, right: 16, left: 8, bottom: 28 }}
+              margin={{ top: 28, right: hasEngine ? 44 : 16, left: 8, bottom: dense ? 8 : 28 }}
             >
               <CartesianGrid stroke={GRID} strokeDasharray="0" vertical={false} />
               <XAxis
@@ -460,51 +540,96 @@ export function FuelLevelChart({
                 fontSize={10}
                 tickLine={false}
                 axisLine={{ stroke: GRID }}
-                minTickGap={48}
+                minTickGap={dense ? 36 : 48}
+                height={36}
               />
               <YAxis
-                dataKey="volume"
+                yAxisId="fuel"
+                dataKey="processed"
                 domain={yDomain as [number, number]}
                 tickFormatter={formatVolumeTick}
                 stroke="#9ca3af"
                 fontSize={11}
                 tickLine={false}
                 axisLine={false}
-                width={48}
+                width={52}
                 label={{
-                  value: 'Volume, litres',
+                  value: 'Processed fuel level, litres',
                   angle: -90,
                   position: 'insideLeft',
                   offset: 4,
-                  style: { fontSize: 11, fill: '#6b7280' },
+                  style: { fontSize: 10, fill: '#6b7280' },
                 }}
               />
+              {hasEngine && (
+                <YAxis
+                  yAxisId="engine"
+                  orientation="right"
+                  domain={[0, 1]}
+                  ticks={[0, 0.5, 1]}
+                  stroke="#9ca3af"
+                  fontSize={10}
+                  tickLine={false}
+                  axisLine={false}
+                  width={36}
+                  label={{
+                    value: 'On/Off',
+                    angle: 90,
+                    position: 'insideRight',
+                    style: { fontSize: 10, fill: '#6b7280' },
+                  }}
+                />
+              )}
               <Tooltip content={<CustomTooltip />} />
               <Customized
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 component={(p: any) => <EventLane {...p} chartData={plotData} />}
               />
               <Area
+                yAxisId="fuel"
                 type="monotone"
-                dataKey="volume"
+                dataKey="processed"
                 stroke="none"
                 fill={LINE}
-                fillOpacity={0.06}
+                fillOpacity={0.08}
                 connectNulls
                 isAnimationActive={false}
               />
               <Line
+                yAxisId="fuel"
                 type="monotone"
-                dataKey="volume"
+                dataKey="processed"
                 stroke={LINE}
-                strokeWidth={1.75}
+                strokeWidth={dense ? 1.5 : 2}
                 dot={false}
-                activeDot={{ r: 4, stroke: LINE, strokeWidth: 2, fill: '#fff' }}
+                activeDot={{ r: 3.5, stroke: LINE, strokeWidth: 2, fill: '#fff' }}
                 connectNulls
                 isAnimationActive={false}
-                name="Volume"
+                name="Processed fuel level"
               />
-            </LineChart>
+              {hasEngine && (
+                <Line
+                  yAxisId="engine"
+                  type="stepAfter"
+                  dataKey="engineOn"
+                  stroke="#16a34a"
+                  strokeWidth={1.4}
+                  dot={false}
+                  connectNulls
+                  isAnimationActive={false}
+                  name="On/Off"
+                />
+              )}
+              {dense && plotData.length > 40 && (
+                <Brush
+                  dataKey="t"
+                  height={28}
+                  stroke={LINE}
+                  tickFormatter={(ms: number) => format(new Date(ms), 'MM-dd HH:mm')}
+                  travellerWidth={8}
+                />
+              )}
+            </ComposedChart>
           </ResponsiveContainer>
         )}
       </div>
@@ -512,8 +637,14 @@ export function FuelLevelChart({
       <div className="flex items-center justify-center gap-5 mt-3 text-xs text-muted-foreground flex-wrap">
         <span className="inline-flex items-center gap-1.5">
           <span className="inline-block w-5 h-0.5 rounded" style={{ background: LINE }} />
-          Tank volume
+          Processed fuel level
         </span>
+        {hasEngine && (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block w-5 h-0.5 rounded bg-green-600" />
+            Genset / engine On/Off
+          </span>
+        )}
         <span className="inline-flex items-center gap-1.5">
           <FillMarkerIcon size={12} />
           Filling

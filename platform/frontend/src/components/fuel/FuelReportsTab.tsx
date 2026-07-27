@@ -393,6 +393,8 @@ export function FuelReportsTab(_props: FuelTabDateRangeProps & {
               data={reportResult}
               templateName={selected?.templateName}
               moduleLabel={selected?.module === 'fuel' || !selected?.module ? 'Fuel' : (selected.module || 'Fuel')}
+              reportObjectId={runParams.reportObjectId}
+              objectKind={runParams.objectKind}
               unitName={
                 selectedKind === 'group'
                   ? catalog?.groups?.find((g) => String(g.id) === selectedGroupId)?.nm

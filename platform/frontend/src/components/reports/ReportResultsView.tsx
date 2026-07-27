@@ -28,15 +28,18 @@ import { useTenantBranding } from '@/hooks/useTenantBranding';
 import { notify } from '@/lib/notify';
 import { BrandedReportFooter, BrandedReportHeader, BrandedReportDocument } from '@/components/reports/BrandedReportChrome';
 import { FuelReportPerformanceCharts } from '@/components/fuel/FuelReportPerformanceCharts';
-import { FuelLevelChart } from '@/components/fuel/FuelLevelChart';
+import { FuelGraphPanel } from '@/components/fuel/FuelGraphPanel';
 import { discoverFuelPerformanceMetrics } from '@/lib/fuelReportPerformance';
-import { fuelTransactionsFromReportTables } from '@/lib/fuelGraphFromReport';
 import { buildReportFilename } from '@/lib/reportFilename';
+import { useFleetUnits } from '@/hooks/useFleetUnits';
 
 type Props = {
   data: WialonReportResult;
   templateName?: string;
   unitName?: string;
+  /** Wialon object id used to run the report (unit / group / user / resource). */
+  reportObjectId?: number;
+  objectKind?: 'unit' | 'group' | 'user' | 'resource';
   moduleLabel?: string;
   className?: string;
 };
@@ -346,8 +349,17 @@ function PrintChartPlaceholders() {
   );
 }
 
-export function ReportResultsView({ data, templateName, unitName, moduleLabel = 'Reports', className }: Props) {
+export function ReportResultsView({
+  data,
+  templateName,
+  unitName,
+  reportObjectId,
+  objectKind = 'unit',
+  moduleLabel = 'Reports',
+  className,
+}: Props) {
   const branding = useTenantBranding();
+  const { units: fleetUnits } = useFleetUnits();
   const { tables, charts, summary } = data;
   const defaultTab = tables[0] ? String(tables[0].index) : charts[0] ? `chart-${charts[0].index}` : '0';
   const [activeTab, setActiveTab] = useState(defaultTab);
@@ -359,12 +371,40 @@ export function ReportResultsView({ data, templateName, unitName, moduleLabel = 
 
   const activeTable = tables.find((t) => String(t.index) === activeTab);
   const showFuelPerformance = moduleLabel.toLowerCase() === 'fuel';
-  const fuelGraphTx = useMemo(
-    () => (showFuelPerformance ? fuelTransactionsFromReportTables(tables, unitName || 'Asset') : []),
-    [showFuelPerformance, tables, unitName],
-  );
-  // Always offer Fuel Graph on fuel reports (Wialon-style level vs time).
+  // Always offer Fuel Graph on fuel reports (independent continuous series).
   const showFuelGraphTab = showFuelPerformance;
+
+  const fuelGraphUnits = useMemo(() => {
+    const fromFleet = fleetUnits
+      .map((u) => ({
+        id: Number(u.wialonId ?? u.id),
+        name: String(u.name || ''),
+      }))
+      .filter((u) => Number.isFinite(u.id) && u.id > 0 && u.name);
+    // Names that appear in report tables (group reports)
+    const names = new Set<string>();
+    for (const table of tables) {
+      const groupCol = (table.columns || []).find((c) =>
+        /grouping|unit|object|asset|^name$/i.test(String(c.label || c.key || '')),
+      );
+      if (!groupCol) continue;
+      for (const row of table.rows || []) {
+        const v = row[groupCol.key];
+        if (v != null && String(v).trim() && String(v) !== '-----') names.add(String(v).trim());
+      }
+    }
+    if (names.size) {
+      const matched = fromFleet.filter((u) => names.has(u.name));
+      if (matched.length) return matched;
+    }
+    if (objectKind === 'unit' && reportObjectId && reportObjectId > 0) {
+      const hit = fromFleet.find((u) => u.id === reportObjectId);
+      if (hit) return [hit, ...fromFleet.filter((u) => u.id !== hit.id)];
+      if (unitName) return [{ id: reportObjectId, name: unitName }, ...fromFleet];
+    }
+    return fromFleet;
+  }, [fleetUnits, tables, objectKind, reportObjectId, unitName]);
+
   const chartPeriod = useMemo(
     () => ({ from: summary.interval.from, to: summary.interval.to }),
     [summary.interval.from, summary.interval.to],
@@ -628,25 +668,15 @@ export function ReportResultsView({ data, templateName, unitName, moduleLabel = 
           </TabsList>
           {showFuelGraphTab && (
             <TabsContent value="fuel-graph" className="mt-4">
-              {fuelGraphTx.length > 0 ? (
-                <FuelLevelChart
-                  transactions={fuelGraphTx}
-                  vehicles={[...new Set(fuelGraphTx.map((t) => t.unitName).filter(Boolean))].map((name) => ({
-                    name: String(name),
-                  }))}
-                  fromDate={format(new Date(summary.interval.from * 1000), 'yyyy-MM-dd')}
-                  toDate={format(new Date(summary.interval.to * 1000), 'yyyy-MM-dd')}
-                  unitLabel="Asset"
-                />
-              ) : (
-                <div className="fleet-card py-12 text-center text-muted-foreground">
-                  <p className="font-medium text-sm">Fuel Graph</p>
-                  <p className="text-xs mt-1 max-w-md mx-auto">
-                    Fuel level vs time appears when this report includes time-stamped levels,
-                    fillings, or sudden drops (green fill / red drain markers).
-                  </p>
-                </div>
-              )}
+              <FuelGraphPanel
+                unitOptions={fuelGraphUnits}
+                preferredUnitId={objectKind === 'unit' ? reportObjectId : undefined}
+                fromTs={summary.interval.from}
+                toTs={summary.interval.to}
+                tables={tables}
+                charts={charts}
+                fallbackUnitName={unitName || 'Asset'}
+              />
             </TabsContent>
           )}
           {tables.map((t) => {
