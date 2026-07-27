@@ -13,6 +13,7 @@ export type MonitoringEventRow = {
   category: 'alert' | 'eco' | 'video';
   occurredAt?: string;
   unitName?: string;
+  unitId?: string;
   driverName?: string;
   videoUrl?: string;
   source?: string;
@@ -23,12 +24,34 @@ function normalizeName(value: string | undefined | null): string {
   return (value || '').trim().toLowerCase();
 }
 
+function resolveUnitFromAssetId(
+  assetId: string | undefined | null,
+  units: FleetUnit[],
+): FleetUnit | undefined {
+  if (!assetId) return undefined;
+  const id = String(assetId).trim();
+  if (!id) return undefined;
+  return units.find(
+    (u) =>
+      String(u.id) === id ||
+      String(u.wialonId ?? '') === id ||
+      String((u as { assetId?: string }).assetId ?? '') === id,
+  );
+}
+
 function resolveUnitName(
   blob: string,
   units: FleetUnit[],
   explicit?: string | null,
+  assetId?: string | null,
 ): string | undefined {
-  if (explicit?.trim()) return explicit.trim();
+  const byId = resolveUnitFromAssetId(assetId, units);
+  if (byId?.name) return byId.name;
+  if (explicit?.trim()) {
+    const exact = units.find((u) => normalizeName(u.name) === normalizeName(explicit));
+    if (exact) return exact.name;
+    return explicit.trim();
+  }
   const hay = blob.toLowerCase();
   if (!hay || !units.length) return undefined;
   // Prefer longest name match so "GEN 1" does not steal "GEN 10".
@@ -78,7 +101,13 @@ export function useMonitoringEvents(limit = 80, enabled = true, units: FleetUnit
 
     for (const a of safeArray<ClientAlert>(alertsQ.data)) {
       const title = a.title || a.type || 'Alert';
-      const unitName = resolveUnitName(`${title} ${a.description || ''}`, units);
+      const matched = resolveUnitFromAssetId(a.assetId, units);
+      const unitName = resolveUnitName(
+        `${title} ${a.description || ''}`,
+        units,
+        matched?.name,
+        a.assetId,
+      );
       rows.push({
         id: String(a.id || `alert-${rows.length}`),
         title,
@@ -86,6 +115,7 @@ export function useMonitoringEvents(limit = 80, enabled = true, units: FleetUnit
         category: 'alert',
         occurredAt: alertTimestamp(a),
         unitName,
+        unitId: matched ? String(matched.id) : a.assetId,
         type: a.type,
         source: 'alerts',
       });

@@ -11,6 +11,8 @@ export function isWialonGenerator(input: {
 }): boolean {
   const name = (input.name || '').trim();
   const nameLower = name.toLowerCase();
+  // Bowsers / fuel tankers are not generators.
+  if (/\bbowser\b|fuel\s*tanker|fuel\s*truck|fuel\s*trailer/i.test(nameLower)) return false;
   const plate = (input.plate || extractPlateFromName(name) || '').trim();
   const cf = input.customFields || {};
 

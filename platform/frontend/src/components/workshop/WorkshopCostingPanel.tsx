@@ -16,6 +16,7 @@ import { useTenantBranding } from '@/hooks/useTenantBranding';
 import { notify } from '@/lib/notify';
 import { BrandedReportFooter, BrandedReportHeader, BrandedReportDocument } from '@/components/reports/BrandedReportChrome';
 import { cn } from '@/lib/utils';
+import { importPrintReport } from '@/lib/importPrintReport';
 
 type MaintRow = {
   vehicleName?: string;
@@ -172,7 +173,7 @@ export function WorkshopModuleReports({
     if (!node) return;
     setBusy(true);
     try {
-      const { printReportDocument } = await import('@/lib/printReport');
+      const { printReportDocument } = await importPrintReport();
       await printReportDocument({
         root: node,
         title: `${branding.name || 'Client'} - Workshop`,

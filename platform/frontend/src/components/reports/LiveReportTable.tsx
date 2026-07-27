@@ -25,6 +25,7 @@ import {
 } from '@/components/reports/BrandedReportChrome';
 import { buildReportFilename } from '@/lib/reportFilename';
 import { cn } from '@/lib/utils';
+import { importPrintReport } from '@/lib/importPrintReport';
 
 type Props = {
   def: LiveReportDef;
@@ -182,7 +183,7 @@ export function LiveReportTable({
         requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
       });
 
-      const { printReportDocument } = await import('@/lib/printReport');
+      const { printReportDocument } = await importPrintReport();
       await printReportDocument({
         root: host.firstElementChild as HTMLElement,
         title: `${branding.name || 'Client'} - ${def.label}`,

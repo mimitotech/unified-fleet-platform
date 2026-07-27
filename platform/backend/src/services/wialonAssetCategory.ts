@@ -26,7 +26,7 @@ export const MACHINERY_NAME_RE =
   /excavat|crane|compressor|\bpump\b|welder|fork\s*lift|forklift|loader|bulldozer|roller|paver|mixer|grader|back\s*hoe|backhoe|shovel|drill(ing)?\s*rig|plant\b|machiner|\bequip/i;
 
 export const GENERATOR_NAME_RE =
-  /pearl\s*bank|genset|generator|\bdg\s*set\b|\bgen\s*set\b|\bkva\b|standby\s*power|power\s*pack|bowser|fuel\s*tanker/i;
+  /pearl\s*bank|genset|generator|\bdg\s*set\b|\bgen\s*set\b|\bkva\b|standby\s*power|power\s*pack/i;
 
 /** Fuel bowser / tanker — level drops are usually dispensed fuel, not theft. */
 const BOWSER_NAME_RE = /\bbowser\b|fuel\s*tanker|fuel\s*truck|fuel\s*trailer/i;
@@ -98,6 +98,8 @@ export function isWialonGenerator(input: FuelAssetClassifyInput): boolean {
   if (input.unitId && input.groupMembership?.generatorUnitIds.has(input.unitId)) return true;
 
   const name = (input.name || '').trim();
+  // Fuel bowsers / tankers are vehicles (dispense), not generators.
+  if (isFuelBowserName(name)) return false;
   const nameLower = name.toLowerCase();
   const plate = (input.plate || extractPlateFromName(name) || '').trim();
   const cf = input.customFields || {};

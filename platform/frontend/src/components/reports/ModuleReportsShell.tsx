@@ -13,6 +13,7 @@ import type { DomainChartSpec } from '@/lib/domainReportCharts';
 import { buildReportFilename } from '@/lib/reportFilename';
 import { buildReportCsv, downloadReportCsv, type ReportCsvColumn } from '@/lib/reportCsv';
 import { getDefaultReportDateRange } from '@/lib/defaultDateRange';
+import { importPrintReport } from '@/lib/importPrintReport';
 
 export type ModuleReportDef = {
   id: string;
@@ -287,7 +288,7 @@ export function ModuleReportsShell({
     if (!node) return;
     setPrinting(true);
     try {
-      const { printReportDocument } = await import('@/lib/printReport');
+      const { printReportDocument } = await importPrintReport();
       await printReportDocument({
         root: node,
         title: `${branding.name || 'Client'} - ${active?.title ?? moduleLabel}`,

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import type { PrintReportMode } from '@/lib/printReport';
+import { importPrintPageSection } from '@/lib/importPrintReport';
 
 type Props = {
   /** Element that holds the KPIs + charts to capture. */
@@ -38,7 +39,7 @@ export function SectionPrintButtons({
     }
     setBusy(mode);
     try {
-      const { printPageSection } = await import('@/lib/printPageSection');
+      const { printPageSection } = await importPrintPageSection();
       await printPageSection({
         root,
         title,

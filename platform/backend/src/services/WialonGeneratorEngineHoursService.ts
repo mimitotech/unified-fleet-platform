@@ -193,7 +193,7 @@ export class WialonGeneratorEngineHoursService {
 
       const units = await listAllUnits(client, scope);
       const unitNameToId = new Map(units.map((u) => [u.nm, u.id]));
-      const generatorUnits = units.filter((u) => /generator|genset|bowser/i.test(u.nm));
+      const generatorUnits = units.filter((u) => /generator|genset/i.test(u.nm) && !/\bbowser\b|fuel\s*tanker/i.test(u.nm));
 
       const deduped = new Map<string, GeneratorEngineHoursRow>();
 

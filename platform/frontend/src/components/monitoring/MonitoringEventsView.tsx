@@ -27,9 +27,17 @@ type Props = {
 
 function matchUnit(event: MonitoringEventRow, unit: FleetUnit | undefined): boolean {
   if (!unit) return false;
-  const hay = event.unitName?.toLowerCase();
+  if (event.unitId) {
+    const id = String(event.unitId);
+    if (id === String(unit.id) || id === String(unit.wialonId ?? '')) return true;
+  }
+  const hay = event.unitName?.trim().toLowerCase();
   if (!hay) return false;
-  return hay === unit.name.toLowerCase() || hay.includes(unit.plate?.toLowerCase() || '___');
+  const name = unit.name.trim().toLowerCase();
+  const plate = unit.plate?.trim().toLowerCase();
+  if (name && hay === name) return true;
+  if (plate && plate.length >= 3 && (hay === plate || hay.includes(plate))) return true;
+  return false;
 }
 
 export function MonitoringEventsView({ units = [], unitId, onViewUnitOnMap, className }: Props) {

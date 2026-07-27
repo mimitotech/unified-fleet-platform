@@ -11,6 +11,7 @@ import { useTenantBranding } from '@/hooks/useTenantBranding';
 import { cn } from '@/lib/utils';
 import type { FuelTabDateRangeProps } from './fuelTabTypes';
 import { QueryErrorBanner } from '@/components/shared/QueryErrorBanner';
+import { importPrintReport } from '@/lib/importPrintReport';
 
 export function FuelVarianceTab({ fromDate, toDate }: FuelTabDateRangeProps) {
   const branding = useTenantBranding();
@@ -38,7 +39,7 @@ export function FuelVarianceTab({ fromDate, toDate }: FuelTabDateRangeProps) {
     if (!printRef.current) return;
     setBusy(true);
     try {
-      const { printReportDocument } = await import('@/lib/printReport');
+      const { printReportDocument } = await importPrintReport();
       await printReportDocument({
         root: printRef.current,
         title: `${branding.name || 'Client'} - Fuel variance ${fromDate} to ${toDate}`,

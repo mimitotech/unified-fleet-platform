@@ -29,9 +29,14 @@ import { notify } from '@/lib/notify';
 import { BrandedReportFooter, BrandedReportHeader, BrandedReportDocument } from '@/components/reports/BrandedReportChrome';
 import { FuelReportPerformanceCharts } from '@/components/fuel/FuelReportPerformanceCharts';
 import { FuelGraphPanel } from '@/components/fuel/FuelGraphPanel';
+import {
+  WialonProcessedFuelChart,
+  wialonChartIsRenderable,
+} from '@/components/fuel/WialonProcessedFuelChart';
 import { discoverFuelPerformanceMetrics } from '@/lib/fuelReportPerformance';
 import { buildReportFilename } from '@/lib/reportFilename';
 import { useFleetUnits } from '@/hooks/useFleetUnits';
+import { importPrintReport } from '@/lib/importPrintReport';
 
 type Props = {
   data: WialonReportResult;
@@ -158,6 +163,16 @@ function chartSeries(data: unknown): { points: ChartSeriesPoint[]; keys: string[
 function WialonReportChartView({ chart, primaryColor }: { chart: WialonReportChart; primaryColor: string }) {
   const imageSrc = useMemo(() => chartImageSrc(chart.data), [chart.data]);
   const series = useMemo(() => chartSeries(chart.data), [chart.data]);
+  const hostingOk = wialonChartIsRenderable(chart);
+
+  // Prefer interactive Hosting-style datasets when they can actually plot.
+  if (hostingOk) {
+    return (
+      <div data-report-chart-card style={{ marginTop: 8, marginBottom: 8 }}>
+        <WialonProcessedFuelChart chart={chart} />
+      </div>
+    );
+  }
 
   if (imageSrc) {
     return (
@@ -318,21 +333,19 @@ function ReportTableView({
   );
 }
 
-function PrintChartPlaceholders() {
+function PrintChartPlaceholders({ count }: { count: number }) {
+  const n = Math.max(1, count);
   return (
     <div
       data-report-chart-grid
-      className="grid grid-cols-2 gap-3"
+      className="space-y-3"
       style={{
-        display: 'grid',
-        gridTemplateColumns: '1fr 1fr',
-        gap: '12px',
         width: '100%',
         marginTop: '24px',
         marginBottom: '24px',
       }}
     >
-      {[0, 1].map((i) => (
+      {Array.from({ length: n }, (_, i) => (
         <div
           key={i}
           data-report-chart-card
@@ -497,7 +510,7 @@ export function ReportResultsView({
   };
 
   const exportBranded = async (mode: 'download' | 'print') => {
-    if (!tables.length) return;
+    if (!tables.length && !charts.length) return;
     setBusy(true);
     flushSync(() => setMountPrint(true));
     try {
@@ -506,16 +519,24 @@ export function ReportResultsView({
 
       const node = printRef.current;
       if (!node) throw new Error('Could not prepare report sheet');
-      const { printReportDocument } = await import('@/lib/printReport');
+      const { printReportDocument } = await importPrintReport();
       const filename = buildReportFilename({
         clientName: branding.name,
         reportName: templateName || 'Fuel report',
         date: new Date().toISOString().slice(0, 10),
         unitName,
       });
+      // Wialon charts are mounted live in the print tree; fuel performance charts
+      // are snapshotted from the on-screen preview into placeholders.
+      const chartSource =
+        charts.length > 0
+          ? null
+          : showFuelPerformance
+            ? chartsPreviewRef.current
+            : null;
       await printReportDocument({
         root: node,
-        chartSourceRoot: showFuelPerformance ? chartsPreviewRef.current : null,
+        chartSourceRoot: chartSource,
         title: `${branding.name || 'Client'} - ${templateName || 'Fuel report'}`,
         filename,
         primaryColor: branding.primaryColor,
@@ -587,7 +608,7 @@ export function ReportResultsView({
             size="sm"
             variant="outline"
             className="h-8 text-xs border-primary/40 text-primary"
-            disabled={busy || tables.length === 0}
+            disabled={busy || (tables.length === 0 && charts.length === 0)}
             onClick={() => void exportBranded('download')}
           >
             <Download className="h-3.5 w-3.5 mr-1" />
@@ -597,7 +618,7 @@ export function ReportResultsView({
             size="sm"
             variant="outline"
             className="h-8 text-xs border-primary/40 text-primary"
-            disabled={busy || tables.length === 0}
+            disabled={busy || (tables.length === 0 && charts.length === 0)}
             onClick={() => void exportBranded('print')}
           >
             <Printer className="h-3.5 w-3.5 mr-1" />
@@ -606,7 +627,7 @@ export function ReportResultsView({
         </div>
       </div>
 
-      {mountPrint && tables.length > 0 && (
+      {mountPrint && (tables.length > 0 || charts.length > 0) && (
         <div className="fixed left-[-10000px] top-0 w-[1100px] pointer-events-none" aria-hidden>
           <div ref={printRef} className="bg-white text-slate-900 p-1">
             <BrandedReportDocument branding={branding}>
@@ -619,7 +640,26 @@ export function ReportResultsView({
                 generatedAt={new Date(summary.generatedAt)}
               />
               <div className="border border-slate-200 border-t-0 px-3 py-3 bg-white/90 space-y-6">
-                {showFuelPerformance && <PrintChartPlaceholders />}
+                {charts.length > 0 && (
+                  <div className="space-y-3" data-report-chart-grid>
+                    {charts.map((c) => (
+                      <WialonReportChartView
+                        key={`print-${c.index}`}
+                        chart={c}
+                        primaryColor={branding.primaryColor}
+                      />
+                    ))}
+                  </div>
+                )}
+                {showFuelPerformance && charts.length === 0 && (
+                  <PrintChartPlaceholders
+                    count={Math.max(
+                      2,
+                      chartsPreviewRef.current?.querySelectorAll('[data-report-chart-card]')
+                        .length || 2,
+                    )}
+                  />
+                )}
                 {tables.map((t, i) => (
                   <div key={t.index} className={i > 0 ? 'pt-4 border-t border-slate-200' : undefined}>
                     <p className="text-xs font-semibold text-slate-800 mb-2">

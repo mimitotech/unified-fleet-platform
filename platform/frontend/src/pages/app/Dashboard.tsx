@@ -73,6 +73,7 @@ import {
   useMachineryFuelTransactions,
   useFuelFleetSummary,
   useLiveFuelLevels,
+  fleetQueryKeys,
 } from "@/services/fleet";
 import { applyPriceToKpis } from "@/components/fuel/fuelReportStats";
 import { useWialonGeofencesLive } from "@/hooks/useWialonLive";
@@ -252,24 +253,28 @@ export default function Dashboard() {
     setApplied({ from, to });
     setExecuteFlash((n) => n + 1);
     try {
+      // Invalidate the same fleet query keys the Fuel module tabs use.
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["fuelKpis"] }),
-        queryClient.invalidateQueries({ queryKey: ["fuelTrend"] }),
-        queryClient.invalidateQueries({ queryKey: ["fuelTransactions"] }),
+        queryClient.invalidateQueries({ queryKey: fleetQueryKeys.fuel() }),
+        queryClient.invalidateQueries({ queryKey: fleetQueryKeys.fuelFleetSummary() }),
         queryClient.invalidateQueries({ queryKey: ["alerts"] }),
         queryClient.invalidateQueries({ queryKey: ["trips", "dashboard"] }),
       ]);
       await Promise.all([
         queryClient.refetchQueries({
-          queryKey: ["fuelKpis", from, to],
+          queryKey: fleetQueryKeys.fuelTransactions(),
           type: "active",
         }),
         queryClient.refetchQueries({
-          queryKey: ["fuelTrend", from, to],
+          queryKey: fleetQueryKeys.generatorFuelTransactions(),
           type: "active",
         }),
         queryClient.refetchQueries({
-          queryKey: ["fuelTransactions", from, to],
+          queryKey: fleetQueryKeys.machineryFuelTransactions(),
+          type: "active",
+        }),
+        queryClient.refetchQueries({
+          queryKey: fleetQueryKeys.fuelLevels(),
           type: "active",
         }),
         hasAlerts
@@ -811,10 +816,23 @@ export default function Dashboard() {
     [units],
   );
 
-  const fuelRosterNames = useMemo(
-    () => (units ?? []).map((u) => u.name).filter(Boolean),
-    [units],
-  );
+  const fuelRosterNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const tx of fuelTransactions) {
+      if (tx.unitName?.trim()) names.add(tx.unitName.trim());
+    }
+    if (liveLevelsByName) {
+      for (const name of liveLevelsByName.keys()) {
+        if (name?.trim()) names.add(name.trim());
+      }
+    }
+    if (!names.size) {
+      for (const u of units ?? []) {
+        if (u.name?.trim()) names.add(u.name.trim());
+      }
+    }
+    return [...names];
+  }, [fuelTransactions, liveLevelsByName, units]);
 
   // Period KPIs from the same transactions + live levels as the Fuel module,
   // so dashboard totals always match the Fuel page for the same date range.
@@ -852,15 +870,21 @@ export default function Dashboard() {
         : `${fuelTracked} assets tracked · ${fmt(fuelUsed, 1)} L used`
       : "";
 
-  /** Live tank volume across the fleet (current FLS litres). */
-  const totalCurrentFuel = useMemo(
-    () =>
-      (units ?? []).reduce((sum, u) => {
-        const liters = num(u.fuelLiters);
-        return sum + (liters > 0 ? liters : 0);
-      }, 0),
-    [units],
-  );
+  /** Live tank volume from the same fuel-assets levels as the Fuel module. */
+  const totalCurrentFuel = useMemo(() => {
+    if (liveLevelsByName && liveLevelsByName.size > 0) {
+      let sum = 0;
+      for (const v of liveLevelsByName.values()) {
+        const n = Number(v);
+        if (Number.isFinite(n) && n > 0) sum += n;
+      }
+      if (sum > 0) return sum;
+    }
+    return (units ?? []).reduce((sum, u) => {
+      const liters = num(u.fuelLiters);
+      return sum + (liters > 0 ? liters : 0);
+    }, 0);
+  }, [liveLevelsByName, units]);
 
   const fuelKpiBars = useMemo(
     () => [

@@ -138,6 +138,50 @@ export class WialonClient {
     return data as T;
   }
 
+  /**
+   * Binary Wialon calls (e.g. report/get_result_chart → PNG).
+   * Returns raw bytes, or null when the body is a JSON error object.
+   */
+  async requestBinary(
+    svc: string,
+    params: Record<string, unknown>,
+    _retried = false,
+  ): Promise<Buffer | null> {
+    if (!this.sessionId) await this.connect();
+    const urlParams = new URLSearchParams({
+      svc,
+      params: JSON.stringify(params),
+      sid: this.sessionId!,
+    });
+    const res = await fetch(`${this.baseUrl}?${urlParams}`);
+    if (!res.ok) {
+      throw new Error(`Wialon API HTTP ${res.status} for ${svc}`);
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    // Session expired / API error often comes back as small JSON instead of PNG.
+    if (buf.length >= 2 && buf[0] === 0x7b /* { */) {
+      try {
+        const data = JSON.parse(buf.toString('utf8')) as { error?: number; reason?: string };
+        if (data.error === 1) {
+          if (_retried) {
+            throw new Error(`Wialon API error: ${formatWialonError(1, data.reason)}`);
+          }
+          this.sessionId = null;
+          await this.connect();
+          return this.requestBinary(svc, params, true);
+        }
+        if (data.error) {
+          throw new Error(`Wialon API error: ${formatWialonError(data.error, data.reason)}`);
+        }
+      } catch (e) {
+        if (e instanceof Error && e.message.startsWith('Wialon API')) throw e;
+      }
+      return null;
+    }
+    if (buf.length < 8) return null;
+    return buf;
+  }
+
   /** Keep session alive (Wialon default idle timeout ~5 min). */
   startKeepAlive(intervalMs = 2000): void {
     this.stopKeepAlive();

@@ -330,3 +330,12 @@ export function WialonProcessedFuelChart({
 export function chartHasWialonDatasets(chart: WialonReportChart): boolean {
   return parseDatasets(chart.data).length > 0;
 }
+
+/** True only when Hosting datasets can actually draw (≥2 time points). */
+export function wialonChartIsRenderable(chart: WialonReportChart): boolean {
+  const datasets = parseDatasets(chart.data);
+  if (!datasets.length) return false;
+  const times = new Set<number>();
+  for (const d of datasets) for (const p of d.points) times.add(p.t);
+  return times.size >= 2;
+}
