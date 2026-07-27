@@ -11,8 +11,6 @@ export function isWialonGenerator(input: {
 }): boolean {
   const name = (input.name || '').trim();
   const nameLower = name.toLowerCase();
-  // Bowsers / fuel tankers are not generators.
-  if (/\bbowser\b|fuel\s*tanker|fuel\s*truck|fuel\s*trailer/i.test(nameLower)) return false;
   const plate = (input.plate || extractPlateFromName(name) || '').trim();
   const cf = input.customFields || {};
 
@@ -22,7 +20,8 @@ export function isWialonGenerator(input: {
 
   if (vehicleType.includes('gen') || unitType.includes('gen')) return true;
   if (model.includes('kva')) return true;
-  if (/pearl\s*bank|genset|generator|\bdg\s*set\b/i.test(nameLower)) return true;
+  // Stationary fuel storage (bowser/tanker) sits with generators in Fuel tabs.
+  if (/pearl\s*bank|genset|generator|\bdg\s*set\b|bowser|fuel\s*tanker/i.test(nameLower)) return true;
 
   const eh = input.engineHours ?? 0;
   const mi = input.mileage ?? 0;
