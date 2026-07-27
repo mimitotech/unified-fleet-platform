@@ -349,15 +349,13 @@ export default function Login() {
     setConfirmPassword('');
   };
 
-  const active = slides[Math.min(slide, Math.max(slides.length - 1, 0))] ?? null;
   const hasTrust = trustLogos.length > 0;
-  const hasSlideCopy = Boolean(active && (active.eyebrow || active.title || active.caption));
 
   return (
     <div className="fixed inset-0 flex flex-col overflow-hidden bg-[#004225]">
       {/* Media | form — equal halves on lg+, stacked on small; no outer gutters */}
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
-        {/* Media: image only (copy lives on the form side) */}
+        {/* Media: image slideshow only */}
         <section className="relative h-[36vh] min-h-[200px] max-h-[42vh] shrink-0 overflow-hidden bg-[#004225] md:h-auto md:max-h-none md:min-h-0 md:w-1/2 md:flex-none md:shrink">
           {slides.map((s, i) => (
             <div
@@ -397,32 +395,10 @@ export default function Login() {
 
         <div className="hidden w-[3px] shrink-0 bg-[#00351e] md:block" aria-hidden />
 
-        {/* Form column — animated fleet backdrop, copy on top, card below */}
+        {/* Form column — animated fleet backdrop + form card */}
         <aside className="relative z-10 flex min-h-0 w-full flex-1 flex-col overflow-y-auto border-t border-white/15 md:w-1/2 md:flex-none md:border-t-0">
           <LoginFleetBackdrop />
-          <div className="relative z-10 mx-auto flex w-full max-w-[440px] flex-1 flex-col justify-center gap-4 px-5 py-5 sm:gap-5 sm:px-8 sm:py-6 lg:px-10 lg:py-7">
-            {/* Slide copy — syncs with media; sits above the form */}
-            {hasSlideCopy && active ? (
-              <div
-                key={active.id}
-                className="animate-fade-in text-white"
-              >
-                {active.eyebrow ? (
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/80 sm:text-[11px]">
-                    {active.eyebrow}
-                  </p>
-                ) : null}
-                <h2 className="text-lg font-bold tracking-tight text-white sm:text-xl lg:text-[1.35rem] lg:leading-snug">
-                  {active.title}
-                </h2>
-                {active.caption ? (
-                  <p className="mt-1 text-xs leading-relaxed text-white/90 sm:text-sm">
-                    {active.caption}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-
+          <div className="relative z-10 mx-auto flex w-full max-w-[440px] flex-1 flex-col justify-center px-5 py-5 sm:px-8 sm:py-6 lg:px-10 lg:py-7">
             <div className="overflow-hidden rounded-2xl border-2 border-white/25 bg-white shadow-[0_18px_50px_-16px_rgba(0,0,0,0.45)]">
               <div className="flex flex-col items-center border-b border-primary/12 bg-white px-5 pb-3.5 pt-4 text-center sm:pb-4 sm:pt-5">
                 <img src={BRAND.logo} alt={BRAND.name} className="h-12 w-auto object-contain sm:h-14" />
