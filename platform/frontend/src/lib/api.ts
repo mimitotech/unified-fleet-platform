@@ -889,9 +889,10 @@ export const clientApi = {
         templateId: number;
         templateName: string;
         module: string;
-        isGroupReport: boolean;
-        fallback?: boolean;
-      }>;
+          isGroupReport: boolean;
+          objectKind?: 'unit' | 'group' | 'user' | 'resource';
+          fallback?: boolean;
+        }>;
       modules: Array<{
         module: string;
         count: number;
@@ -902,10 +903,12 @@ export const clientApi = {
           templateName: string;
           module: string;
           isGroupReport: boolean;
+          objectKind?: 'unit' | 'group' | 'user' | 'resource';
           fallback?: boolean;
         }>;
       }>;
       groups: Array<{ id: number; nm: string }>;
+      users?: Array<{ id: number; nm: string }>;
       count: number;
       fetchedAt: string;
     }>('/api/client/wialon/reports/catalog'),
@@ -914,7 +917,7 @@ export const clientApi = {
     resourceId?: number;
     templateId?: number;
     objectId: number;
-    objectKind?: 'unit' | 'group';
+    objectKind?: 'unit' | 'group' | 'user' | 'resource';
     from: number;
     to: number;
     maxRowsPerTable?: number;

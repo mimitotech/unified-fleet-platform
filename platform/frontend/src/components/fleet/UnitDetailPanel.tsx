@@ -32,6 +32,8 @@ import {
 } from "@/hooks/useWialonLive";
 import { useWialonGeocode } from "@/hooks/useWialonGeocode";
 import { formatReadingValue } from "@/lib/formatReading";
+import { useAuth } from "@/providers/AuthProvider";
+import { isSystemRole } from "@/lib/systemRoles";
 
 type Props = {
   unit: FleetUnit | null;
@@ -180,6 +182,11 @@ export function UnitDetailPanel({
   live = false,
   className,
 }: Props) {
+  const { user } = useAuth();
+  // Parameters are admin-facing raw payload; operators use Sensors.
+  const canSeeParameters =
+    user?.role === 'tenant_admin' || isSystemRole(user?.role);
+
   const wialonId =
     unit?.wialonId ??
     (unit && Number.isFinite(Number(unit.id)) ? Number(unit.id) : undefined);
@@ -228,8 +235,8 @@ export function UnitDetailPanel({
     lat != null &&
     lng != null;
 
-  // Every configured sensor / field for this asset — no row caps, but nothing
-  // with an empty reading and no raw device plumbing.
+  // Configured sensors always listed — blank readings show as "—" so the
+  // Sensors block does not disappear when calc is briefly empty.
   const sensors = useMemo(
     () =>
       safeArray<{
@@ -239,24 +246,27 @@ export function UnitDetailPanel({
         type?: string;
         param?: string;
       }>(detail?.sensors)
-        .filter((s) => !isBlankValue(s.value))
         .map((s) => ({
           ...s,
-          display: formatReadingValue(s.name, s.value, { unit: s.unit, type: s.type }),
+          display: isBlankValue(s.value)
+            ? "—"
+            : formatReadingValue(s.name, s.value, { unit: s.unit, type: s.type }),
         })),
     [detail?.sensors],
   );
   const messageParams = useMemo(
-    () =>
-      safeArray<{ key: string; value: string }>(
+    () => {
+      if (!canSeeParameters) return [];
+      return safeArray<{ key: string; value: string }>(
         detail?.messageParams?.length ? detail.messageParams : detail?.prms,
       )
         .filter(isConfiguredParam)
         .map((p) => ({
           ...p,
           display: formatReadingValue(p.key, p.value),
-        })),
-    [detail?.messageParams, detail?.prms],
+        }));
+    },
+    [detail?.messageParams, detail?.prms, canSeeParameters],
   );
   const customFields = useMemo(
     () => safeArray<{ name: string; value: string }>(detail?.flds),
@@ -372,29 +382,27 @@ export function UnitDetailPanel({
             iconUgi={unit.iconUgi}
             title={displayName}
           />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-start gap-1.5 min-w-0">
-              <h3
-                className="font-semibold text-xs leading-snug break-words min-w-0 flex-1"
-                title={displayName}
-              >
-                {displayName}
-              </h3>
-              <div className="shrink-0 flex items-center gap-1 pt-0.5">
-                <StatusBadge status={status} label={motionLabel} size="sm" />
-                {live && (
-                  <span className="inline-flex items-center gap-1 text-[9px] text-status-moving font-medium">
-                    {quietlyRefreshing ? (
-                      <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                    ) : (
-                      <span className="w-1 h-1 rounded-full bg-status-moving animate-pulse" />
-                    )}
-                    Live
-                  </span>
-                )}
-              </div>
+          <div className="min-w-0 flex-1 space-y-1">
+            <h3
+              className="font-semibold text-xs leading-snug break-words"
+              title={displayName}
+            >
+              {displayName}
+            </h3>
+            <div className="flex flex-wrap items-center gap-1">
+              <StatusBadge status={status} label={motionLabel} size="sm" />
+              {live && (
+                <span className="inline-flex items-center gap-1 text-[9px] text-status-moving font-medium">
+                  {quietlyRefreshing ? (
+                    <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                  ) : (
+                    <span className="w-1 h-1 rounded-full bg-status-moving animate-pulse" />
+                  )}
+                  Live
+                </span>
+              )}
             </div>
-            <div className="mt-0.5 flex items-start gap-1 text-[10px] text-muted-foreground">
+            <div className="flex items-start gap-1 text-[10px] text-muted-foreground">
               <MapPin className="h-2.5 w-2.5 shrink-0 mt-[2px]" />
               <p className="min-w-0 leading-snug break-words">
                 {resolvingAddress
@@ -463,14 +471,20 @@ export function UnitDetailPanel({
 
       {showScrollable && (
         <div className="flex-1 overflow-auto border-t px-2.5 py-2 space-y-2.5 min-h-0 text-[11px]">
-          {sensors.length > 0 && (
+          {detail && (
             <DetailSection title={`Sensors · ${sensors.length}`}>
-              <KvRows
-                rows={sensors.map((s, i) => ({
-                  key: s.param ? `${s.name} (${s.param})` : s.name || `Sensor ${i + 1}`,
-                  value: s.display || "—",
-                }))}
-              />
+              {sensors.length > 0 ? (
+                <KvRows
+                  rows={sensors.map((s, i) => ({
+                    key: s.param ? `${s.name} (${s.param})` : s.name || `Sensor ${i + 1}`,
+                    value: s.display || "—",
+                  }))}
+                />
+              ) : (
+                <p className="text-[10px] text-muted-foreground px-0.5">
+                  No sensors configured on this asset.
+                </p>
+              )}
             </DetailSection>
           )}
 

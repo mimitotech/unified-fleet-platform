@@ -30,10 +30,36 @@ export type ResolvedReportTemplate = {
   templateName: string;
   module: WialonReportModule;
   isGroupReport: boolean;
+  /** What Wialon object the template expects when executed. */
+  objectKind: 'unit' | 'group' | 'user' | 'resource';
   fuelFamily?: FuelReportFamily;
   canonicalName?: string;
   fallback?: boolean;
 };
+
+/** Infer report object kind from template name (Wialon naming conventions). */
+export function inferReportObjectKind(templateName: string): 'unit' | 'group' | 'user' | 'resource' {
+  const n = templateName || '';
+  if (
+    /\buser\s*audit\b|\baudit\s*log\b|\buser\s*activit|\blogin\s*histor|\buser\s*log\b|\busers?\s*report\b|\baudit\s*report\b|\blog\s*of\s*users?\b/i.test(
+      n,
+    ) ||
+    (/\baudit\b/i.test(n) && !/\bfuel\b|\bunit\b|\bvehicle\b|\btrip\b/i.test(n)) ||
+    (/\buser/i.test(n) && !/\bunit\b|\bvehicle\b|\bgenerator\b|\bfleet\b|\bfuel\b/i.test(n))
+  ) {
+    return 'user';
+  }
+  if (/\bresource\b|\baccount\s*summary\b|\bbilling\b/i.test(n)) {
+    return 'resource';
+  }
+  if (
+    /\(group\)|\(gensets?\)/i.test(n) ||
+    (/\bgroup\b/i.test(n) && !/\(unit/i.test(n))
+  ) {
+    return 'group';
+  }
+  return 'unit';
+}
 
 type ResourceWithTemplates = {
   id: number;
@@ -181,6 +207,9 @@ export class WialonReportResolverService {
             templateName,
             module: slot.module,
             isGroupReport: slot.isGroupReport ?? false,
+            objectKind: inferReportObjectKind(templateName) === 'group' || slot.isGroupReport
+              ? 'group'
+              : inferReportObjectKind(templateName),
             fuelFamily: slot.fuelFamily,
             canonicalName: slot.canonicalName,
             fallback: slot.fallback,
@@ -285,9 +314,8 @@ export class WialonReportResolverService {
             break;
           }
         }
-        const isGroupReport =
-          /\(group\)|\(gensets?\)/i.test(templateName) ||
-          (/\bgroup\b/i.test(templateName) && !/\(unit/i.test(templateName));
+        const objectKind = inferReportObjectKind(templateName);
+        const isGroupReport = objectKind === 'group';
         let fuelFamily: FuelReportFamily | undefined;
         let canonicalName: string | undefined;
         for (const slot of REPORT_TEMPLATE_PATTERNS) {
@@ -304,6 +332,7 @@ export class WialonReportResolverService {
           templateName,
           module,
           isGroupReport,
+          objectKind,
           fuelFamily,
           canonicalName,
         });

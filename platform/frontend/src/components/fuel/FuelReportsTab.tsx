@@ -55,6 +55,7 @@ export function FuelReportsTab(_props: FuelTabDateRangeProps & {
   const [selectedKey, setSelectedKey] = useState('');
   const [selectedUnitId, setSelectedUnitId] = useState('');
   const [selectedGroupId, setSelectedGroupId] = useState('');
+  const [selectedUserId, setSelectedUserId] = useState('');
   const [datePreset, setDatePreset] = useState<ReportDatePreset>('today');
   const [reportFrom, setReportFrom] = useState(() => localDateString());
   const [reportTo, setReportTo] = useState(() => localDateString());
@@ -66,7 +67,7 @@ export function FuelReportsTab(_props: FuelTabDateRangeProps & {
     to: number;
     useRunEndpoint: true;
     module?: string;
-    objectKind: 'unit' | 'group';
+    objectKind: 'unit' | 'group' | 'user' | 'resource';
     maxRowsPerTable?: number;
   } | null>(null);
 
@@ -108,21 +109,30 @@ export function FuelReportsTab(_props: FuelTabDateRangeProps & {
 
   useEffect(() => {
     setRunParams(null);
-  }, [selectedKey, selectedUnitId, selectedGroupId, datePreset, reportFrom, reportTo]);
+  }, [selectedKey, selectedUnitId, selectedGroupId, selectedUserId, datePreset, reportFrom, reportTo]);
+
+  const selectedKind = selected?.objectKind ?? (selected?.isGroupReport ? 'group' : 'unit');
 
   useEffect(() => {
-    if (!selected || selected.isGroupReport) return;
+    if (!selected || selectedKind !== 'unit') return;
     if (selectedUnitId) return;
     const first = units[0];
     if (first) setSelectedUnitId(String(first.wialonId ?? first.id));
-  }, [selected, selectedUnitId, units]);
+  }, [selected, selectedKind, selectedUnitId, units]);
 
   useEffect(() => {
-    if (!selected?.isGroupReport) return;
+    if (selectedKind !== 'group') return;
     if (selectedGroupId) return;
     const first = catalog?.groups?.[0];
     if (first) setSelectedGroupId(String(first.id));
-  }, [selected, selectedGroupId, catalog?.groups]);
+  }, [selectedKind, selectedGroupId, catalog?.groups]);
+
+  useEffect(() => {
+    if (selectedKind !== 'user') return;
+    if (selectedUserId) return;
+    const first = catalog?.users?.[0];
+    if (first) setSelectedUserId(String(first.id));
+  }, [selectedKind, selectedUserId, catalog?.users]);
 
   const {
     data: reportResult,
@@ -137,7 +147,12 @@ export function FuelReportsTab(_props: FuelTabDateRangeProps & {
     const from = Math.floor(new Date(`${reportFrom}T00:00:00`).getTime() / 1000);
     const to = Math.floor(new Date(`${reportTo}T23:59:59`).getTime() / 1000);
     if (!Number.isFinite(from) || !Number.isFinite(to) || from > to) return;
-    const objectId = selected.isGroupReport ? Number(selectedGroupId) : Number(selectedUnitId);
+    const kind = selected.objectKind ?? (selected.isGroupReport ? 'group' : 'unit');
+    let objectId = 0;
+    if (kind === 'group') objectId = Number(selectedGroupId);
+    else if (kind === 'user') objectId = Number(selectedUserId);
+    else if (kind === 'resource') objectId = Number(selected.resourceId);
+    else objectId = Number(selectedUnitId);
     if (!Number.isFinite(objectId) || objectId <= 0) return;
     setRunParams({
       reportResourceId: selected.resourceId,
@@ -147,9 +162,8 @@ export function FuelReportsTab(_props: FuelTabDateRangeProps & {
       to,
       useRunEndpoint: true,
       module: selected.module,
-      objectKind: selected.isGroupReport ? 'group' : 'unit',
-      // Keep previews responsive for large fleets; CSV remains available for the shown table.
-      maxRowsPerTable: selected.isGroupReport ? 5000 : 8000,
+      objectKind: kind,
+      maxRowsPerTable: kind === 'group' ? 5000 : 8000,
     });
   };
 
@@ -218,14 +232,20 @@ export function FuelReportsTab(_props: FuelTabDateRangeProps & {
                       value={`${r.resourceId}:${r.templateId}`}
                     >
                       {r.templateName}
-                      {r.isGroupReport ? ' (Group)' : ' (Unit)'}
+                      {r.objectKind === 'group' || r.isGroupReport
+                        ? ' (Group)'
+                        : r.objectKind === 'user'
+                          ? ' (User)'
+                          : r.objectKind === 'resource'
+                            ? ' (Account)'
+                            : ' (Unit)'}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
 
-            {selected?.isGroupReport ? (
+            {selectedKind === 'group' ? (
               <div className="space-y-1 shrink-0">
                 <Label className="text-[10px] text-muted-foreground">Group</Label>
                 <Select value={selectedGroupId || undefined} onValueChange={setSelectedGroupId}>
@@ -240,6 +260,28 @@ export function FuelReportsTab(_props: FuelTabDateRangeProps & {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+            ) : selectedKind === 'user' ? (
+              <div className="space-y-1 shrink-0">
+                <Label className="text-[10px] text-muted-foreground">User</Label>
+                <Select value={selectedUserId || undefined} onValueChange={setSelectedUserId}>
+                  <SelectTrigger className="h-8 w-[200px] text-xs">
+                    <SelectValue placeholder={(catalog?.users?.length ? 'Select user' : 'No users found')} />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-72">
+                    {(catalog?.users ?? []).map((u) => (
+                      <SelectItem key={u.id} value={String(u.id)}>
+                        {u.nm}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : selectedKind === 'resource' ? (
+              <div className="space-y-1 shrink-0 self-end pb-0.5">
+                <p className="text-[11px] text-muted-foreground max-w-[180px]">
+                  Account report — no unit required
+                </p>
               </div>
             ) : (
               <div className="space-y-1 shrink-0">
@@ -318,7 +360,9 @@ export function FuelReportsTab(_props: FuelTabDateRangeProps & {
           <p className="text-[11px] text-muted-foreground mt-2">
             {templates.length} template{templates.length === 1 ? '' : 's'} on this client
             {filtered.length !== templates.length ? ` · showing ${filtered.length}` : ''}
-            {selected ? ` · ${selected.isGroupReport ? 'group' : 'unit'} report` : ''}
+            {selected
+              ? ` · ${selectedKind === 'group' ? 'group' : selectedKind === 'user' ? 'user' : selectedKind === 'resource' ? 'account' : 'unit'} report`
+              : ''}
           </p>
         </CardContent>
       </Card>
@@ -327,7 +371,7 @@ export function FuelReportsTab(_props: FuelTabDateRangeProps & {
         <CardContent className="p-2 sm:p-3 min-w-0">
           {reportError && (
             <QueryErrorBanner
-              message="Could not run the selected report. Check unit/group and try again."
+              message="Could not run the selected report. Check the selected object and try again."
               onRetry={() => refetchRun()}
               className="mb-3"
             />
@@ -335,7 +379,7 @@ export function FuelReportsTab(_props: FuelTabDateRangeProps & {
           {!runParams && !busy && (
             <div className="text-sm text-muted-foreground py-24 text-center space-y-1">
               <p className="font-medium text-foreground">Report preview</p>
-              <p>Choose category, report, asset and period above, then Run report.</p>
+              <p>Choose category, report, object and period above, then Run report.</p>
             </div>
           )}
           {busy && (
@@ -348,11 +392,15 @@ export function FuelReportsTab(_props: FuelTabDateRangeProps & {
             <ReportResultsView
               data={reportResult}
               templateName={selected?.templateName}
-              moduleLabel="Fuel"
+              moduleLabel={selected?.module === 'fuel' || !selected?.module ? 'Fuel' : (selected.module || 'Fuel')}
               unitName={
-                selected?.isGroupReport
+                selectedKind === 'group'
                   ? catalog?.groups?.find((g) => String(g.id) === selectedGroupId)?.nm
-                  : units.find((u) => String(u.wialonId ?? u.id) === selectedUnitId)?.name
+                  : selectedKind === 'user'
+                    ? catalog?.users?.find((u) => String(u.id) === selectedUserId)?.nm
+                    : selectedKind === 'resource'
+                      ? selected?.resourceName
+                      : units.find((u) => String(u.wialonId ?? u.id) === selectedUnitId)?.name
               }
               className="min-w-0"
             />

@@ -324,11 +324,6 @@ const FUEL_TABLE_SCHEMAS: Record<
 const HEADER_TYPE_VOLUME = 50;
 const HEADER_TYPE_FUEL_LEVEL = 54;
 
-const TANK_HEADER_PATTERNS: { tank: FuelTank; patterns: string[] }[] = [
-  { tank: 'main', patterns: ['(main fuel level)', '(main tank)', '(main)'] },
-  { tank: 'reserve', patterns: ['(reserve fuel level)', '(reserve tank)', '(reserve)', '(aux)', '(auxiliary)'] },
-];
-
 function headerMatchesPattern(header: string, patterns: string[]): boolean {
   const h = header.toLowerCase().trim();
   return patterns.some((p) => h.includes(p.toLowerCase()));
@@ -473,10 +468,46 @@ function buildColumnMap(headers: string[], section: FuelSection, headerTypes?: (
   return columnMap;
 }
 
+const TANK_HEADER_PATTERNS: { tank: FuelTank; patterns: string[] }[] = [
+  {
+    tank: 'main',
+    patterns: [
+      '(main fuel level)',
+      '(main tank)',
+      '(main)',
+      'main fuel',
+      'main tank',
+      'tank 1',
+      'tank1',
+      'primary tank',
+      'primary fuel',
+    ],
+  },
+  {
+    tank: 'reserve',
+    patterns: [
+      '(reserve fuel level)',
+      '(reserve tank)',
+      '(reserve)',
+      '(aux)',
+      '(auxiliary)',
+      'reserve fuel',
+      'reserve tank',
+      'tank 2',
+      'tank2',
+      'secondary tank',
+      'secondary fuel',
+      'aux tank',
+      'auxiliary tank',
+      'backup tank',
+    ],
+  },
+];
+
 function detectTankType(tableName: string, tableLabel: string): FuelTank {
   const combined = `${tableName} ${tableLabel}`.toLowerCase();
-  if (/reserve|secondary|tank 2|tank2|aux|auxiliary|backup/.test(combined)) return 'reserve';
-  if (/main|primary|tank 1|tank1/.test(combined)) return 'main';
+  if (/reserve|secondary|tank\s*2|tank2|aux(?:iliary)?|backup/.test(combined)) return 'reserve';
+  if (/main|primary|tank\s*1|tank1/.test(combined)) return 'main';
   return 'main';
 }
 
@@ -505,6 +536,16 @@ function buildTankColumnMaps(headers: string[], _section: FuelSection): TankColu
         tankMap.initialLevel = i;
       else if (header.includes('final') || header.includes('end level') || header.includes('after'))
         tankMap.finalLevel = i;
+      else if (
+        tankMap.fuelUsed === -1 &&
+        (header.includes('filled') ||
+          header.includes('filling') ||
+          header.includes('drop') ||
+          header.includes('theft') ||
+          header.includes('drain'))
+      ) {
+        tankMap.fuelUsed = i;
+      }
     }
     if (tankMap.fuelUsed !== -1 || tankMap.initialLevel !== -1 || tankMap.finalLevel !== -1) tankMaps.push(tankMap);
   }

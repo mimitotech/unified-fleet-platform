@@ -24,10 +24,13 @@ export function useWialonReportCatalog(enabled = true) {
           templateName: t.templateName,
           module: t.module as WialonCatalogTemplate['module'],
           isGroupReport: t.isGroupReport,
+          objectKind: (t as { objectKind?: WialonCatalogTemplate['objectKind'] }).objectKind
+            ?? (t.isGroupReport ? 'group' : 'unit'),
           fallback: t.fallback,
         })
       ),
       groups: d.groups ?? [],
+      users: (d as { users?: Array<{ id: number; nm: string }> }).users ?? [],
       fetchedAt: d.fetchedAt,
       count: d.count,
     }),
@@ -52,7 +55,7 @@ export function useWialonReportRun(
     ReportRunParams & {
       useRunEndpoint?: boolean;
       module?: string;
-      objectKind?: 'unit' | 'group';
+      objectKind?: 'unit' | 'group' | 'user' | 'resource';
       maxRowsPerTable?: number;
     }
   ) | null,

@@ -199,6 +199,17 @@ export class WialonReportsLiveService {
       // Cache TTL still refreshes templates within a few minutes; Sync / Run paths invalidate as needed.
       const templates = await WialonReportResolverService.listAllTemplates(client, scope);
       const groups = await WialonReportResolverService.listUnitGroups(client, scope, { limit: 80 });
+      let users: Array<{ id: number; nm: string }> = [];
+      try {
+        const { WialonHierarchyService } = await import('./WialonHierarchyService.js');
+        const accountId = scope.accountId != null ? Number(scope.accountId) : undefined;
+        if (accountId && Number.isFinite(accountId)) {
+          const listed = await WialonHierarchyService.getUsersForAccount(creds, accountId, client);
+          users = listed.slice(0, 120).map((u) => ({ id: Number(u.id), nm: String(u.name || u.id) }));
+        }
+      } catch {
+        users = [];
+      }
 
       const byModule = new Map<WialonReportModule, ResolvedReportTemplate[]>();
       for (const t of templates) {
@@ -217,6 +228,7 @@ export class WialonReportsLiveService {
         templates,
         modules,
         groups,
+        users,
         count: templates.length,
         fetchedAt: new Date().toISOString(),
       };
@@ -231,7 +243,7 @@ export class WialonReportsLiveService {
       resourceId?: number;
       templateId?: number;
       objectId: number;
-      objectKind?: 'unit' | 'group';
+      objectKind?: 'unit' | 'group' | 'user' | 'resource';
       from: number;
       to: number;
       maxRowsPerTable?: number;

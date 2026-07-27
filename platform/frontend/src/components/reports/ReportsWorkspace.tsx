@@ -45,7 +45,7 @@ const DEFAULT_REPORT_ID = 'fleet-status';
 type TemplateRunParams = ReportRunParams & {
   useRunEndpoint: true;
   module?: string;
-  objectKind: 'unit' | 'group';
+  objectKind: 'unit' | 'group' | 'user' | 'resource';
 };
 
 export function ReportsWorkspace() {
@@ -58,6 +58,7 @@ export function ReportsWorkspace() {
   const [scope, setScope] = useState<'fleet' | 'unit'>('fleet');
   const [unitId, setUnitId] = useState<string>('');
   const [groupId, setGroupId] = useState<string>('');
+  const [userId, setUserId] = useState<string>('');
   const [datePreset, setDatePreset] = useState<ReportDatePreset>('last7');
   const [templateRunParams, setTemplateRunParams] = useState<TemplateRunParams | null>(null);
 
@@ -90,36 +91,50 @@ export function ReportsWorkspace() {
 
   useEffect(() => {
     setTemplateRunParams(null);
-  }, [selectedReportId, unitId, groupId, datePreset]);
+  }, [selectedReportId, unitId, groupId, userId, datePreset]);
 
   useEffect(() => {
     if (scope !== 'unit' || unitId || !units.length) return;
     setUnitId(String(units[0].wialonId ?? units[0].id));
   }, [scope, unitId, units]);
 
-  useEffect(() => {
-    if (!selectedTemplate?.isGroupReport || groupId || !catalog?.groups.length) return;
-    setGroupId(String(catalog.groups[0].id));
-  }, [selectedTemplate, groupId, catalog?.groups]);
+  const templateKind =
+    selectedTemplate?.objectKind ?? (selectedTemplate?.isGroupReport ? 'group' : 'unit');
 
   useEffect(() => {
-    if (!isTemplate || selectedTemplate?.isGroupReport || unitId || !units.length) return;
+    if (templateKind !== 'group' || groupId || !catalog?.groups.length) return;
+    setGroupId(String(catalog.groups[0].id));
+  }, [templateKind, groupId, catalog?.groups]);
+
+  useEffect(() => {
+    if (templateKind !== 'user' || userId || !(catalog?.users?.length)) return;
+    setUserId(String(catalog.users[0].id));
+  }, [templateKind, userId, catalog?.users]);
+
+  useEffect(() => {
+    if (!isTemplate || templateKind !== 'unit' || unitId || !units.length) return;
     setUnitId(String(units[0].wialonId ?? units[0].id));
-  }, [isTemplate, selectedTemplate, unitId, units]);
+  }, [isTemplate, templateKind, unitId, units]);
 
   const wialonUnitId = useMemo(() => {
-    if (isTemplate && selectedTemplate?.isGroupReport) return null;
+    if (isTemplate && templateKind !== 'unit') return null;
     if (!isTemplate && scope !== 'unit') return null;
     if (!unitId) return null;
     const u = units.find((x) => String(x.wialonId ?? x.id) === unitId);
     return u?.wialonId ?? (Number.isFinite(Number(unitId)) ? Number(unitId) : null);
-  }, [scope, unitId, units, isTemplate, selectedTemplate]);
+  }, [scope, unitId, units, isTemplate, templateKind]);
 
   const wialonGroupId = useMemo(() => {
-    if (!selectedTemplate?.isGroupReport || !groupId) return null;
+    if (templateKind !== 'group' || !groupId) return null;
     const n = Number(groupId);
     return Number.isFinite(n) ? n : null;
-  }, [selectedTemplate, groupId]);
+  }, [templateKind, groupId]);
+
+  const wialonUserId = useMemo(() => {
+    if (templateKind !== 'user' || !userId) return null;
+    const n = Number(userId);
+    return Number.isFinite(n) ? n : null;
+  }, [templateKind, userId]);
 
   const needsUnit =
     !isTemplate &&
@@ -141,7 +156,13 @@ export function ReportsWorkspace() {
     connected &&
     isTemplate &&
     selectedTemplate != null &&
-    (selectedTemplate.isGroupReport ? wialonGroupId != null : wialonUnitId != null);
+    (templateKind === 'group'
+      ? wialonGroupId != null
+      : templateKind === 'user'
+        ? wialonUserId != null
+        : templateKind === 'resource'
+          ? true
+          : wialonUnitId != null);
 
   const {
     data: templateResult,
@@ -153,7 +174,14 @@ export function ReportsWorkspace() {
   const handleRunTemplate = () => {
     if (!selectedTemplate) return;
     const { from, to } = reportPresetRange(datePreset);
-    const objectId = selectedTemplate.isGroupReport ? wialonGroupId! : wialonUnitId!;
+    const objectId =
+      templateKind === 'group'
+        ? wialonGroupId!
+        : templateKind === 'user'
+          ? wialonUserId!
+          : templateKind === 'resource'
+            ? selectedTemplate.resourceId
+            : wialonUnitId!;
     setTemplateRunParams({
       reportResourceId: selectedTemplate.resourceId,
       reportTemplateId: selectedTemplate.templateId,
@@ -162,11 +190,16 @@ export function ReportsWorkspace() {
       to,
       useRunEndpoint: true,
       module: selectedTemplate.module,
-      objectKind: selectedTemplate.isGroupReport ? 'group' : 'unit',
+      objectKind: templateKind,
     });
   };
 
-  const selectedUnitName = units.find((u) => (u.wialonId ?? Number(u.id)) === wialonUnitId)?.name;
+  const selectedUnitName =
+    templateKind === 'user'
+      ? catalog?.users?.find((u) => u.id === wialonUserId)?.nm
+      : templateKind === 'group'
+        ? catalog?.groups?.find((g) => g.id === wialonGroupId)?.nm
+        : units.find((u) => (u.wialonId ?? Number(u.id)) === wialonUnitId)?.name;
 
   const periodLabel = useMemo(() => {
     if (!needsPeriod) return 'Live snapshot';
@@ -243,11 +276,12 @@ export function ReportsWorkspace() {
                     </p>
                     {items.map((t) => {
                       const key = templateReportKey(t.resourceId, t.templateId);
+                      const kind = t.objectKind ?? (t.isGroupReport ? 'group' : 'unit');
                       return (
                         <ReportNavItem
                           key={key}
                           title={t.templateName}
-                          description={`${t.resourceName} · ${t.isGroupReport ? 'group' : 'unit'} report`}
+                          description={`${t.resourceName} · ${kind} report`}
                           meta={t.fallback ? 'fallback template' : 'exec_report'}
                           active={selectedReportId === key}
                           onSelect={() => setSelectedReportId(key)}
@@ -294,7 +328,7 @@ export function ReportsWorkspace() {
                 </div>
               )}
 
-              {(isTemplate && !selectedTemplate?.isGroupReport) || (!isTemplate && scope === 'unit') ? (
+              {(isTemplate && templateKind === 'unit') || (!isTemplate && scope === 'unit') ? (
                 <div className="min-w-[200px]">
                   <Label className="text-[10px] text-muted-foreground">Asset</Label>
                   <Select value={unitId} onValueChange={setUnitId}>
@@ -312,7 +346,7 @@ export function ReportsWorkspace() {
                 </div>
               ) : null}
 
-              {isTemplate && selectedTemplate?.isGroupReport && (
+              {isTemplate && templateKind === 'group' && (
                 <div className="min-w-[200px]">
                   <Label className="text-[10px] text-muted-foreground">Unit group</Label>
                   <Select value={groupId} onValueChange={setGroupId}>
@@ -328,6 +362,30 @@ export function ReportsWorkspace() {
                     </SelectContent>
                   </Select>
                 </div>
+              )}
+
+              {isTemplate && templateKind === 'user' && (
+                <div className="min-w-[200px]">
+                  <Label className="text-[10px] text-muted-foreground">User</Label>
+                  <Select value={userId} onValueChange={setUserId}>
+                    <SelectTrigger className="h-8 mt-0.5 text-xs">
+                      <SelectValue placeholder={catalog?.users?.length ? 'Select user' : 'No users found'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(catalog?.users ?? []).map((u) => (
+                        <SelectItem key={u.id} value={String(u.id)}>
+                          {u.nm}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              {isTemplate && templateKind === 'resource' && (
+                <p className="text-[11px] text-muted-foreground self-end pb-1">
+                  Account report — no unit required
+                </p>
               )}
 
               {needsPeriod && (

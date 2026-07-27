@@ -188,7 +188,11 @@ router.post('/wialon/reports/run', requireTenant, async (req: TenantRequest, res
     if ([objectId, from, to].some((n) => Number.isNaN(n))) {
       return error(res, 'objectId, from, and to (unix seconds) are required');
     }
-    const objectKind = body.objectKind === 'group' ? 'group' : 'unit';
+    const objectKindRaw = String(body.objectKind || 'unit');
+    const objectKind =
+      objectKindRaw === 'group' || objectKindRaw === 'user' || objectKindRaw === 'resource'
+        ? objectKindRaw
+        : 'unit';
     const module = body.module != null ? String(body.module) : undefined;
     const resourceId = body.resourceId != null ? parseInt(String(body.resourceId), 10) : undefined;
     const templateId = body.templateId != null ? parseInt(String(body.templateId), 10) : undefined;

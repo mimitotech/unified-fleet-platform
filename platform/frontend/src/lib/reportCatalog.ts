@@ -188,6 +188,7 @@ export type WialonCatalogTemplate = {
   templateName: string;
   module: WialonReportModuleKey;
   isGroupReport: boolean;
+  objectKind?: 'unit' | 'group' | 'user' | 'resource';
   fallback?: boolean;
 };
 

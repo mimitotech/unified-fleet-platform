@@ -28,7 +28,9 @@ import { useTenantBranding } from '@/hooks/useTenantBranding';
 import { notify } from '@/lib/notify';
 import { BrandedReportFooter, BrandedReportHeader, BrandedReportDocument } from '@/components/reports/BrandedReportChrome';
 import { FuelReportPerformanceCharts } from '@/components/fuel/FuelReportPerformanceCharts';
+import { FuelLevelChart } from '@/components/fuel/FuelLevelChart';
 import { discoverFuelPerformanceMetrics } from '@/lib/fuelReportPerformance';
+import { fuelTransactionsFromReportTables } from '@/lib/fuelGraphFromReport';
 import { buildReportFilename } from '@/lib/reportFilename';
 
 type Props = {
@@ -357,6 +359,12 @@ export function ReportResultsView({ data, templateName, unitName, moduleLabel = 
 
   const activeTable = tables.find((t) => String(t.index) === activeTab);
   const showFuelPerformance = moduleLabel.toLowerCase() === 'fuel';
+  const fuelGraphTx = useMemo(
+    () => (showFuelPerformance ? fuelTransactionsFromReportTables(tables, unitName || 'Asset') : []),
+    [showFuelPerformance, tables, unitName],
+  );
+  // Always offer Fuel Graph on fuel reports (Wialon-style level vs time).
+  const showFuelGraphTab = showFuelPerformance;
   const chartPeriod = useMemo(
     () => ({ from: summary.interval.from, to: summary.interval.to }),
     [summary.interval.from, summary.interval.to],
@@ -369,11 +377,12 @@ export function ReportResultsView({ data, templateName, unitName, moduleLabel = 
   useEffect(() => {
     const valid =
       tables.some((table) => String(table.index) === activeTab) ||
-      charts.some((c) => `chart-${c.index}` === activeTab);
+      charts.some((c) => `chart-${c.index}` === activeTab) ||
+      (showFuelGraphTab && activeTab === 'fuel-graph');
     if (!valid) {
       setActiveTab(tables[0] ? String(tables[0].index) : charts[0] ? `chart-${charts[0].index}` : '0');
     }
-  }, [tables, charts, activeTab]);
+  }, [tables, charts, activeTab, showFuelGraphTab]);
 
   useEffect(() => {
     if (!showFuelPerformance) return;
@@ -448,7 +457,7 @@ export function ReportResultsView({ data, templateName, unitName, moduleLabel = 
   };
 
   const exportBranded = async (mode: 'download' | 'print') => {
-    if (!activeTable) return;
+    if (!tables.length) return;
     setBusy(true);
     flushSync(() => setMountPrint(true));
     try {
@@ -538,7 +547,7 @@ export function ReportResultsView({ data, templateName, unitName, moduleLabel = 
             size="sm"
             variant="outline"
             className="h-8 text-xs border-primary/40 text-primary"
-            disabled={busy || !activeTable}
+            disabled={busy || tables.length === 0}
             onClick={() => void exportBranded('download')}
           >
             <Download className="h-3.5 w-3.5 mr-1" />
@@ -548,7 +557,7 @@ export function ReportResultsView({ data, templateName, unitName, moduleLabel = 
             size="sm"
             variant="outline"
             className="h-8 text-xs border-primary/40 text-primary"
-            disabled={busy || !activeTable}
+            disabled={busy || tables.length === 0}
             onClick={() => void exportBranded('print')}
           >
             <Printer className="h-3.5 w-3.5 mr-1" />
@@ -557,22 +566,29 @@ export function ReportResultsView({ data, templateName, unitName, moduleLabel = 
         </div>
       </div>
 
-      {mountPrint && activeTable && (
+      {mountPrint && tables.length > 0 && (
         <div className="fixed left-[-10000px] top-0 w-[1100px] pointer-events-none" aria-hidden>
           <div ref={printRef} className="bg-white text-slate-900 p-1">
             <BrandedReportDocument branding={branding}>
               <BrandedReportHeader
                 branding={branding}
-                reportTitle={templateName || activeTable.label || 'Report'}
+                reportTitle={templateName || 'Report'}
                 moduleLabel={moduleLabel}
                 periodLabel={periodLabel}
                 objectLabel={unitName}
                 generatedAt={new Date(summary.generatedAt)}
               />
-              <div className="border border-slate-200 border-t-0 px-3 py-3 bg-white/90">
-                <p className="text-xs font-medium text-slate-700 mb-2">{activeTable.label}</p>
+              <div className="border border-slate-200 border-t-0 px-3 py-3 bg-white/90 space-y-6">
                 {showFuelPerformance && <PrintChartPlaceholders />}
-                <ReportTableView table={activeTable} branded />
+                {tables.map((t, i) => (
+                  <div key={t.index} className={i > 0 ? 'pt-4 border-t border-slate-200' : undefined}>
+                    <p className="text-xs font-semibold text-slate-800 mb-2">
+                      {t.label}
+                      <span className="ml-1.5 font-normal text-slate-500">({t.rows.length} rows)</span>
+                    </p>
+                    <ReportTableView table={t} branded />
+                  </div>
+                ))}
               </div>
               <BrandedReportFooter
                 branding={branding}
@@ -597,6 +613,12 @@ export function ReportResultsView({ data, templateName, unitName, moduleLabel = 
                 <span className="text-muted-foreground">({t.rows.length})</span>
               </TabsTrigger>
             ))}
+            {showFuelGraphTab && (
+              <TabsTrigger value="fuel-graph" className="text-xs gap-1">
+                <BarChart3 className="h-3 w-3" />
+                Fuel Graph
+              </TabsTrigger>
+            )}
             {charts.map((c) => (
               <TabsTrigger key={`chart-${c.index}`} value={`chart-${c.index}`} className="text-xs gap-1">
                 <BarChart3 className="h-3 w-3" />
@@ -604,6 +626,29 @@ export function ReportResultsView({ data, templateName, unitName, moduleLabel = 
               </TabsTrigger>
             ))}
           </TabsList>
+          {showFuelGraphTab && (
+            <TabsContent value="fuel-graph" className="mt-4">
+              {fuelGraphTx.length > 0 ? (
+                <FuelLevelChart
+                  transactions={fuelGraphTx}
+                  vehicles={[...new Set(fuelGraphTx.map((t) => t.unitName).filter(Boolean))].map((name) => ({
+                    name: String(name),
+                  }))}
+                  fromDate={format(new Date(summary.interval.from * 1000), 'yyyy-MM-dd')}
+                  toDate={format(new Date(summary.interval.to * 1000), 'yyyy-MM-dd')}
+                  unitLabel="Asset"
+                />
+              ) : (
+                <div className="fleet-card py-12 text-center text-muted-foreground">
+                  <p className="font-medium text-sm">Fuel Graph</p>
+                  <p className="text-xs mt-1 max-w-md mx-auto">
+                    Fuel level vs time appears when this report includes time-stamped levels,
+                    fillings, or sudden drops (green fill / red drain markers).
+                  </p>
+                </div>
+              )}
+            </TabsContent>
+          )}
           {tables.map((t) => {
             const tableKey = String(t.index);
             const isActive = activeTab === tableKey;

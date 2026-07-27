@@ -378,10 +378,14 @@ export function processRowWithTankMap(
   const durationStr = getCellValue(cells, columnMap.duration ?? -1);
   const durationSeconds = getDurationSeconds(cells, columnMap.duration ?? -1);
 
+  // Dual-tank tables often put fill/theft volume in the tank-scoped column
+  // mapped to fuelUsed — route it into the right metric for the section.
+  const volumeFromTankCol = fuelUsed;
   const metrics = applySectionMetrics(section, {
-    fuelUsed,
-    filled: 0,
-    suddenFuelDrop: 0,
+    fuelUsed: section === 'consumption' ? volumeFromTankCol : 0,
+    filled: section === 'filling' ? volumeFromTankCol : 0,
+    suddenFuelDrop:
+      section === 'theft' || section === 'dispensed' ? volumeFromTankCol : 0,
     initialLevel,
     finalLevel,
     mileage,
@@ -390,10 +394,23 @@ export function processRowWithTankMap(
   fuelUsed = metrics.fuelUsed;
   initialLevel = metrics.initialLevel;
   finalLevel = metrics.finalLevel;
+  const filled = metrics.filled;
+  const suddenFuelDrop = metrics.suddenFuelDrop;
 
   if (
     section === 'consumption' &&
     metrics.fuelUsed === 0 &&
+    initialLevel === 0 &&
+    finalLevel === 0
+  ) {
+    return null;
+  }
+  if (section === 'filling' && filled === 0 && initialLevel === 0 && finalLevel === 0) {
+    return null;
+  }
+  if (
+    (section === 'theft' || section === 'dispensed') &&
+    suddenFuelDrop === 0 &&
     initialLevel === 0 &&
     finalLevel === 0
   ) {
@@ -413,14 +430,14 @@ export function processRowWithTankMap(
     location: locationData.location,
     initialLevel,
     finalLevel,
-    filled: 0,
+    filled,
     sensor,
     fuelUsed,
     mileage,
     duration: durationStr,
     durationSeconds,
     avgConsumption,
-    suddenFuelDrop: 0,
+    suddenFuelDrop,
     count: 0,
     latitude: locationData.lat || undefined,
     longitude: locationData.lng || undefined,
