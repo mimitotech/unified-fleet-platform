@@ -27,3 +27,4 @@ platform/backend/uploads/**
 # local dumps / one-off scratch
 platform/scripts/dump-*.mts
 *.sql.bak
+platform/deploy/cpanel-clone-url.local.txt

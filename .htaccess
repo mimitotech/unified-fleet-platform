@@ -1,0 +1,5 @@
+# Protect VCS metadata when the repo sits under the domain document root.
+RedirectMatch 404 /\.git
+RedirectMatch 404 /\.cpanel\.yml$
+RedirectMatch 404 /\.env
+RedirectMatch 404 /platform/\.env

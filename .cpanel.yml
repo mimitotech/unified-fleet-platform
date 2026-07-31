@@ -1,0 +1,58 @@
+---
+# cPanel Git Version Control — runs after each pull/deploy
+# Repo lives at:
+#   /home/virtual/vps-311004/2/27d5d7288d/mams.mimitotracking.co.ug
+# Node app root must be the platform/ subdirectory (hostinger-start.mjs).
+deployment:
+  tasks:
+    - |
+      /bin/bash -lc '
+      set -euo pipefail
+      ROOT="$(pwd)"
+      cd "$ROOT/platform"
+
+      # Prefer StackCP / cPanel Node selectors if present
+      for candidate in \
+        "$HOME/nodevenv/mams.mimitotracking.co.ug/platform"/*/bin/activate \
+        "$HOME/nodevenv/"*/bin/activate \
+        /opt/alt/alt-nodejs22/root/usr/bin \
+        /opt/alt/alt-nodejs20/root/usr/bin
+      do
+        if [ -f "$candidate" ]; then
+          # shellcheck disable=SC1090
+          source "$candidate" || true
+          break
+        fi
+        if [ -d "$candidate" ]; then
+          export PATH="$candidate:$PATH"
+          break
+        fi
+      done
+
+      echo "[cpanel-deploy] node=$(command -v node || true) $(node -v 2>/dev/null || echo MISSING)"
+      echo "[cpanel-deploy] npm=$(command -v npm || true) $(npm -v 2>/dev/null || echo MISSING)"
+
+      if ! command -v node >/dev/null 2>&1; then
+        echo "[cpanel-deploy] FATAL: Node not on PATH. Create a Node.js 22 app with Application root=platform/"
+        exit 1
+      fi
+
+      MAJOR=$(node -p "process.versions.node.split('.')[0]")
+      if [ "$MAJOR" -lt 22 ]; then
+        echo "[cpanel-deploy] FATAL: need Node 22+, found $(node -v)"
+        exit 1
+      fi
+
+      if [ ! -f .env ]; then
+        echo "[cpanel-deploy] WARNING: platform/.env missing — copy from deploy/hostinger.env.example"
+      fi
+
+      npm install --legacy-peer-deps --ignore-scripts
+      npm run build
+      mkdir -p tmp
+      touch tmp/restart.txt
+      test -f hostinger-start.mjs
+      test -f backend/dist/index.js
+      test -f frontend/dist/index.html
+      echo "[cpanel-deploy] OK"
+      '

@@ -14,7 +14,23 @@ platform/          ← Hostinger Root directory = platform
   deploy/          Env templates + deploy docs
 ```
 
-## Production (Hostinger)
+## Production
+
+### StackCP / cPanel (`mams.mimitotracking.co.ug`)
+
+cPanel Git Version Control + Node 22. Full guide: [`platform/deploy/STACKCP_DEPLOY.md`](platform/deploy/STACKCP_DEPLOY.md)
+
+| Setting | Value |
+|---------|--------|
+| Domain | **https://mams.mimitotracking.co.ug** |
+| Git / app path | nested cPanel path under `…/home/virtual/…/mams.mimitotracking.co.ug` (see STACKCP_DEPLOY.md) |
+| Node app root | **`…/mams.mimitotracking.co.ug/platform`** |
+| Entry | **`hostinger-start.mjs`** |
+| Node | `22.x` |
+| Branch | `master` |
+| SSH | `mimitotracking.co.ug@ssh.lhr.stackcp.com:39550` |
+
+### Hostinger (alternate)
 
 | Setting | Value |
 |---------|--------|
@@ -27,7 +43,7 @@ platform/          ← Hostinger Root directory = platform
 
 1. Import [`platform/database/mysql/ufp_complete_schema.sql`](platform/database/mysql/ufp_complete_schema.sql) in phpMyAdmin.
 2. Env vars: [`platform/deploy/hostinger.env.example`](platform/deploy/hostinger.env.example)
-3. Full guide: [`platform/deploy/HOSTINGER_DEPLOY.md`](platform/deploy/HOSTINGER_DEPLOY.md)
+3. Hostinger guide: [`platform/deploy/HOSTINGER_DEPLOY.md`](platform/deploy/HOSTINGER_DEPLOY.md)
 
 ## Local development
 
