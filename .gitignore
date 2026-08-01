@@ -10,10 +10,11 @@ coverage/
 .env
 .env.local
 .env.*.local
-platform/.env
-platform/deploy/*.local.env
-platform/deploy/hostinger.env
-platform/deploy/hostinger-env-paste.txt
+.env.platform.backup
+deploy/*.local.env
+deploy/hostinger.env
+deploy/hostinger-env-paste.txt
+deploy/cpanel-clone-url.local.txt
 
 # logs & OS
 *.log
@@ -21,10 +22,9 @@ platform/deploy/hostinger-env-paste.txt
 Thumbs.db
 
 # runtime uploads
-platform/backend/uploads/**
-!platform/backend/uploads/.gitkeep
+backend/uploads/**
+!backend/uploads/.gitkeep
 
 # local dumps / one-off scratch
-platform/scripts/dump-*.mts
+scripts/dump-*.mts
 *.sql.bak
-platform/deploy/cpanel-clone-url.local.txt
