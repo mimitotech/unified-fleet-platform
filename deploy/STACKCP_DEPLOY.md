@@ -45,18 +45,38 @@ FRONTEND_URL=https://mams.mimitotracking.co.ug
 
 Import your live dump into `mamsdb-35303030746b` (phpMyAdmin).
 
-## D. Build & run
+## D. Build & run (20i Node.js Application Registration)
 
-Needs **Node 22** on the host (VPS / Node selector / PM2):
+20i discovers apps that have **both** in the document root (`repos/mams`):
+
+1. `.env` with `PORT=3000`
+2. `ecosystem.config.js` (already in the repo)
+
+### Steps
+
+1. Git Version Control → **Pull** latest `master` into `repos/mams`
+2. In File Manager, confirm these exist in `repos/mams`:
+   - `ecosystem.config.js`
+   - `hostinger-start.mjs`
+   - `.env` (create from `.env.example` — must include `PORT=3000`)
+3. In StackCP / My20i open **Node.js Application Registration**
+4. Click **Discover applications**
+5. Register **mams** when listed
+
+### First-time install/build
+
+Before (or right after) discovery, dependencies must be installed once. Prefer SSH when Elmot fixes it:
 
 ```bash
 cd /home/virtual/vps-e05b3d/2/27d5d7288d/repos/mams
 npm install --legacy-peer-deps --ignore-scripts
 npm run build
-node hostinger-start.mjs
 ```
 
-Or enable automatic deploy via `.cpanel.yml` after Pull in Git Version Control.
+Or ask Elmot/support to run those two commands in `repos/mams`, then Rediscover.
+
+`npm start` runs `node hostinger-start.mjs` (see `package.json`).
+
 
 ## E. Checklist
 
