@@ -24,8 +24,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 function resolveFrontendDist(): string | null {
   const candidates = [
     process.env.FRONTEND_DIST,
+    path.resolve(process.cwd(), 'public'),
     path.resolve(process.cwd(), 'frontend/dist'),
     path.resolve(process.cwd(), '../frontend/dist'),
+    path.resolve(__dirname, '../public'),
     path.resolve(__dirname, '../../frontend/dist'),
   ]
     .filter(Boolean)

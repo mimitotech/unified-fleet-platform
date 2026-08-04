@@ -2,48 +2,47 @@
 
 Multi-tenant fleet management unifying **Wialon**, **LocoNav**, and **TrackSolid Pro**.
 
-## Layout (clone = run root)
+## Standard layout (Git clone = app root)
 
 ```
-unified-fleet-platform/     ← Git clone AND domain document root
+repos/mams/                 ← Git clone AND domain document root
   hostinger-start.mjs       ← entry file
   package.json
+  ecosystem.config.js
   backend/
   frontend/
   packages/
-  database/mysql/           ← schema SQL
-  deploy/                   ← env examples + deploy docs
   .env                      ← create on server (not in git)
 ```
 
-## Production (StackCP)
+## Production (StackCP + GitHub)
 
 | Setting | Value |
 |---------|--------|
 | Domain | https://mams.mimitotracking.co.ug |
-| Document root | clone folder (e.g. `repos/mams` or `mams.mimitotracking.co.ug`) |
-| Entry | **`hostinger-start.mjs`** |
-| Node | `22.x` |
+| Git repo | https://github.com/mimitotech/unified-fleet-platform.git |
+| Clone path | `repos/mams` |
+| Document root | `repos/mams` |
+| Entry | `hostinger-start.mjs` |
+| Node | 22.x |
 | Branch | `master` |
 
-1. Clone `https://github.com/mimitotech/unified-fleet-platform.git` into the document root.
-2. Create `.env` from [`.env.example`](.env.example).
-3. Import live MySQL dump (or [`database/mysql/ufp_complete_schema.sql`](database/mysql/ufp_complete_schema.sql)).
-4. `npm install --legacy-peer-deps --ignore-scripts && npm run build`
-5. Run with Node: `node hostinger-start.mjs` (or PM2 / Node selector).
-
-Guide: [`deploy/STACKCP_DEPLOY.md`](deploy/STACKCP_DEPLOY.md)
+**Reconnect guide:** [`deploy/GITHUB_RECONNECT.md`](deploy/GITHUB_RECONNECT.md)
 
 ## Local development
 
 ```bash
-cp .env.example .env   # fill MySQL credentials
+cp .env.example .env
 npm install
-npm run build:local    # or npm run build
 npm run dev
 ```
 
 - Frontend: http://localhost:5173  
 - API: http://localhost:3000/health  
+
+```bash
+npm run build          # production build
+node hostinger-start.mjs
+```
 
 Redis optional (`REDIS_DISABLED=1`).

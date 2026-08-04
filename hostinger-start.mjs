@@ -22,7 +22,11 @@ if (!process.env.MYSQL_PASSWORD && process.env.DB_PASSWORD) process.env.MYSQL_PA
 if (!process.env.MYSQL_DATABASE && process.env.DB_NAME) process.env.MYSQL_DATABASE = process.env.DB_NAME;
 
 const root = dirname(fileURLToPath(import.meta.url));
-const serverBundle = join(root, 'backend', 'dist', 'index.js');
+const serverCandidates = [
+  join(root, 'server', 'index.js'),
+  join(root, 'backend', 'dist', 'index.js'),
+];
+const serverBundle = serverCandidates.find((file) => existsSync(file));
 const port = parseInt(process.env.PORT, 10) || 3000;
 const host = process.env.HOST || '0.0.0.0';
 
@@ -32,7 +36,7 @@ console.log('[mams-start] DB_USER=', process.env.DB_USER || '(unset)');
 console.log('[mams-start] DB_NAME=', process.env.DB_NAME || '(unset)');
 console.log('[mams-start] DB_PASSWORD length=', (process.env.DB_PASSWORD || '').length);
 
-if (!existsSync(serverBundle)) {
+if (!serverBundle) {
   console.error('[mams-start] FATAL: backend/dist/index.js missing — run npm run build');
   process.exit(1);
 }

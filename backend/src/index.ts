@@ -1,9 +1,19 @@
 import dotenv from 'dotenv';
 import path from 'path';
+import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 
-const rootEnv = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.env');
-dotenv.config({ path: rootEnv });
+function resolveRootEnv(): string {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.resolve(process.cwd(), '.env'),
+    path.resolve(here, '../.env'),
+    path.resolve(here, '../../.env'),
+  ];
+  return candidates.find((file) => existsSync(file)) || candidates[0];
+}
+
+dotenv.config({ path: resolveRootEnv() });
 dotenv.config();
 
 import { createApp } from './app.js';

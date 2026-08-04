@@ -14,6 +14,7 @@
     "build": "node scripts/hostinger-build.mjs",
     "build:local": "npm run build -w @ufp/shared && npm run build -w frontend && npm run build -w backend",
     "build:hostinger": "node scripts/hostinger-build.mjs",
+    "build:deploy": "node scripts/build-mamsmain.mjs",
     "start": "node hostinger-start.mjs",
     "start:local": "node backend/dist/index.js",
     "dev:backend": "npm run dev -w backend",

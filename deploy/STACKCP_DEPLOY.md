@@ -1,87 +1,54 @@
 # Deploy MAMS on StackCP → mams.mimitotracking.co.ug
 
-**Live domain:** https://mams.mimitotracking.co.ug  
-**Repo:** https://github.com/mimitotech/unified-fleet-platform (branch `master`)  
-**Layout:** clone root = app root = document root
+**Standard method:** GitHub clone into `repos/mams`.  
+**Full guide:** [GITHUB_RECONNECT.md](./GITHUB_RECONNECT.md)
 
-## A. Clone into the domain folder
+## Quick reference
 
-Git Version Control → Clone:
+| Setting | Value |
+|---------|--------|
+| **Git URL** | `https://github.com/mimitotech/unified-fleet-platform.git` |
+| **Clone path** | `repos/mams` |
+| **Document root** | `repos/mams` |
+| **Full path** | `/home/virtual/vps-e05b3d/2/27d5d7288d/repos/mams` |
+| **Entry file** | `hostinger-start.mjs` |
+| **Node** | 22+ |
+| **Branch** | `master` |
 
-| Field | Value |
-|-------|--------|
-| **Clone Url** | `https://github.com/mimitotech/unified-fleet-platform.git` |
-| **Repository Path** | `repos/mams` (or empty the subdomain folder and use that name) |
-| **Repository Name** | `mams` |
-
-Manage Domains → `mams.mimitotracking.co.ug` document root:
-
-```
-repos/mams
-```
-
-Full path example:
+## Layout
 
 ```
-/home/virtual/vps-e05b3d/2/27d5d7288d/repos/mams
+repos/mams/
+  hostinger-start.mjs
+  package.json
+  ecosystem.config.js
+  .env                  ← create on server
+  backend/
+  frontend/
+  packages/
+  .cpanel.yml
 ```
 
-That folder must contain `hostinger-start.mjs` at the top level (no nested `platform/`).
+## `.env` on server
 
-## B. Environment
+Copy from [hostinger.env.example](./hostinger.env.example) or `.env.example` in repo root.
 
-Create `.env` in the clone root from `.env.example`:
+Must include **`PORT=3000`**, DB credentials, `JWT_SECRET`, `ENCRYPTION_KEY`.
 
-```
-DB_HOST=127.0.0.1
-DB_USER=nsamba
-DB_PASSWORD=…
-DB_NAME=mamsdb-35303030746b
-API_PUBLIC_URL=https://mams.mimitotracking.co.ug
-FRONTEND_URL=https://mams.mimitotracking.co.ug
-```
+## Node registration
 
-## C. Database
+StackCP → **Node.js Application Registration** → **Discover applications** → **`mams`**
 
-Import your live dump into `mamsdb-35303030746b` (phpMyAdmin).
+## Checklist
 
-## D. Build & run (20i Node.js Application Registration)
+- [ ] Git cloned into `repos/mams`
+- [ ] Document root = `repos/mams`
+- [ ] `.env` with `PORT=3000` and DB settings
+- [ ] MySQL dump imported into `mamsdb-35303030746b`
+- [ ] `npm run build` completed (`backend/dist`, `frontend/dist` exist)
+- [ ] Node app **`mams`** registered
+- [ ] https://mams.mimitotracking.co.ug/health OK
 
-20i discovers apps that have **both** in the document root (`repos/mams`):
+## Manual upload fallback
 
-1. `.env` with `PORT=3000`
-2. `ecosystem.config.js` (already in the repo)
-
-### Steps
-
-1. Git Version Control → **Pull** latest `master` into `repos/mams`
-2. In File Manager, confirm these exist in `repos/mams`:
-   - `ecosystem.config.js`
-   - `hostinger-start.mjs`
-   - `.env` (create from `.env.example` — must include `PORT=3000`)
-3. In StackCP / My20i open **Node.js Application Registration**
-4. Click **Discover applications**
-5. Register **mams** when listed
-
-### First-time install/build
-
-Before (or right after) discovery, dependencies must be installed once. Prefer SSH when Elmot fixes it:
-
-```bash
-cd /home/virtual/vps-e05b3d/2/27d5d7288d/repos/mams
-npm install --legacy-peer-deps --ignore-scripts
-npm run build
-```
-
-Or ask Elmot/support to run those two commands in `repos/mams`, then Rediscover.
-
-`npm start` runs `node hostinger-start.mjs` (see `package.json`).
-
-
-## E. Checklist
-
-- [ ] Domain document root = clone root (has `hostinger-start.mjs`)
-- [ ] `.env` present with correct DB_*  
-- [ ] Live SQL imported  
-- [ ] Node 22 build + start  
-- [ ] https://mams.mimitotracking.co.ug/health responds  
+[ MAMSMAIN_DEPLOY.md](./MAMSMAIN_DEPLOY.md) — build zip on Mac if server cannot run npm.

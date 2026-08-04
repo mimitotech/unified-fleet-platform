@@ -28,3 +28,10 @@ backend/uploads/**
 # local dumps / one-off scratch
 scripts/dump-*.mts
 *.sql.bak
+
+# StackCP upload bundle (built locally)
+stackcp-bundle/
+mams-stackcp-upload.zip
+mamsmain/
+mamsmain.zip
+mams-stackcp-upload/

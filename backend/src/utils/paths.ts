@@ -12,6 +12,7 @@ export function resolveUploadRoot(): string {
   }
   const candidates = [
     path.resolve(process.cwd(), 'uploads'),
+    path.resolve(__dirname, '../uploads'),
     path.resolve(__dirname, '../../uploads'),
   ];
   return candidates.find((p) => existsSync(p)) || candidates[0];
