@@ -58,7 +58,15 @@ Your path is correct:
 | Repository Name | `mams` |
 | Deployment Branch | `master` |
 | Remote Url | `https://github.com/mimitotech/unified-fleet-platform.git` (or SSH equivalent) |
-| Deployment Script | leave empty — use repo `.cpanel.yml` |
+| Deployment Script | see below |
+
+### Deployment Script (paste into the panel)
+
+```bash
+/bin/bash /home/virtual/vps-e05b3d/2/27d5d7288d/repos/mams/scripts/cpanel-deploy.sh
+```
+
+Full paste option: [DEPLOYMENT_SCRIPT.md](./DEPLOYMENT_SCRIPT.md)
 
 Then: **Pull** latest `master` → **Deploy**.
 
