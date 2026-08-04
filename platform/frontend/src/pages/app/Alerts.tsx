@@ -264,11 +264,11 @@ export default function AlertsPage() {
         <QueryErrorBanner message="Could not load alerts." onRetry={() => refetch()} className="mb-4" />
       )}
       <Tabs defaultValue="inbox" className="space-y-3">
-        <TabsList className="branded-tabs">
+        <TabsList className="branded-tabs h-auto flex-wrap w-full sm:w-auto">
           <TabsTrigger value="inbox">Inbox</TabsTrigger>
           <TabsTrigger value="configured" className="gap-1">
             <Bell className="h-3.5 w-3.5" />
-            Configured
+            Configured alerts
           </TabsTrigger>
           <TabsTrigger value="reports" className="gap-1">
             <FileText className="h-3.5 w-3.5" />

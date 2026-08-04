@@ -974,6 +974,8 @@ export const clientApi = {
         name: string;
         triggers?: number;
         active?: boolean;
+        unitCount?: number;
+        controlType?: string;
       }>;
       count: number;
     }>('/api/client/wialon/notifications'),

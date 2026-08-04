@@ -63,15 +63,12 @@ async function ensureChecklistTemplatesTable(): Promise<void> {
   for (const category of WORKSHOP_ASSET_CATEGORIES) {
     const meta = TEMPLATE_META[category];
     const sections = DEFAULT_CHECKLIST_BY_CATEGORY[category];
-    const id = `00000000-0000-4000-8000-wct${category.slice(0, 5).padEnd(5, '0')}`;
-    // Stable-ish UUIDs per category for system seeds
     const stableId =
       category === 'vehicle'
         ? 'a1000001-0000-4000-8000-000000000001'
         : category === 'generator'
           ? 'a1000001-0000-4000-8000-000000000002'
           : 'a1000001-0000-4000-8000-000000000003';
-    void id;
     try {
       await query(
         `INSERT INTO workshop_checklist_templates
@@ -86,7 +83,6 @@ async function ensureChecklistTemplatesTable(): Promise<void> {
         [stableId, category, meta.name, meta.description, JSON.stringify(sections)],
       );
     } catch (e) {
-      // MySQL may lack ON CONFLICT if rewriter fails — try insert-ignore path
       try {
         const { rows } = await query<{ cnt: number }>(
           `SELECT COUNT(*) AS cnt FROM workshop_checklist_templates WHERE id = $1`,
@@ -111,6 +107,18 @@ async function ensureChecklistTemplatesTable(): Promise<void> {
         console.warn(`[workshop] seed template ${category}:`, (e2 as Error).message);
       }
     }
+  }
+
+  // Retire the short-lived separate monthly-only generator template if present.
+  try {
+    await query(
+      `UPDATE workshop_checklist_templates
+       SET is_active = 0, updated_at = NOW()
+       WHERE id = $1`,
+      ['a1000001-0000-4000-8000-000000000004'],
+    );
+  } catch {
+    /* optional cleanup */
   }
 }
 

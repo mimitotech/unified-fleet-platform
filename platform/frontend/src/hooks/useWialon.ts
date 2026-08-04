@@ -62,7 +62,8 @@ export function useWialonNotifications(enabled: boolean) {
     queryKey: ['wialon-notifications'],
     queryFn: () => clientApi.getWialonNotifications(),
     enabled,
-    staleTime: 60_000,
+    staleTime: 30_000,
+    refetchOnMount: 'always',
   });
 }
 

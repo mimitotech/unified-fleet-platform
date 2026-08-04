@@ -300,11 +300,21 @@ export function WialonReportsPanel() {
 }
 
 export function WialonNotificationsPanel() {
-  const { connected, configured } = useWialonContext();
-  const { data, isLoading, isError, refetch, isFetching } = useWialonNotifications(connected);
+  const { connected, configured, isLoading: ctxLoading } = useWialonContext();
+  // Fetch whenever the account is linked — do not wait only on a live session ping.
+  const canFetch = configured || connected;
+  const { data, isLoading, isError, refetch, isFetching } = useWialonNotifications(canFetch);
 
   const activeCount = data?.notifications?.filter((n) => n.active).length ?? 0;
   const inactiveCount = (data?.notifications?.length ?? 0) - activeCount;
+
+  if (ctxLoading && !configured) {
+    return (
+      <div className="branded-panel p-4">
+        <Skeleton className="h-28" />
+      </div>
+    );
+  }
 
   if (!configured) {
     return (
@@ -317,21 +327,6 @@ export function WialonNotificationsPanel() {
         <p className="text-sm text-muted-foreground pt-1">
           Fleet connection is not set up for this account yet. Once connected, configured alert
           rules appear here.
-        </p>
-      </div>
-    );
-  }
-
-  if (!connected) {
-    return (
-      <div className="branded-panel p-4 space-y-2">
-        <LiveHeader
-          title="Configured alerts"
-          description="Alert rules set up for this client account."
-          icon={Bell}
-        />
-        <p className="text-sm text-muted-foreground pt-1">
-          Unable to reach the live feed right now. Try again shortly to load configured alert rules.
         </p>
       </div>
     );
@@ -358,6 +353,12 @@ export function WialonNotificationsPanel() {
         </Button>
       </div>
 
+      {!connected && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+          Live session is idle — showing the last loaded rules. Tap Refresh to retry the connection.
+        </p>
+      )}
+
       <div className="grid gap-2 grid-cols-2 sm:grid-cols-3">
         <div className="branded-panel px-3 py-2">
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total rules</p>
@@ -377,11 +378,16 @@ export function WialonNotificationsPanel() {
         {isLoading ? (
           <Skeleton className="h-28" />
         ) : isError ? (
-          <p className="text-sm text-destructive">Could not load configured alerts.</p>
+          <div className="space-y-2">
+            <p className="text-sm text-destructive">Could not load configured alerts.</p>
+            <Button type="button" size="sm" variant="outline" onClick={() => void refetch()}>
+              Try again
+            </Button>
+          </div>
         ) : !data?.notifications?.length ? (
           <p className="text-sm text-muted-foreground">
-            No alert rules are configured on this account yet. Rules are set up in the fleet
-            platform; once added, they will list here.
+            No alert rules were returned for this account. If rules exist for this client, tap Refresh
+            or ask an admin to confirm the account link.
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -390,6 +396,7 @@ export function WialonNotificationsPanel() {
                 <TableRow>
                   <TableHead>Alert name</TableHead>
                   <TableHead>Account / resource</TableHead>
+                  <TableHead className="text-right">Units</TableHead>
                   <TableHead className="text-right">Times triggered</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
@@ -399,6 +406,7 @@ export function WialonNotificationsPanel() {
                   <TableRow key={`${n.resourceId}-${n.id}`}>
                     <TableCell className="font-medium">{n.name}</TableCell>
                     <TableCell className="text-muted-foreground">{n.resourceName}</TableCell>
+                    <TableCell className="text-right tabular-nums">{n.unitCount ?? '—'}</TableCell>
                     <TableCell className="text-right tabular-nums">{n.triggers ?? '—'}</TableCell>
                     <TableCell>
                       <Badge variant={n.active ? 'default' : 'secondary'}>

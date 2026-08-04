@@ -77,7 +77,7 @@ const getTypeLabel = (type: InspectionType): string => {
     'pre-delivery': 'Pre-Delivery',
     scheduled: 'Scheduled',
   };
-  return labels[type];
+  return labels[type] || type;
 };
 
 function InspectionCard({

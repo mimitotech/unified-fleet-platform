@@ -115,7 +115,19 @@ export interface WialonSearchItem {
   zl?: Record<string, { id: number; n: string }>;
   rcfg?: { color?: number; descr?: string; units?: number[] };
   rep?: Record<string, { id: number; n: string; ct?: string }>;
-  unf?: Record<string, { id: number; n: string; ac?: number; ta?: number; td?: number }>;
+  unf?: Record<
+    string,
+    {
+      id: number;
+      n: string;
+      ac?: number;
+      ta?: number;
+      td?: number;
+      fl?: number;
+      un?: number[];
+      trg?: string | { t?: string };
+    }
+  >;
 }
 
 export interface WialonSearchResult {
@@ -136,6 +148,9 @@ export const WIALON_RESOURCE_DRIVERS_FLAGS = 257;
 
 /** Resource: base + geofences (zl) */
 export const WIALON_RESOURCE_GEOFENCES_FLAGS = 4097;
+
+/** Resource: base + notifications (unf) — 1 | 1024 */
+export const WIALON_RESOURCE_NOTIFICATIONS_FLAGS = 1025;
 
 export function wialonObjectValues<T>(obj: Record<string, T> | undefined): T[] {
   if (!obj) return [];

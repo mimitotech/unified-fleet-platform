@@ -4,6 +4,7 @@ import {
   WIALON_UNIT_FLAG,
   WIALON_RESOURCE_ACCOUNT_FLAGS,
   WIALON_RESOURCE_GEOFENCES_FLAGS,
+  WIALON_RESOURCE_NOTIFICATIONS_FLAGS,
   WIALON_UNIT_FLAGS,
   WIALON_UNIT_DETAIL_FLAGS,
   type WialonSearchItem,
@@ -588,10 +589,34 @@ export class WialonLiveService {
     });
   }
 
-  static async listNotifications(credentials: WialonCredentialsInput, limit = 100) {
+  static async listNotifications(credentials: WialonCredentialsInput, limit = 200) {
     const accountId = this.scopedAccount(credentials);
     return withWialonClient(credentials, async (client) => {
-      const resources = await searchAll(client, resourceSearchSpec(accountId), 1025);
+      // Same pattern as geofences: search resources, then search_item each so `unf` is populated.
+      let resources = await searchAll(
+        client,
+        resourceSearchSpec(accountId),
+        WIALON_RESOURCE_NOTIFICATIONS_FLAGS,
+      );
+      if (!resources.length) {
+        resources = await searchAll(
+          client,
+          resourceSearchSpec(undefined),
+          WIALON_RESOURCE_NOTIFICATIONS_FLAGS,
+        );
+      }
+
+      type Nf = {
+        id: number;
+        n: string;
+        ac?: number;
+        ta?: number;
+        td?: number;
+        fl?: number;
+        un?: number[];
+        trg?: string | { t?: string };
+      };
+
       const out: Array<{
         resourceId: number;
         resourceName: string;
@@ -599,23 +624,55 @@ export class WialonLiveService {
         name: string;
         triggers?: number;
         active?: boolean;
+        unitCount?: number;
+        controlType?: string;
       }> = [];
-      for (const res of resources) {
-        const unf = res.unf || {};
+      const seen = new Set<string>();
+      const now = Math.floor(Date.now() / 1000);
+
+      for (const resource of resources) {
+        let unf: Record<string, Nf> = (resource.unf as Record<string, Nf>) || {};
+        try {
+          const detail = await client.request<{
+            item?: { nm?: string; unf?: Record<string, Nf> };
+          }>('core/search_item', {
+            id: resource.id,
+            flags: WIALON_RESOURCE_NOTIFICATIONS_FLAGS,
+          });
+          if (detail.item?.unf) unf = detail.item.unf;
+        } catch {
+          /* keep list-search unf if any */
+        }
+
         for (const n of Object.values(unf)) {
-          const nf = n as { id: number; n: string; ac?: number; ta?: number; td?: number };
+          const nf = n as Nf;
+          if (!nf?.id || !nf.n) continue;
+          const key = `${resource.id}:${nf.id}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+
+          const disabledByFlag = (Number(nf.fl) & 0x2) === 0x2;
+          const deactivated = Boolean(nf.td && nf.td > 0 && nf.td <= now);
+          const controlType =
+            typeof nf.trg === 'string' ? nf.trg : nf.trg && typeof nf.trg === 'object' ? nf.trg.t : undefined;
+
           out.push({
-            resourceId: res.id,
-            resourceName: res.nm,
+            resourceId: resource.id,
+            resourceName: resource.nm,
             id: nf.id,
             name: nf.n,
             triggers: nf.ac,
-            active: !nf.td || nf.td > Math.floor(Date.now() / 1000),
+            active: !disabledByFlag && !deactivated,
+            unitCount: Array.isArray(nf.un) ? nf.un.length : undefined,
+            controlType,
           });
-          if (out.length >= limit) return out;
+          if (out.length >= limit) {
+            return out.sort((a, b) => a.name.localeCompare(b.name));
+          }
         }
       }
-      return out;
+
+      return out.sort((a, b) => a.name.localeCompare(b.name));
     });
   }
 
