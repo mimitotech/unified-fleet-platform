@@ -320,13 +320,13 @@ export function WialonNotificationsPanel() {
     return (
       <div className="branded-panel p-4 space-y-2">
         <LiveHeader
-          title="Configured alerts"
-          description="Alert rules set up for this client account."
+          title="Alert types"
+          description="Alert types set up for this client."
           icon={Bell}
         />
         <p className="text-sm text-muted-foreground pt-1">
-          Fleet connection is not set up for this account yet. Once connected, configured alert
-          rules appear here.
+          Fleet connection is not set up for this account yet. Once connected, this client&apos;s
+          alert types appear here.
         </p>
       </div>
     );
@@ -336,8 +336,8 @@ export function WialonNotificationsPanel() {
     <div className="space-y-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <LiveHeader
-          title="Configured alerts"
-          description="All alert rules configured for this client. When a rule fires, the event appears in Inbox."
+          title="Alert types"
+          description="Alert types configured for this client. When one fires, the event appears in Inbox."
           count={data?.count}
           icon={Bell}
         />
@@ -355,13 +355,13 @@ export function WialonNotificationsPanel() {
 
       {!connected && (
         <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
-          Live session is idle — showing the last loaded rules. Tap Refresh to retry the connection.
+          Live session is idle — showing the last loaded types. Tap Refresh to retry the connection.
         </p>
       )}
 
       <div className="grid gap-2 grid-cols-2 sm:grid-cols-3">
         <div className="branded-panel px-3 py-2">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total rules</p>
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total types</p>
           <p className="text-lg font-semibold tabular-nums leading-tight">{data?.count ?? '—'}</p>
         </div>
         <div className="branded-panel px-3 py-2 border-l-[3px] border-l-primary">
@@ -379,22 +379,22 @@ export function WialonNotificationsPanel() {
           <Skeleton className="h-28" />
         ) : isError ? (
           <div className="space-y-2">
-            <p className="text-sm text-destructive">Could not load configured alerts.</p>
+            <p className="text-sm text-destructive">Could not load alert types.</p>
             <Button type="button" size="sm" variant="outline" onClick={() => void refetch()}>
               Try again
             </Button>
           </div>
         ) : !data?.notifications?.length ? (
           <p className="text-sm text-muted-foreground">
-            No alert rules were returned for this account. If rules exist for this client, tap Refresh
-            or ask an admin to confirm the account link.
+            No alert types were returned for this client. Tap Refresh, or ask an admin to confirm
+            the account link.
           </p>
         ) : (
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Alert name</TableHead>
+                  <TableHead>Alert type</TableHead>
                   <TableHead>Account / resource</TableHead>
                   <TableHead className="text-right">Units</TableHead>
                   <TableHead className="text-right">Times triggered</TableHead>

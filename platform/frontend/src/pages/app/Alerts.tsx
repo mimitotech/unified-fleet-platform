@@ -18,7 +18,6 @@ import {
   CheckCheck,
   Clock,
   DoorOpen,
-  FileText,
   Fuel,
   Gauge,
   MapPinned,
@@ -266,14 +265,8 @@ export default function AlertsPage() {
       <Tabs defaultValue="inbox" className="space-y-3">
         <TabsList className="branded-tabs h-auto flex-wrap w-full sm:w-auto">
           <TabsTrigger value="inbox">Inbox</TabsTrigger>
-          <TabsTrigger value="configured" className="gap-1">
-            <Bell className="h-3.5 w-3.5" />
-            Configured alerts
-          </TabsTrigger>
-          <TabsTrigger value="reports" className="gap-1">
-            <FileText className="h-3.5 w-3.5" />
-            Reports
-          </TabsTrigger>
+          <TabsTrigger value="types">Alert types</TabsTrigger>
+          <TabsTrigger value="reports">Reports</TabsTrigger>
         </TabsList>
 
         <TabsContent value="inbox" className="mt-0 space-y-3">
@@ -501,7 +494,7 @@ export default function AlertsPage() {
           )}
         </TabsContent>
 
-        <TabsContent value="configured" className="mt-0">
+        <TabsContent value="types" className="mt-0">
           <WialonNotificationsPanel />
         </TabsContent>
 
