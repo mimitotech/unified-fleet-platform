@@ -1,0 +1,177 @@
+import { wialonObjectValues } from '../adapters/wialonUtils.js';
+import { mapWialonSearchItem } from './wialonUnitMapper.js';
+import { parseWialonFuelSettings, hasFuelData } from './wialonFuel.js';
+import { readAllUnitSensors, totalLitersFromReadings, tankCapacityFromItem, fuelPercentFromLitres, } from './wialonFuelSensorUtils.js';
+function formatAge(ts) {
+    if (!ts)
+        return undefined;
+    const sec = Math.floor(Date.now() / 1000) - ts;
+    if (sec < 60)
+        return `${sec} s ago`;
+    if (sec < 3600)
+        return `${Math.floor(sec / 60)} min ago`;
+    if (sec < 86400)
+        return `${Math.floor(sec / 3600)} h ago`;
+    return `${Math.floor(sec / 86400)} days ago`;
+}
+function mapMaintenance(item) {
+    const si = item.si;
+    if (!si)
+        return [];
+    return wialonObjectValues(si)
+        .filter((s) => s?.n)
+        .map((s) => {
+        const overdue = s.cnm != null && s.nmt != null && s.cnm > s.nmt;
+        const delta = overdue && s.cnm != null && s.nmt != null ? Math.round(s.cnm - s.nmt) : 0;
+        const unit = s.n?.toLowerCase().includes('service') || s.n?.toLowerCase().includes('day') ? 'days' : 'km';
+        return {
+            id: s.id,
+            name: s.n,
+            counter: s.cnm,
+            threshold: s.nmt,
+            detail: overdue ? `${delta} ${unit} overdue` : 'OK',
+        };
+    });
+}
+/**
+ * Build the sensor list exactly as Wialon Hosting does:
+ * `unit/calc_last_message` value when present, else the configured parameter
+ * from the last message only (exact `def.param` key — no name aliases).
+ * Never invent a placeholder value.
+ */
+function mergeSensorValues(slice, calcSensors) {
+    const calcByName = new Map(calcSensors.map((s) => [s.n, s]));
+    const params = slice.lmsg?.params || {};
+    const fromDefs = slice.sens.map((def) => {
+        const calc = calcByName.get(def.name);
+        const paramVal = def.param && params[def.param] != null && params[def.param] !== ''
+            ? String(params[def.param])
+            : undefined;
+        const value = calc?.v != null && calc.v !== '' ? String(calc.v) : paramVal ?? '';
+        return {
+            id: def.id,
+            name: def.name,
+            type: def.type,
+            param: def.param,
+            value,
+            unit: calc?.u ?? def.unit,
+        };
+    });
+    for (const calc of calcSensors) {
+        if (!fromDefs.some((s) => s.name === calc.n)) {
+            fromDefs.push({
+                id: 0,
+                name: calc.n,
+                type: calc.t != null ? String(calc.t) : '',
+                param: undefined,
+                value: calc.v != null ? String(calc.v) : '',
+                unit: calc.u,
+            });
+        }
+    }
+    return fromDefs;
+}
+function mapProfileFields(item) {
+    if (!item.pflds)
+        return [];
+    return wialonObjectValues(item.pflds)
+        .filter((f) => f?.n)
+        .map((f) => ({ id: f.id ?? 0, name: f.n, value: String(f.v ?? '') }));
+}
+/** Last-message parameters exactly as Wialon sent them on `lmsg.p`. */
+function mapLastMessageParams(lmsg) {
+    if (!lmsg?.params)
+        return [];
+    return Object.entries(lmsg.params).map(([key, value]) => ({
+        key,
+        value: value == null ? '' : String(value),
+    }));
+}
+function parseHealthAndIo(lmsg, pos) {
+    const params = lmsg?.params || {};
+    const pick = (...keys) => {
+        for (const k of keys) {
+            const v = params[k];
+            if (v != null && v !== '' && v !== '—')
+                return v;
+        }
+        return undefined;
+    };
+    const ioInputs = [];
+    const ioOutputs = [];
+    for (const [key, raw] of Object.entries(params)) {
+        if (!key.startsWith('io_'))
+            continue;
+        const parts = key.split('_');
+        const on = raw === 1 || raw === '1' || String(raw) === 'true';
+        if (parts[1] === 'out') {
+            ioOutputs.push({ key, label: `Output ${parts[2]}`, state: on ? 'ON' : 'OFF' });
+        }
+        else if (parts.length >= 3) {
+            ioInputs.push({ key, label: `Input ${parts[2]}`, state: on ? 'ON' : 'OFF' });
+        }
+    }
+    const battery = pick('battery', 'battery_voltage', 'pwr_ext', 'pwr_int');
+    const hdop = pick('hdop');
+    const satellites = pos?.sc ?? pick('satellites', 'sats');
+    return {
+        health: {
+            battery: battery != null ? Number(battery) : undefined,
+            hdop: hdop != null ? Number(hdop) : undefined,
+            satellites: satellites != null ? Number(satellites) : undefined,
+            altitude: pos?.z,
+        },
+        io: ioInputs.length || ioOutputs.length ? { inputs: ioInputs, outputs: ioOutputs } : undefined,
+    };
+}
+export function parseWialonUnitDetail(item, hwTypes, calcSensors, video, fuelSettings, liveLls) {
+    const slice = mapWialonSearchItem(item, hwTypes, calcSensors);
+    const pos = slice.position;
+    const extras = parseHealthAndIo(slice.lmsg, item.pos);
+    let sensors = mergeSensorValues(slice, calcSensors || []);
+    // Apply the calibration table configured on the sensor for this asset. That
+    // table is part of the asset's setup, so the calibrated litres — not the raw
+    // ADC count behind them — are the real configured reading.
+    const calibrated = readAllUnitSensors(item);
+    if (calibrated.length) {
+        const byName = new Map(calibrated.map((r) => [r.name, r]));
+        const byId = new Map(calibrated.map((r) => [r.sensorId, r]));
+        sensors = sensors.map((s) => {
+            const hit = (s.id ? byId.get(s.id) : undefined) || byName.get(s.name);
+            if (!hit)
+                return s;
+            return {
+                ...s,
+                value: String(hit.value),
+                unit: hit.unit || s.unit || (hit.isFuelLevel ? 'L' : undefined),
+            };
+        });
+    }
+    const fuel = parseWialonFuelSettings(fuelSettings, sensors, liveLls);
+    const calibratedLiters = calibrated.length ? totalLitersFromReadings(calibrated) : 0;
+    const capacity = tankCapacityFromItem(item);
+    if (calibratedLiters > 0) {
+        fuel.levelLiters = calibratedLiters;
+        fuel.levelFormatted = `${calibratedLiters} L`;
+        if (capacity && capacity > 0) {
+            fuel.level = fuelPercentFromLitres(calibratedLiters, capacity) ?? undefined;
+        }
+    }
+    return {
+        ...slice,
+        ...extras,
+        lastUpdate: pos?.time ? new Date(pos.time * 1000).toISOString() : undefined,
+        lastUpdateAge: pos?.time ? formatAge(pos.time) : undefined,
+        sensors,
+        profileFields: mapProfileFields(item),
+        messageParams: mapLastMessageParams(slice.lmsg),
+        maintenance: mapMaintenance(item),
+        video,
+        fuel: hasFuelData(fuel) ? fuel : undefined,
+        fuelLevel: (fuel.level != null ? fuel.level : undefined) ??
+            slice.fuelLevel ??
+            (fuel.levelLiters != null && capacity && capacity > 0
+                ? (fuelPercentFromLitres(fuel.levelLiters, capacity) ?? undefined)
+                : undefined),
+    };
+}

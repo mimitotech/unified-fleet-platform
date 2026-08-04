@@ -1,0 +1,211 @@
+import { CacheService } from './CacheService.js';
+import { WialonFleetService } from './WialonFleetService.js';
+import { WialonFuelService } from './WialonFuelService.js';
+import { loadTenantWialonCreds } from './tenantWialonCredentials.js';
+import { resolveFuelAssetCategory } from './wialonAssetCategory.js';
+import { loadFuelGroupMembership } from './wialonFuelAssetGroups.js';
+import { detectFuelCategorySupport } from './wialonFuelCategoryStructure.js';
+import { scopeFromCredentials } from './WialonReportResolverService.js';
+import { unitHasFuelModuleSensors, readAllUnitSensors, readFuelLevelSensors, totalLitersFromReadings, splitFuelTankLevels, tankCapacityFromItem, fuelPercentFromLitres, formatSensorSummary, } from './wialonFuelSensorUtils.js';
+import { mapSensorSlots, buildAssetFlags, computeFleetSummary, } from './wialonFuelSensorSlots.js';
+import { unitSliceToSearchItem, sliceHasFuelSensorData } from './wialonFuelUnitItem.js';
+import { WialonUnitItemsCache } from './wialonUnitItemsCache.js';
+import { withWialonClient } from './WialonSessionService.js';
+import { searchUnitsForAccount, accountIdFrom } from './wialonLiveUtils.js';
+const MEMORY_TTL_MS = 60_000;
+const REDIS_TTL_SEC = 5 * 60;
+const memoryCache = new Map();
+const inflight = new Map();
+/** Prefer calibrated fuel-level sensors; ignore fleet fallback when no level sensor. */
+function resolveFuelLiters(sensorTotal, fleetLiters, hasFuelLevelSensor) {
+    if (!hasFuelLevelSensor)
+        return null;
+    if (sensorTotal != null && sensorTotal >= 0)
+        return sensorTotal;
+    if (fleetLiters != null && fleetLiters >= 0)
+        return fleetLiters;
+    return null;
+}
+function resolveSearchItem(unit, itemsById) {
+    const cached = itemsById.get(unit.id);
+    if (cached)
+        return cached;
+    return unitSliceToSearchItem(unit);
+}
+async function loadItemsById(tenantId, creds, accountId, _unitsNeedingFetch) {
+    const accountKey = String(accountId);
+    const fromCache = WialonUnitItemsCache.byId(accountKey);
+    if (fromCache)
+        return fromCache;
+    try {
+        return await withWialonClient(creds, async (client) => {
+            const items = await searchUnitsForAccount(client, Number(accountId), 10_000);
+            WialonUnitItemsCache.set(accountKey, items);
+            return new Map(items.map((i) => [i.id, i]));
+        });
+    }
+    catch {
+        return new Map();
+    }
+}
+/** Live fuel from Wialon — uses fleet snapshot first (fast), cached response. */
+export class WialonFuelFleetService {
+    static invalidateCache(tenantId) {
+        memoryCache.delete(tenantId);
+        void new CacheService().del(`fuel:assets:${tenantId}`);
+    }
+    static async listAssets(tenantId) {
+        const now = Date.now();
+        const mem = memoryCache.get(tenantId);
+        if (mem && mem.expires > now) {
+            return { ...mem.data, fromCache: true };
+        }
+        const redisKey = `fuel:assets:${tenantId}`;
+        const cache = new CacheService();
+        const redisCached = await cache.get(redisKey);
+        if (redisCached) {
+            memoryCache.set(tenantId, { data: redisCached, expires: now + MEMORY_TTL_MS });
+            return { ...redisCached, fromCache: true };
+        }
+        let pending = inflight.get(tenantId);
+        if (!pending) {
+            pending = this.buildAssets(tenantId).finally(() => inflight.delete(tenantId));
+            inflight.set(tenantId, pending);
+        }
+        const data = await pending;
+        memoryCache.set(tenantId, { data, expires: Date.now() + MEMORY_TTL_MS });
+        void cache.set(redisKey, data, REDIS_TTL_SEC);
+        return { ...data, fromCache: false };
+    }
+    static async buildAssets(tenantId) {
+        const cachedAt = new Date().toISOString();
+        const [snap, creds] = await Promise.all([
+            WialonFleetService.getCachedLiveFleet(tenantId),
+            loadTenantWialonCreds(tenantId),
+        ]);
+        const accountId = accountIdFrom(creds);
+        let groupMembership = {
+            generatorUnitIds: new Set(),
+            machineryUnitIds: new Set(),
+            vehicleUnitIds: new Set(),
+        };
+        let categorySupport = {
+            vehicle: true,
+            generator: false,
+            machinery: false,
+            unifiedFleet: true,
+            reasons: {
+                vehicleTemplates: true,
+                generatorTemplates: false,
+                generatorGroups: false,
+                machineryGroups: false,
+            },
+        };
+        try {
+            const detected = await withWialonClient(creds, async (client) => {
+                const membership = await loadFuelGroupMembership(client, tenantId);
+                const scope = scopeFromCredentials(tenantId, creds);
+                const support = await detectFuelCategorySupport(client, scope, membership);
+                return { membership, support };
+            });
+            groupMembership = detected.membership;
+            categorySupport = detected.support;
+        }
+        catch {
+            /* optional — default unified vehicle fleet */
+        }
+        const fuelUnits = snap.units.filter((u) => unitHasFuelModuleSensors(u.sens));
+        const needsFullItem = fuelUnits.filter((u) => !sliceHasFuelSensorData(u));
+        let itemsById = new Map();
+        if (needsFullItem.length && accountId != null) {
+            itemsById = await loadItemsById(tenantId, creds, accountId, needsFullItem);
+        }
+        const fuelUnitIds = fuelUnits.map((u) => u.id);
+        const sensByUnit = new Map(fuelUnits.map((u) => [u.id, u.sens.map((s) => ({ id: s.id, name: s.name }))]));
+        const fillByUnit = new Map();
+        if (fuelUnitIds.length) {
+            try {
+                const fls = await WialonFuelService.getFleetFuelLive(creds, fuelUnitIds, sensByUnit);
+                for (const row of fls) {
+                    const filled = row.fuel?.filled;
+                    if (filled != null && filled > 0)
+                        fillByUnit.set(row.unitId, filled);
+                }
+            }
+            catch {
+                /* optional */
+            }
+        }
+        const assets = [];
+        for (const unit of fuelUnits) {
+            const customFields = {};
+            for (const f of unit.flds ?? []) {
+                if (f.name)
+                    customFields[f.name] = String(f.value ?? '');
+            }
+            const rawItem = resolveSearchItem(unit, itemsById);
+            const sensors = readAllUnitSensors(rawItem);
+            const fuelSensors = sensors.filter((s) => s.isFuelLevel);
+            const fuelLevelReadings = readFuelLevelSensors(rawItem);
+            const tankSplit = splitFuelTankLevels(sensors);
+            const sensorTotal = fuelLevelReadings.length ? totalLitersFromReadings(fuelLevelReadings) : null;
+            const sensorSlots = mapSensorSlots(sensors);
+            const hasFuelLevel = sensorSlots.fuelLevel != null || fuelSensors.length > 0;
+            const totalLiters = resolveFuelLiters(sensorTotal, unit.fuel?.levelLiters, hasFuelLevel);
+            const capacity = tankCapacityFromItem(rawItem);
+            const fuelPercent = hasFuelLevel && totalLiters != null && capacity && capacity > 0
+                ? fuelPercentFromLitres(totalLiters, capacity)
+                : null;
+            const posTime = unit.position?.time;
+            const updatedAt = posTime ? new Date(posTime * 1000).toISOString() : snap.fetchedAt;
+            const fillingLiters = fillByUnit.get(unit.id) ?? null;
+            const flags = buildAssetFlags(sensorSlots, updatedAt, fillingLiters);
+            const assetType = resolveFuelAssetCategory({
+                name: unit.name,
+                plate: unit.plate,
+                engineHours: unit.counters?.engineHours,
+                mileage: unit.counters?.mileage,
+                customFields,
+                unitId: unit.id,
+                groupMembership,
+                sensorNames: sensors.map((s) => s.name),
+                categorySupport,
+            });
+            assets.push({
+                unitId: unit.id,
+                name: unit.name,
+                plate: unit.plate || '',
+                assetType,
+                status: unit.status,
+                fuelLiters: totalLiters,
+                mainTankLiters: tankSplit.mainLiters,
+                reserveTankLiters: tankSplit.reserveLiters,
+                tankCount: tankSplit.tankCount,
+                fuelSensors,
+                sensors,
+                sensorSlots,
+                flags,
+                sensorSummary: formatSensorSummary(sensors),
+                fillingLiters,
+                fuelPercent,
+                tankCapacity: capacity ?? null,
+                engineHours: unit.counters?.engineHours ?? null,
+                mileage: unit.counters?.mileage ?? null,
+                updatedAt,
+            });
+        }
+        assets.sort((a, b) => a.name.localeCompare(b.name));
+        return {
+            assets,
+            summary: computeFleetSummary(assets, {
+                vehicle: categorySupport.vehicle,
+                generator: categorySupport.generator,
+                machinery: categorySupport.machinery,
+                unifiedFleet: categorySupport.unifiedFleet,
+            }),
+            fetchedAt: snap.fetchedAt,
+            cachedAt,
+            fromCache: false,
+        };
+    }
+}

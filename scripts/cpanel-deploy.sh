@@ -1,9 +1,7 @@
 #!/bin/bash
 # StackCP / cPanel Git Version Control — Deployment Script
-# Paste this into Git → Managing mams → Deployment Script, OR call:
-#   /bin/bash scripts/cpanel-deploy.sh
-#
-# Requires Node.js 22+. Do not use --ignore-scripts.
+# Dist folders are committed in git. This script installs runtime deps
+# and refreshes the build when Node 22+ is available.
 set -euo pipefail
 
 APP="/home/virtual/vps-e05b3d/2/27d5d7288d/repos/mams"
@@ -36,28 +34,26 @@ echo "[cpanel-deploy] node=$(command -v node || true) $(node -v 2>/dev/null || e
 echo "[cpanel-deploy] npm=$(command -v npm || true) $(npm -v 2>/dev/null || echo MISSING)"
 
 if ! command -v node >/dev/null 2>&1; then
-  echo "[cpanel-deploy] FATAL: Node not on PATH. Need Node.js 22+."
-  exit 1
-fi
-
-MAJOR="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)"
-if [ "$MAJOR" -lt 22 ]; then
-  echo "[cpanel-deploy] FATAL: need Node 22+, found $(node -v)."
-  echo "[cpanel-deploy] Ask Elmot to set Node 22 as default for this account."
+  echo "[cpanel-deploy] FATAL: Node not on PATH."
   exit 1
 fi
 
 if [ ! -f .env ]; then
-  echo "[cpanel-deploy] WARNING: .env missing — create it with PORT=3000 and DB_* before start"
+  echo "[cpanel-deploy] WARNING: .env missing — create it with PORT=3000 and DB_*"
 fi
 
 echo "[cpanel-deploy] Installing dependencies…"
 rm -rf node_modules
-npm install --legacy-peer-deps
-npm install @esbuild/linux-x64 @rollup/rollup-linux-x64-gnu --no-save --legacy-peer-deps || true
+npm install --legacy-peer-deps --omit=dev || npm install --legacy-peer-deps
 
-echo "[cpanel-deploy] Building…"
-npm run build
+MAJOR="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)"
+if [ "$MAJOR" -ge 22 ]; then
+  echo "[cpanel-deploy] Node 22+ — refreshing build…"
+  npm install @esbuild/linux-x64 @rollup/rollup-linux-x64-gnu --no-save --legacy-peer-deps || true
+  npm run build || echo "[cpanel-deploy] WARNING: build failed — using committed dist/ if present"
+else
+  echo "[cpanel-deploy] Node $(node -v) < 22 — skipping rebuild; using committed dist/"
+fi
 
 mkdir -p tmp uploads
 touch tmp/restart.txt

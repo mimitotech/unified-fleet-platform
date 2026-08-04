@@ -1,0 +1,20 @@
+{
+  "name": "MAMS",
+  "short_name": "MAMS",
+  "description": "Mimito Asset Management System — unified fleet tracking across Wialon, LocoNav, and TrackSolid.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#004225",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "48x48",
+      "type": "image/x-icon",
+      "purpose": "any"
+    }
+  ]
+}

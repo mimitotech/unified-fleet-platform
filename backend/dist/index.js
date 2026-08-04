@@ -1,0 +1,129 @@
+import dotenv from 'dotenv';
+import path from 'path';
+import { existsSync } from 'fs';
+import { fileURLToPath } from 'url';
+function resolveRootEnv() {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const candidates = [
+        path.resolve(process.cwd(), '.env'),
+        path.resolve(here, '../.env'),
+        path.resolve(here, '../../.env'),
+    ];
+    return candidates.find((file) => existsSync(file)) || candidates[0];
+}
+dotenv.config({ path: resolveRootEnv() });
+dotenv.config();
+import { createApp } from './app.js';
+import { connectDatabase } from './config/database.js';
+import { connectRedis } from './config/redis.js';
+import { startSyncScheduler } from './services/SyncScheduler.js';
+import { logger } from './config/logger.js';
+import { validateEnv } from './config/env.js';
+const PORT = parseInt(process.env.PORT || '3000', 10);
+function isAuthError(err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return /access denied|er_access_denied|er_dbaccess_denied|passwordFingerprint/i.test(msg);
+}
+async function waitForDatabase(maxAttempts = 8, delayMs = 1500) {
+    for (let i = 1; i <= maxAttempts; i++) {
+        try {
+            await connectDatabase();
+            return true;
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.warn(`Waiting for MySQL (${i}/${maxAttempts}): ${msg.slice(0, 160)}`);
+            // Wrong password / host grant — do not burn 40s retrying the same failure
+            if (isAuthError(err)) {
+                logger.error(`
+MySQL Access denied for this user/password.
+
+In Hostinger → Environment variables, set (and re-save):
+  DB_USER=u454222977_mams
+  DB_PASSWORD=<exact password from hPanel → Databases — reset it if unsure>
+  DB_NAME=u454222977_mams
+
+Remove DATABASE_URL (optional; DB_* is enough).
+Confirm the same user/password opens the DB in phpMyAdmin.
+`);
+                return false;
+            }
+            if (i === maxAttempts) {
+                logger.error(`MySQL connection failed after ${maxAttempts} attempts.`);
+                return false;
+            }
+            await new Promise((r) => setTimeout(r, delayMs));
+        }
+    }
+    return false;
+}
+async function main() {
+    try {
+        validateEnv();
+        // Attach HTTP app immediately (HomeBridge pattern) so nginx never 504s while DB connects
+        const app = createApp();
+        const attach = globalThis.__mamsAttach;
+        if (typeof attach === 'function') {
+            attach(app);
+            logger.info(`MAMS attached to Hostinger early listener on port ${PORT}`);
+        }
+        else {
+            app.listen(PORT, '0.0.0.0', () => {
+                logger.info(`MAMS server listening on port ${PORT}`);
+            });
+        }
+        process.env.REDIS_DISABLED = process.env.REDIS_DISABLED || '1';
+        await connectRedis();
+        logger.info('Redis connected (or skipped)');
+        const dbOk = await waitForDatabase();
+        if (dbOk) {
+            try {
+                const { UploadService } = await import('./services/UploadService.js');
+                await UploadService.ensureSchema();
+                logger.info('Upload schema ready (tenant_files content)');
+            }
+            catch (e) {
+                logger.warn(`Upload schema ensure skipped: ${e.message}`);
+            }
+            try {
+                const { LoginSlideService } = await import('./services/LoginSlideService.js');
+                await LoginSlideService.ensureSchema();
+                logger.info('Login slides schema ready');
+            }
+            catch (e) {
+                logger.warn(`Login slides schema ensure skipped: ${e.message}`);
+            }
+            try {
+                const { LoginTrustLogoService } = await import('./services/LoginTrustLogoService.js');
+                await LoginTrustLogoService.ensureSchema();
+                logger.info('Login trust logos schema ready');
+            }
+            catch (e) {
+                logger.warn(`Login trust logos schema ensure skipped: ${e.message}`);
+            }
+            try {
+                const { ensureWorkshopSchema } = await import('./services/WorkshopSchema.js');
+                await ensureWorkshopSchema();
+                logger.info('Workshop schema ready (rich fields)');
+            }
+            catch (e) {
+                logger.warn(`Workshop schema ensure skipped: ${e.message}`);
+            }
+            logger.info('MySQL connected');
+            startSyncScheduler();
+            logger.info('Sync scheduler started');
+        }
+        else {
+            logger.error('MySQL not connected — UI is up; /api and /health will report database error until credentials are fixed');
+        }
+        process.on('SIGTERM', async () => {
+            logger.info('SIGTERM received, shutting down');
+            process.exit(0);
+        });
+    }
+    catch (err) {
+        logger.error('Failed to start', err);
+        process.exit(1);
+    }
+}
+main();

@@ -1,7 +1,8 @@
 # dependencies & builds
 node_modules/
 **/node_modules/
-dist/
+# Keep production build outputs in git for StackCP (server often cannot build)
+# dist/ ignored except the three app packages below
 build/
 coverage/
 .turbo/
@@ -34,4 +35,5 @@ stackcp-bundle/
 mams-stackcp-upload.zip
 mamsmain/
 mamsmain.zip
+mams-dist-only.zip
 mams-stackcp-upload/
