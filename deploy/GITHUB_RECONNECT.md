@@ -11,7 +11,7 @@ Standard layout: **Git clone root = app root = document root**.
   backend/
   frontend/
   packages/
-  .cpanel.yml              ← runs build after pull
+  .cpanel.yml              ← runs build after Pull → Deploy
 ```
 
 **Repo:** https://github.com/mimitotech/unified-fleet-platform.git  
@@ -19,50 +19,54 @@ Standard layout: **Git clone root = app root = document root**.
 
 ---
 
-## Step 1 — Prepare the folder on StackCP
+## What was broken (Elmot log)
 
-1. **File Manager** → go to account root
-2. If old clones exist, either **delete** `repos/mams` contents or use a fresh empty folder
-3. **Manage Domains** → `mams.mimitotracking.co.ug` → set **Document Root**:
+| Issue | Meaning |
+|-------|---------|
+| `node=v16.20.2` | Too old — app needs **Node 22+** |
+| `DB_USER=(unset)` | **`.env` missing** in `repos/mams` |
+| `backend/dist/index.js missing` | Build never completed |
+| `Cannot find module @rollup/rollup-linux-x64-gnu` | `npm install --ignore-scripts` skipped Linux binaries |
+
+Git SSH keys are only for **cloning/pulling** from GitHub. They are unrelated to the build/rollup error.
+
+---
+
+## Step 1 — Document root
+
+**Manage Domains** → `mams.mimitotracking.co.ug` → Document Root:
 
 ```
 repos/mams
 ```
 
-Full path:
+---
+
+## Step 2 — Git already connected?
+
+Your path is correct:
 
 ```
 /home/virtual/vps-e05b3d/2/27d5d7288d/repos/mams
 ```
 
----
-
-## Step 2 — Clone from GitHub
-
-**Git Version Control** → **Clone**:
+**Basic Information:**
 
 | Field | Value |
 |-------|--------|
-| **Clone URL** | `https://github.com/mimitotech/unified-fleet-platform.git` |
-| **Repository Path** | `repos/mams` |
-| **Repository Name** | `mams` |
+| Repository Path | `/home/virtual/vps-e05b3d/2/27d5d7288d/repos/mams` |
+| Repository Name | `mams` |
+| Deployment Branch | `master` |
+| Remote Url | `https://github.com/mimitotech/unified-fleet-platform.git` (or SSH equivalent) |
+| Deployment Script | leave empty — use repo `.cpanel.yml` |
 
-If clone fails (“directory not empty”), empty `repos/mams` first, then clone again.
-
-After clone, File Manager → `repos/mams` must show:
-
-- `hostinger-start.mjs`
-- `package.json`
-- `ecosystem.config.js`
-- `backend/`, `frontend/`
+Then: **Pull** latest `master` → **Deploy**.
 
 ---
 
-## Step 3 — Create `.env` on the server
+## Step 3 — Create `.env` on the server (required)
 
-In File Manager → `repos/mams` → **New File** → `.env`
-
-Paste (adjust JWT if you use different secrets):
+File Manager → `repos/mams` → New File → **`.env`**
 
 ```env
 NODE_ENV=production
@@ -72,7 +76,7 @@ HOST=0.0.0.0
 DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_USER=nsamba
-DB_PASSWORD=Mimito@123
+DB_PASSWORD=Mimito@@2026
 DB_NAME=mamsdb-35303030746b
 
 API_PUBLIC_URL=https://mams.mimitotracking.co.ug
@@ -87,94 +91,66 @@ FRONTEND_DIST=frontend/dist
 REDIS_DISABLED=1
 ```
 
-**`PORT=3000` is required** for Node.js Application Registration.
+`PORT=3000` is required for Node.js Application Registration.  
+MySQL login uses **user** `nsamba` + password **`Mimito@@2026`**.
 
 ---
 
-## Step 4 — Database
+## Step 4 — Ask Elmot for Node 22 (copy-paste)
 
-Import your live SQL dump into **`mamsdb-35303030746b`** (phpMyAdmin, user **`nsamba`**).
+> Thank you for installing Node and PM2.
+>
+> Our app requires **Node.js 22+** (engines field). The shell currently runs **v16.20.2**, which cannot build this project.
+>
+> Please set the default Node for this account / `repos/mams` to **22.x**, then run:
+>
+> ```bash
+> cd /home/virtual/vps-e05b3d/2/27d5d7288d/repos/mams
+> /bin/bash scripts/stackcp-build.sh
+> # or:
+> rm -rf node_modules
+> npm install --legacy-peer-deps
+> npm install @esbuild/linux-x64 @rollup/rollup-linux-x64-gnu --no-save --legacy-peer-deps
+> npm run build
+> npm start
+> ```
+>
+> Do **not** use `npm install --ignore-scripts` — that caused the missing `@rollup/rollup-linux-x64-gnu` error.
+>
+> Confirm `.env` exists in `repos/mams` with `PORT=3000` and DB settings before `npm start`.
 
 ---
 
-## Step 5 — Build on the server
+## Step 5 — Build
 
-After clone (or each **Pull** / **Deploy**), the app must be built.
+After Node 22 is default and `.env` exists:
 
-**Option A — Git Deploy button** (uses `.cpanel.yml` in the repo):
+1. Git → **Pull** → **Deploy** (runs `.cpanel.yml`), **or**
+2. Elmot runs `scripts/stackcp-build.sh`
 
-Git Version Control → `mams` → **Pull** → **Deploy**
-
-**Option B — Scheduled Task** (if Deploy fails — npm not on PATH):
-
-```bash
-/bin/bash /home/virtual/vps-e05b3d/2/27d5d7288d/repos/mams/scripts/stackcp-build.sh
-```
-
-**Option C — Ask Elmot** to run once in `repos/mams`:
-
-```bash
-npm install --legacy-peer-deps --ignore-scripts
-npm run build
-```
-
-Success = these files exist:
+Success when these exist:
 
 - `backend/dist/index.js`
 - `frontend/dist/index.html`
-- `node_modules/`
+- `build.log` ends with `BUILD_OK` (if using stackcp-build.sh)
 
 ---
 
-## Step 6 — Register Node app (20i)
+## Step 6 — Register Node app
 
-Requirements (both in `repos/mams/`):
-
-1. `.env` with `PORT=3000`
-2. `ecosystem.config.js` (already in repo)
-
-1. **Node.js Application Registration**
-2. Unregister any old app pointing at `mamsmain` or wrong path
-3. **Discover applications** → wait 2–5 min
-4. Register **`mams`**
-
-See also: [NODEJS_REGISTRATION.md](./NODEJS_REGISTRATION.md)
+1. `.env` with `PORT=3000` in `repos/mams`
+2. `ecosystem.config.js` already in repo (`cwd` = full `repos/mams` path)
+3. **Node.js Application Registration** → Discover → register **`mams`**
 
 ---
 
 ## Step 7 — Verify
 
-- https://mams.mimitotracking.co.ug/health → `"database": "connected"`
-- https://mams.mimitotracking.co.ug → login page
+- https://mams.mimitotracking.co.ug/health → `"database":"connected"`
+- https://mams.mimitotracking.co.ug → login
 
 ---
 
-## Updating after code changes
+## Security note
 
-1. Push to GitHub `master` from your Mac
-2. StackCP → Git Version Control → **Pull** → **Deploy**
-3. **Rediscover** / restart **`mams`** if needed
-
----
-
-## Local Mac (development)
-
-Unchanged:
-
-```bash
-npm install
-npm run dev
-```
-
-Production build test locally:
-
-```bash
-npm run build
-node hostinger-start.mjs
-```
-
----
-
-## Alternative: manual zip upload
-
-If Git build on server keeps failing, see [MAMSMAIN_DEPLOY.md](./MAMSMAIN_DEPLOY.md) (`npm run build:deploy`).
+If you pasted the StackCP **RSA private key** into chat or email, regenerate SSH keys in Git Version Control and update GitHub deploy keys. Treat that private key as compromised.

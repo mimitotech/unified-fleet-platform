@@ -1,6 +1,8 @@
 ---
 # cPanel Git Version Control — runs after each pull/deploy
 # Clone root = app root = document root (hostinger-start.mjs lives here).
+# Requires Node.js 22+ (Vite/Rollup/Express 5). Do NOT use --ignore-scripts —
+# that strips @esbuild/@rollup Linux binaries and breaks npm run build.
 deployment:
   tasks:
     - |
@@ -8,22 +10,25 @@ deployment:
       set -euo pipefail
       cd "$(pwd)"
 
+      export PATH="/opt/alt/alt-nodejs22/root/usr/bin:/usr/local/bin:/opt/alt/alt-nodejs20/root/usr/bin:$PATH"
       for candidate in \
         "$HOME/nodevenv/mams.mimitotracking.co.ug"/*/bin/activate \
-        "$HOME/nodevenv/"*/bin/activate \
-        /opt/alt/alt-nodejs22/root/usr/bin \
-        /opt/alt/alt-nodejs20/root/usr/bin
+        "$HOME/nodevenv/"*/bin/activate
       do
         if [ -f "$candidate" ]; then
           # shellcheck disable=SC1090
           source "$candidate" || true
           break
         fi
-        if [ -d "$candidate" ]; then
-          export PATH="$candidate:$PATH"
-          break
-        fi
       done
+      if [ -d "$HOME/.nvm/versions/node" ]; then
+        for d in "$HOME/.nvm/versions/node"/v22*; do
+          if [ -x "$d/bin/node" ]; then
+            export PATH="$d/bin:$PATH"
+            break
+          fi
+        done
+      fi
 
       echo "[cpanel-deploy] node=$(command -v node || true) $(node -v 2>/dev/null || echo MISSING)"
       echo "[cpanel-deploy] npm=$(command -v npm || true) $(npm -v 2>/dev/null || echo MISSING)"
@@ -33,19 +38,21 @@ deployment:
         exit 1
       fi
 
-      MAJOR=$(node -p "process.versions.node.split('.')[0]")
+      MAJOR=$(node -p "process.versions.node.split(\".\")[0]")
       if [ "$MAJOR" -lt 22 ]; then
-        echo "[cpanel-deploy] FATAL: need Node 22+, found $(node -v)"
+        echo "[cpanel-deploy] FATAL: need Node 22+, found $(node -v). Ask Elmot to set Node 22 default."
         exit 1
       fi
 
       if [ ! -f .env ]; then
-        echo "[cpanel-deploy] WARNING: .env missing — copy from .env.example"
+        echo "[cpanel-deploy] WARNING: .env missing — app will not connect to MySQL until created"
       fi
 
-      npm install --legacy-peer-deps --ignore-scripts
+      rm -rf node_modules
+      npm install --legacy-peer-deps
+      npm install @esbuild/linux-x64 @rollup/rollup-linux-x64-gnu --no-save --legacy-peer-deps || true
       npm run build
-      mkdir -p tmp
+      mkdir -p tmp uploads
       touch tmp/restart.txt
       test -f hostinger-start.mjs
       test -f backend/dist/index.js

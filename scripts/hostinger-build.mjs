@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 /**
- * Hostinger shared hosting often strips +x from node_modules/.bin and esbuild.
- * Run after: npm install --legacy-peer-deps --ignore-scripts
+ * Production build for StackCP / Hostinger.
+ * Ensures Linux native binaries for esbuild + rollup (optionalDeps often missing
+ * after --ignore-scripts or broken npm optional installs).
  */
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,15 +39,50 @@ function chmodTree(dir) {
   }
 }
 
-function fixPermissions() {
-  log('Fixing binary permissions…');
-  chmodTree(path.join(root, 'node_modules', '.bin'));
-  chmodTree(path.join(root, 'node_modules', 'esbuild', 'bin'));
+function npmInstall(packages) {
+  const list = packages.join(' ');
+  log(`Ensuring packages: ${list}`);
+  execSync(`npm install ${list} --no-save --legacy-peer-deps`, {
+    stdio: 'inherit',
+    cwd: root,
+    env: { ...process.env, npm_config_optional: 'true' },
+  });
+}
 
-  const esbuildScope = path.join(root, 'node_modules', '@esbuild');
-  if (fs.existsSync(esbuildScope)) {
-    for (const pkg of fs.readdirSync(esbuildScope)) {
-      chmodFile(path.join(esbuildScope, pkg, 'bin', 'esbuild'));
+function ensurePlatformBinaries() {
+  const platform = os.platform();
+  const arch = os.arch();
+  log(`platform=${platform} arch=${arch} node=${process.version}`);
+
+  const major = Number(process.versions.node.split('.')[0]);
+  if (major < 22) {
+    throw new Error(
+      `Node.js 22+ is required (found ${process.version}). Ask hosting to set Node 22 as default, then rebuild.`,
+    );
+  }
+
+  if (platform === 'linux' && arch === 'x64') {
+    const needed = [];
+    const esbuildPkg = path.join(root, 'node_modules', '@esbuild', 'linux-x64');
+    const rollupPkg = path.join(root, 'node_modules', '@rollup', 'rollup-linux-x64-gnu');
+    if (!fs.existsSync(esbuildPkg)) needed.push('@esbuild/linux-x64');
+    if (!fs.existsSync(rollupPkg)) needed.push('@rollup/rollup-linux-x64-gnu');
+    // musl variant on some hosts
+    const rollupMusl = path.join(root, 'node_modules', '@rollup', 'rollup-linux-x64-musl');
+    if (needed.length > 0) {
+      try {
+        npmInstall(needed);
+      } catch (err) {
+        log(`optional package install warning: ${err instanceof Error ? err.message : String(err)}`);
+        // try musl rollup if gnu failed
+        try {
+          if (!fs.existsSync(rollupMusl) && needed.some((p) => p.includes('rollup'))) {
+            npmInstall(['@rollup/rollup-linux-x64-musl']);
+          }
+        } catch {
+          /* ignore */
+        }
+      }
     }
   }
 
@@ -55,6 +92,19 @@ function fixPermissions() {
       execSync(`node "${esbuildInstall}"`, { stdio: 'inherit', cwd: root });
     } catch (err) {
       log(`esbuild install.js warning: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+}
+
+function fixPermissions() {
+  log('Fixing binary permissions…');
+  chmodTree(path.join(root, 'node_modules', '.bin'));
+  chmodTree(path.join(root, 'node_modules', 'esbuild', 'bin'));
+
+  const esbuildScope = path.join(root, 'node_modules', '@esbuild');
+  if (fs.existsSync(esbuildScope)) {
+    for (const pkg of fs.readdirSync(esbuildScope)) {
+      chmodFile(path.join(esbuildScope, pkg, 'bin', 'esbuild'));
     }
   }
 }
@@ -73,6 +123,7 @@ function runNode(scriptPath, args, cwd = root) {
   execSync(cmd, { stdio: 'inherit', cwd, env: { ...process.env, FORCE_COLOR: '0' } });
 }
 
+ensurePlatformBinaries();
 fixPermissions();
 
 const tsc = requireFile('node_modules/typescript/bin/tsc', 'TypeScript');
