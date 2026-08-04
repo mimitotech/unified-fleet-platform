@@ -266,6 +266,10 @@ export default function AlertsPage() {
       <Tabs defaultValue="inbox" className="space-y-3">
         <TabsList className="branded-tabs">
           <TabsTrigger value="inbox">Inbox</TabsTrigger>
+          <TabsTrigger value="configured" className="gap-1">
+            <Bell className="h-3.5 w-3.5" />
+            Configured
+          </TabsTrigger>
           <TabsTrigger value="reports" className="gap-1">
             <FileText className="h-3.5 w-3.5" />
             Reports
@@ -495,10 +499,10 @@ export default function AlertsPage() {
               })}
             </div>
           )}
+        </TabsContent>
 
-          <div className="branded-panel p-3">
-            <WialonNotificationsPanel />
-          </div>
+        <TabsContent value="configured" className="mt-0">
+          <WialonNotificationsPanel />
         </TabsContent>
 
         <TabsContent value="reports" className="mt-0">

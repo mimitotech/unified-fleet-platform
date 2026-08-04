@@ -1,6 +1,6 @@
 import type { TenantInfo } from '@/lib/api';
-import { applyTenantThemeVars, resolveTenantBranding } from '@/lib/tenantBranding';
-import { applyFaviconFromTenant } from '@/lib/favicon';
+import { applyTenantThemeVars, clearTenantThemeVars, resolveTenantBranding } from '@/lib/tenantBranding';
+import { applyDefaultDocumentBranding, applyFaviconFromTenant } from '@/lib/favicon';
 
 const KEY_PREFIX = 'ufp_tenant_branding:';
 const VARS_KEY_PREFIX = 'ufp_tenant_theme_vars:';
@@ -105,14 +105,46 @@ function applyCustomCss(css?: string | null): void {
     }
     styleEl.textContent = css;
   } else if (styleEl) {
-    styleEl.textContent = '';
+    styleEl.remove();
   }
 }
 
-/** Runs before React mount — prevents default-theme flash on reload */
+function clearCustomCss(): void {
+  document.getElementById('tenant-custom-css')?.remove();
+}
+
+/**
+ * Strip client theme/CSS/favicon so public auth & marketing always show MAMS.
+ * Does not delete the branding cache — that only applies after a successful login in /app.
+ */
+export function resetToPlatformBranding(): void {
+  clearTenantThemeVars();
+  clearCustomCss();
+  applyDefaultDocumentBranding();
+}
+
+function isAuthenticatedAppPath(): boolean {
+  try {
+    const path = window.location.pathname;
+    return path.startsWith('/app') || path.startsWith('/admin');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Runs before React mount — prevents default-theme flash on /app reload only.
+ * Login, landing, and other public routes stay on platform (MAMS) branding.
+ */
 export function hydrateTenantThemeFromCache(): void {
+  let token: string | null = null;
+  try {
+    token = localStorage.getItem('ufp_token');
+  } catch {
+    return;
+  }
   const slug = tenantSlug();
-  if (!slug) return;
+  if (!token || !slug || !isAuthenticatedAppPath()) return;
 
   if (applyThemeVarsFromCache(slug)) {
     const cached = loadBrandingCache(slug);

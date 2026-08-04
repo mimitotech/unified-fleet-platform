@@ -80,7 +80,7 @@ function getTenantSlug(): string | null {
   return localStorage.getItem('ufp_tenant_slug');
 }
 
-export { getTenantSlug };
+export { getToken, getTenantSlug };
 
 export async function api<T>(
   path: string,

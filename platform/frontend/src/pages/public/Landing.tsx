@@ -3,7 +3,7 @@
  * Vendor names omitted from client-facing marketing text.
  */
 
-import { useState } from 'react';
+import { useLayoutEffect, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '@/providers/AuthProvider';
 import {
@@ -26,10 +26,15 @@ import { Badge } from '@/components/ui/badge';
 import { BRAND } from '@/lib/branding';
 import { cn } from '@/lib/utils';
 import { isSystemRole } from '@/lib/systemRoles';
+import { resetToPlatformBranding } from '@/lib/tenantBrandingCache';
 
 export default function Landing() {
   const { user, isLoading } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  useLayoutEffect(() => {
+    resetToPlatformBranding();
+  }, []);
 
   if (!isLoading && user) {
     const dest = isSystemRole(user.role) ? '/admin/dashboard' : '/app/dashboard';

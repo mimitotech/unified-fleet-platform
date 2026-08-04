@@ -1,9 +1,12 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { authApi, clearAuth, setAuth, clientApi, type User } from '@/lib/api';
-import { clearBrandingCache, applyTenantBranding, saveBrandingCache } from '@/lib/tenantBrandingCache';
+import {
+  clearBrandingCache,
+  applyTenantBranding,
+  saveBrandingCache,
+  resetToPlatformBranding,
+} from '@/lib/tenantBrandingCache';
 import { clearAllMapViewports } from '@/lib/mapViewport';
-import { clearTenantThemeVars } from '@/lib/tenantBranding';
-import { applyDefaultDocumentBranding } from '@/lib/favicon';
 
 interface AuthContextValue {
   user: User | null;
@@ -31,6 +34,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const token = localStorage.getItem('ufp_token');
     if (!token) {
+      // Stale theme vars must not tint login / landing after a prior client session.
+      resetToPlatformBranding();
       setIsLoading(false);
       return;
     }
@@ -42,7 +47,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setMapSessionKey(buildMapSessionKey(u));
         if (u.tenantSlug) setAuth(token, u.tenantSlug);
       })
-      .catch(() => clearAuth())
+      .catch(() => {
+        clearAuth();
+        resetToPlatformBranding();
+      })
       .finally(() => setIsLoading(false));
   }, []);
 
@@ -69,8 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = () => {
     clearAllMapViewports();
     clearBrandingCache();
-    clearTenantThemeVars();
-    applyDefaultDocumentBranding();
+    resetToPlatformBranding();
     clearAuth();
     setUser(null);
     setMapSessionKey('guest');

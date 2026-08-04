@@ -3,7 +3,7 @@
  * Layout stays flush (no gutters) across desktop / tablet / mobile.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/providers/AuthProvider';
@@ -17,6 +17,7 @@ import { BRAND } from '@/lib/branding';
 import { postLoginPath } from '@/lib/authRedirect';
 import { cn } from '@/lib/utils';
 import { api, authApi } from '@/lib/api';
+import { resetToPlatformBranding } from '@/lib/tenantBrandingCache';
 
 type Slide = {
   id: string;
@@ -162,6 +163,11 @@ export default function Login() {
   const [view, setView] = useState<AuthView>('login');
   const [loading, setLoading] = useState(false);
   const [slide, setSlide] = useState(0);
+
+  // Login is always MAMS — never carry over a previous client's theme CSS vars.
+  useLayoutEffect(() => {
+    resetToPlatformBranding();
+  }, []);
 
   const {
     data: remote,

@@ -300,50 +300,116 @@ export function WialonReportsPanel() {
 }
 
 export function WialonNotificationsPanel() {
-  const { connected } = useWialonContext();
-  const { data, isLoading, isError } = useWialonNotifications(connected);
+  const { connected, configured } = useWialonContext();
+  const { data, isLoading, isError, refetch, isFetching } = useWialonNotifications(connected);
 
-  if (!connected) return null;
+  const activeCount = data?.notifications?.filter((n) => n.active).length ?? 0;
+  const inactiveCount = (data?.notifications?.length ?? 0) - activeCount;
+
+  if (!configured) {
+    return (
+      <div className="branded-panel p-4 space-y-2">
+        <LiveHeader
+          title="Configured alerts"
+          description="Alert rules set up for this client account."
+          icon={Bell}
+        />
+        <p className="text-sm text-muted-foreground pt-1">
+          Fleet connection is not set up for this account yet. Once connected, configured alert
+          rules appear here.
+        </p>
+      </div>
+    );
+  }
+
+  if (!connected) {
+    return (
+      <div className="branded-panel p-4 space-y-2">
+        <LiveHeader
+          title="Configured alerts"
+          description="Alert rules set up for this client account."
+          icon={Bell}
+        />
+        <p className="text-sm text-muted-foreground pt-1">
+          Unable to reach the live feed right now. Try again shortly to load configured alert rules.
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div>
-      <LiveHeader
-        title="Configured notification rules"
-        description="Rules active on this account. When they fire, events appear in the inbox above automatically."
-        count={data?.count}
-        icon={Bell}
-      />
-      <div className="pt-2">
-        {isLoading ? <Skeleton className="h-20" /> : isError ? (
-          <p className="text-sm text-destructive">Could not load notifications.</p>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <LiveHeader
+          title="Configured alerts"
+          description="All alert rules configured for this client. When a rule fires, the event appears in Inbox."
+          count={data?.count}
+          icon={Bell}
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="shrink-0"
+          disabled={isFetching}
+          onClick={() => void refetch()}
+        >
+          Refresh
+        </Button>
+      </div>
+
+      <div className="grid gap-2 grid-cols-2 sm:grid-cols-3">
+        <div className="branded-panel px-3 py-2">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total rules</p>
+          <p className="text-lg font-semibold tabular-nums leading-tight">{data?.count ?? '—'}</p>
+        </div>
+        <div className="branded-panel px-3 py-2 border-l-[3px] border-l-primary">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Active</p>
+          <p className="text-lg font-semibold tabular-nums leading-tight">{isLoading ? '—' : activeCount}</p>
+        </div>
+        <div className="branded-panel px-3 py-2 col-span-2 sm:col-span-1">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Inactive</p>
+          <p className="text-lg font-semibold tabular-nums leading-tight">{isLoading ? '—' : inactiveCount}</p>
+        </div>
+      </div>
+
+      <div className="branded-panel p-3">
+        {isLoading ? (
+          <Skeleton className="h-28" />
+        ) : isError ? (
+          <p className="text-sm text-destructive">Could not load configured alerts.</p>
         ) : !data?.notifications?.length ? (
-          <p className="text-xs text-muted-foreground">
-            No notification rules on this account. Fuel fill/drop leaf events still appear in the
-            inbox when sensors report them; period totals stay in Fuel.
+          <p className="text-sm text-muted-foreground">
+            No alert rules are configured on this account yet. Rules are set up in the fleet
+            platform; once added, they will list here.
           </p>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Resource</TableHead>
-                <TableHead>Triggers</TableHead>
-                <TableHead>Status</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.notifications.map((n) => (
-                <TableRow key={`${n.resourceId}-${n.id}`}>
-                  <TableCell className="font-medium">{n.name}</TableCell>
-                  <TableCell className="text-muted-foreground">{n.resourceName}</TableCell>
-                  <TableCell>{n.triggers ?? '—'}</TableCell>
-                  <TableCell>
-                    <Badge variant={n.active ? 'default' : 'secondary'}>{n.active ? 'Active' : 'Inactive'}</Badge>
-                  </TableCell>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Alert name</TableHead>
+                  <TableHead>Account / resource</TableHead>
+                  <TableHead className="text-right">Times triggered</TableHead>
+                  <TableHead>Status</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {data.notifications.map((n) => (
+                  <TableRow key={`${n.resourceId}-${n.id}`}>
+                    <TableCell className="font-medium">{n.name}</TableCell>
+                    <TableCell className="text-muted-foreground">{n.resourceName}</TableCell>
+                    <TableCell className="text-right tabular-nums">{n.triggers ?? '—'}</TableCell>
+                    <TableCell>
+                      <Badge variant={n.active ? 'default' : 'secondary'}>
+                        {n.active ? 'Active' : 'Inactive'}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         )}
       </div>
     </div>
