@@ -15,13 +15,8 @@ final class Auth
 
     public static function bearerToken(): ?string
     {
-        // cPanel/Apache can sometimes strip Authorization headers on refresh.
-        // Token cookie provides a reliable fallback.
-        $cookie = $_COOKIE['ufp_token'] ?? null;
-        if (is_string($cookie) && $cookie !== '') {
-            return $cookie;
-        }
-
+        // Prefer Authorization header (what the SPA always sends).
+        // Cookie is a fallback when cPanel/Apache strips Authorization on refresh/subrequests.
         $header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
         if ($header === '') {
             $env = getenv('HTTP_AUTHORIZATION') ?: getenv('REDIRECT_HTTP_AUTHORIZATION');
@@ -30,6 +25,12 @@ final class Auth
         if (preg_match('/Bearer\s+(\S+)/i', $header, $m)) {
             return $m[1];
         }
+
+        $cookie = $_COOKIE['ufp_token'] ?? null;
+        if (is_string($cookie) && $cookie !== '') {
+            return $cookie;
+        }
+
         return null;
     }
 

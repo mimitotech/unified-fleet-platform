@@ -962,6 +962,31 @@
     </div>
     <div class="grid-2 mt-2">
       <div class="card">
+        <div class="card-header"><h3>Log maintenance</h3></div>
+        <form id="maint-form" class="form-stack">
+          <label><span>Vehicle name</span><input class="input" name="vehicleName" required /></label>
+          <label><span>Plate</span><input class="input" name="vehiclePlate" /></label>
+          <label><span>Type</span><select class="select" name="maintenanceType"><option value="service">Service</option><option value="repair">Repair</option><option value="inspection">Inspection follow-up</option></select></label>
+          <label><span>Mechanic</span><input class="input" name="mechanicName" /></label>
+          <label><span>Description</span><textarea class="input" name="description" rows="2" required></textarea></label>
+          <p id="maint-error" class="error" hidden></p>
+          <button type="submit" class="btn">Save maintenance</button>
+        </form>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3>Report breakdown</h3></div>
+        <form id="breakdown-form" class="form-stack">
+          <label><span>Vehicle name</span><input class="input" name="vehicleName" required /></label>
+          <label><span>Plate</span><input class="input" name="vehiclePlate" /></label>
+          <label><span>Severity</span><select class="select" name="severity"><option value="minor">Minor</option><option value="major">Major</option><option value="critical">Critical</option></select></label>
+          <label><span>Description</span><textarea class="input" name="description" rows="2" required></textarea></label>
+          <p id="breakdown-error" class="error" hidden></p>
+          <button type="submit" class="btn">Save breakdown</button>
+        </form>
+      </div>
+    </div>
+    <div class="grid-2 mt-2">
+      <div class="card">
         <div class="card-header"><h3>Recent inspections</h3></div>
         ${tableWrap(['Asset', 'Result', 'When'], insp.slice(0, 20).map((i) => `<tr>
           <td>${esc(i.vehicleName || i.assetName || i.vehiclePlate || i.assetId || '—')}</td>
@@ -1209,18 +1234,33 @@
   }
 
   async function renderCommands() {
-    const [assets, history] = await Promise.all([
+    const [assets, history, snap] = await Promise.all([
       MamsApi.api('/client/assets').catch(() => []),
       MamsApi.api('/client/commands/history').catch(() => []),
+      MamsApi.api('/client/fleet/snapshot').catch(() => ({ units: [] })),
     ]);
     const list = Array.isArray(assets) ? assets : assets.assets || [];
+    const units = snap.units || [];
+    const byWialon = {};
+    units.forEach((u) => {
+      if (u.wialonId != null) byWialon[String(u.wialonId)] = u;
+      byWialon[String(u.id)] = u;
+    });
     const hist = Array.isArray(history) ? history : [];
-    const rows = list.slice(0, 50).map((a) => `<tr>
+    const rows = list.slice(0, 80).map((a) => {
+      const wialonSrc = (a.sources || []).find((s) => (s.type || s) === 'wialon');
+      const wialonId = wialonSrc?.id || a.wialonId || '';
+      const live = byWialon[String(wialonId)] || null;
+      return `<tr>
       <td><strong>${esc(a.name)}</strong></td>
       <td>${esc(a.registrationPlate || '—')}</td>
-      <td>${(a.sources || []).map((s) => esc(s.type || s)).join(', ') || '—'}</td>
-      <td><button class="btn btn-sm btn-ghost" disabled>Send command</button></td>
-    </tr>`).join('');
+      <td>${live ? statusBadge(live.status) : '—'}</td>
+      <td class="actions">
+        <button type="button" class="btn btn-sm" data-action="send-command" data-unit="${esc(wialonId)}" data-asset="${esc(a.id)}" data-name="${esc(a.name)}" data-cmd="query_pos" ${wialonId ? '' : 'disabled'}>Query pos</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="send-command" data-unit="${esc(wialonId)}" data-asset="${esc(a.id)}" data-name="${esc(a.name)}" data-cmd="block_engine" ${wialonId ? '' : 'disabled'}>Block</button>
+      </td>
+    </tr>`;
+    }).join('');
     const histRows = hist.slice(0, 40).map((h) => `<tr>
       <td>${esc(h.command || h.type || '—')}</td>
       <td>${esc(h.assetName || h.assetId || '—')}</td>
@@ -1228,9 +1268,9 @@
       <td class="muted">${fmtDate(h.createdAt || h.sentAt)}</td>
     </tr>`).join('');
 
-    return `<div class="banner banner-warn">Remote commands require an active Wialon integration with appropriate permissions.</div>
+    return `<div class="banner banner-info">Commands are sent via Wialon <code>unit/exec_cmd</code>. Use query_pos for a safe test; block_engine requires elevated permissions.</div>
     <div class="card">
-      ${tableWrap(['Asset', 'Plate', 'Sources', 'Actions'], rows, 'No command-capable assets')}
+      ${tableWrap(['Asset', 'Plate', 'Live', 'Actions'], rows, 'No command-capable assets')}
     </div>
     <div class="card mt-2">
       <div class="card-header"><h3>Command history</h3></div>
@@ -1687,7 +1727,10 @@
         root.innerHTML = `<div class="card mt-2">
           <div class="card-header">
             <h3>${esc(u.name || 'Unit')}</h3>
-            <button type="button" class="btn btn-sm btn-ghost" data-action="close-unit-detail">Close</button>
+            <div class="actions">
+              <button type="button" class="btn btn-sm" data-action="load-unit-track" data-id="${esc(u.id)}">Load 24h track</button>
+              <button type="button" class="btn btn-sm btn-ghost" data-action="close-unit-detail">Close</button>
+            </div>
           </div>
           <div class="settings-grid">
             <div><span class="muted">Status</span><div>${statusBadge(u.status)}</div></div>
@@ -1699,6 +1742,7 @@
             <div><span class="muted">Engine hours</span><div>${h.engineHours != null ? esc(Math.round(h.engineHours)) : '—'}</div></div>
             <div><span class="muted">Position</span><div>${u.position ? `${Number(u.position.lat).toFixed(5)}, ${Number(u.position.lng).toFixed(5)}` : '—'}</div></div>
           </div>
+          <div id="unit-track-map" class="map-panel mt-1" style="min-height:220px">Track map idle — click Load 24h track</div>
         </div>`;
       } catch (ex) {
         root.innerHTML = `<div class="banner banner-error mt-2">${esc(ex.message || 'Unit detail unavailable (live Wialon required)')}</div>`;
@@ -1709,6 +1753,57 @@
     if (action === 'close-unit-detail') {
       const root = document.getElementById('unit-detail-root');
       if (root) root.innerHTML = '';
+      return;
+    }
+
+    if (action === 'send-command') {
+      const unitId = btn.dataset.unit;
+      const cmd = btn.dataset.cmd || 'query_pos';
+      if (!unitId) return;
+      if (cmd === 'block_engine' && !confirm('Send block_engine to this unit?')) return;
+      btn.disabled = true;
+      try {
+        await MamsApi.api('/client/wialon/commands', {
+          method: 'POST',
+          body: JSON.stringify({
+            unitId: Number(unitId),
+            command: cmd,
+            assetId: btn.dataset.asset || undefined,
+            assetName: btn.dataset.name || undefined,
+          }),
+        });
+        alert('Command sent: ' + cmd);
+        await loadModule();
+      } catch (ex) {
+        alert(ex.message || 'Command failed');
+        btn.disabled = false;
+      }
+      return;
+    }
+
+    if (action === 'load-unit-track') {
+      const unitId = btn.dataset.id;
+      const mapEl = document.getElementById('unit-track-map');
+      if (!unitId || !mapEl) return;
+      btn.disabled = true;
+      try {
+        const track = await MamsApi.api(`/client/wialon/units/${encodeURIComponent(unitId)}/track`);
+        const points = track.points || [];
+        mapEl.textContent = points.length ? `${points.length} track points loaded` : 'No track points in last 24h';
+        if (points.length) {
+          loadLeaflet(() => {
+            const map = L.map(mapEl).setView([points[0].lat, points[0].lng], 12);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+            const latlngs = points.map((p) => [p.lat, p.lng]);
+            L.polyline(latlngs, { color: '#0f766e', weight: 3 }).addTo(map);
+            map.fitBounds(latlngs, { padding: [20, 20] });
+          });
+        }
+      } catch (ex) {
+        mapEl.textContent = ex.message || 'Track unavailable';
+      } finally {
+        btn.disabled = false;
+      }
       return;
     }
 
@@ -1792,6 +1887,53 @@
         await loadModule();
       } catch (ex) {
         if (errEl) { errEl.textContent = ex.message || 'Failed to add driver'; errEl.hidden = false; }
+      }
+      return;
+    }
+
+    if (form.id === 'maint-form') {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const errEl = document.getElementById('maint-error');
+      if (errEl) errEl.hidden = true;
+      try {
+        await MamsApi.api('/client/workshop/maintenance', {
+          method: 'POST',
+          body: JSON.stringify({
+            vehicleName: fd.get('vehicleName'),
+            vehiclePlate: fd.get('vehiclePlate'),
+            maintenanceType: fd.get('maintenanceType'),
+            mechanicName: fd.get('mechanicName') || 'Unassigned',
+            description: fd.get('description'),
+          }),
+        });
+        form.reset();
+        await loadModule();
+      } catch (ex) {
+        if (errEl) { errEl.textContent = ex.message || 'Failed to save maintenance'; errEl.hidden = false; }
+      }
+      return;
+    }
+
+    if (form.id === 'breakdown-form') {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const errEl = document.getElementById('breakdown-error');
+      if (errEl) errEl.hidden = true;
+      try {
+        await MamsApi.api('/client/workshop/breakdowns', {
+          method: 'POST',
+          body: JSON.stringify({
+            vehicleName: fd.get('vehicleName'),
+            vehiclePlate: fd.get('vehiclePlate'),
+            severity: fd.get('severity'),
+            description: fd.get('description'),
+          }),
+        });
+        form.reset();
+        await loadModule();
+      } catch (ex) {
+        if (errEl) { errEl.textContent = ex.message || 'Failed to save breakdown'; errEl.hidden = false; }
       }
       return;
     }
@@ -1948,7 +2090,10 @@
 
       await loadModule();
     } catch (e) {
-      if (e.status === 401) return;
+      if (e.status === 401) {
+        MamsApi.redirectLogin();
+        return;
+      }
       content.innerHTML = `<div class="banner banner-error">${esc(e.message || 'Failed to load')}</div>`;
     }
   }

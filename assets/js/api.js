@@ -63,6 +63,12 @@ const MamsApi = (() => {
     else localStorage.removeItem(ROLE_KEY);
   }
 
+  /** Keep cookie in sync with localStorage so Apache-stripped Authorization still works. */
+  function syncTokenCookie() {
+    const token = localStorage.getItem(TOKEN_KEY) || '';
+    if (token) setCookie(COOKIE_TOKEN_KEY, token, 604800);
+  }
+
   function redirectLogin() {
     if (redirectInFlight) return;
     redirectInFlight = true;
@@ -71,34 +77,62 @@ const MamsApi = (() => {
     location.href = '/auth/login' + (next && next !== '%2Fauth%2Flogin' ? '?next=' + next : '');
   }
 
-  async function api(path, options = {}) {
-    const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
+  function authHeaders(extra) {
+    const headers = Object.assign({ 'Content-Type': 'application/json' }, extra || {});
     const token = getToken();
     if (token) headers.Authorization = 'Bearer ' + token;
     const slug = getTenantSlug();
     if (slug) headers['X-Tenant-Slug'] = slug;
+    return headers;
+  }
 
-    const res = await fetch('/api' + path, Object.assign({}, options, { headers }));
+  /**
+   * Confirm whether the JWT is still valid.
+   * Always sends Bearer from localStorage — cookie-only verify was causing false logouts.
+   */
+  async function verifySessionAlive() {
+    const token = getToken();
+    if (!token) return false;
+    try {
+      const meRes = await fetch('/api/auth/me', {
+        method: 'GET',
+        headers: authHeaders(),
+        credentials: 'same-origin',
+      });
+      if (meRes.ok) {
+        syncTokenCookie();
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  async function api(path, options = {}) {
+    syncTokenCookie();
+    const headers = authHeaders(options.headers || {});
+
+    const res = await fetch('/api' + path, Object.assign({}, options, {
+      headers,
+      credentials: 'same-origin',
+    }));
     const json = await res.json().catch(() => ({}));
 
     if (res.status === 401) {
       const isAuthCheck = path === '/auth/me' || path === '/auth/login';
       if (!isAuthCheck) {
-        // Some admin/client endpoints can transiently return 401 while the session is still valid.
-        // Verify via /auth/me first; only redirect if the session is truly gone/invalid.
-        try {
-          const meRes = await fetch('/api/auth/me', { method: 'GET' });
-          if (meRes.ok) {
-            const err = new Error('Request unauthorized (session verified)');
-            err.status = 401;
-            throw err;
-          }
-        } catch (_) {
-          // fall through to redirectLogin below
+        // Module endpoints can return 401 for wrong reasons (missing tenant, bad route, etc.).
+        // Only hard-logout when /auth/me also rejects the token.
+        const alive = await verifySessionAlive();
+        if (alive) {
+          const err = new Error(json.error || 'Not allowed for this resource');
+          err.status = 403;
+          throw err;
         }
         redirectLogin();
       }
-      const err = new Error('Session expired');
+      const err = new Error(json.error || 'Session expired');
       err.status = 401;
       throw err;
     }
@@ -129,6 +163,7 @@ const MamsApi = (() => {
     clearAuth,
     setAuth,
     redirectLogin,
+    verifySessionAlive,
     isSystemRole,
     postLoginPath,
   };

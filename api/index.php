@@ -106,6 +106,9 @@ try {
     if (route_match('/client/wialon/units/:id', $apiPath, $p) && $method === 'GET') {
         ClientController::wialonUnitDetail($p['id']);
     }
+    if (route_match('/client/wialon/units/:id/track', $apiPath, $p) && $method === 'GET') {
+        ClientController::wialonUnitTrack($p['id']);
+    }
     if ($apiPath === '/client/wialon/routes' && $method === 'GET') {
         ClientController::wialonRoutes();
     }
@@ -114,6 +117,9 @@ try {
     }
     if ($apiPath === '/client/wialon/reports/templates' && $method === 'GET') {
         ClientController::wialonReportTemplates();
+    }
+    if ($apiPath === '/client/wialon/commands' && $method === 'POST') {
+        ClientController::wialonCommandSend();
     }
     if ($apiPath === '/client/preferences' && $method === 'GET') {
         ClientController::preferencesGet();
@@ -187,6 +193,12 @@ try {
     }
     if ($apiPath === '/client/workshop/mechanics' && $method === 'GET') {
         DomainController::workshopMechanics();
+    }
+    if ($apiPath === '/client/workshop/maintenance' && $method === 'POST') {
+        DomainController::workshopMaintenanceCreate();
+    }
+    if ($apiPath === '/client/workshop/breakdowns' && $method === 'POST') {
+        DomainController::workshopBreakdownCreate();
     }
     if ($apiPath === '/client/geofences' && $method === 'GET') {
         DomainController::geofences();

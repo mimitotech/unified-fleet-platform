@@ -1629,7 +1629,10 @@
 
       await loadModule();
     } catch (e) {
-      if (e.status === 401) return;
+      if (e.status === 401) {
+        MamsApi.redirectLogin();
+        return;
+      }
       content.innerHTML = `<div class="banner banner-error">${esc(e.message || 'Failed to load')}</div>`;
     }
   }

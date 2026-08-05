@@ -986,4 +986,82 @@ class DomainController
 
         Response::success(self::camelRows($rows));
     }
+
+    /** POST /client/workshop/maintenance */
+    public static function workshopMaintenanceCreate(): void
+    {
+        $tenantId = self::requireTenantId();
+        $body = Auth::jsonBody();
+        $vehicleName = trim((string) ($body['vehicleName'] ?? $body['assetName'] ?? ''));
+        $vehiclePlate = trim((string) ($body['vehiclePlate'] ?? $body['plate'] ?? ''));
+        $vehicleId = trim((string) ($body['vehicleId'] ?? $body['assetId'] ?? $vehicleName));
+        $type = trim((string) ($body['maintenanceType'] ?? $body['type'] ?? 'service'));
+        $description = trim((string) ($body['description'] ?? ''));
+        $mechanic = trim((string) ($body['mechanicName'] ?? 'Unassigned'));
+        $priority = trim((string) ($body['priority'] ?? 'medium'));
+        $status = trim((string) ($body['status'] ?? 'pending'));
+
+        if ($vehicleName === '' || $description === '') {
+            Response::error('vehicleName and description required', 400);
+            return;
+        }
+        if ($vehicleId === '') {
+            $vehicleId = $vehicleName;
+        }
+
+        $id = self::uuid();
+        try {
+            Database::execute(
+                'INSERT INTO maintenance_logs
+                   (id, tenant_id, vehicle_id, vehicle_name, vehicle_plate, maintenance_type, priority,
+                    description, mechanic_name, status, start_date, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())',
+                [$id, $tenantId, $vehicleId, $vehicleName, $vehiclePlate, $type, $priority, $description, $mechanic, $status]
+            );
+        } catch (Throwable $e) {
+            error_log('DomainController workshopMaintenanceCreate: ' . $e->getMessage());
+            Response::error('Failed to create maintenance log', 500);
+            return;
+        }
+        $rows = self::safeQuery('SELECT * FROM maintenance_logs WHERE id = ? LIMIT 1', [$id], 'maint_created');
+        Response::success($rows ? self::camelCase($rows[0]) : ['id' => $id], 201);
+    }
+
+    /** POST /client/workshop/breakdowns */
+    public static function workshopBreakdownCreate(): void
+    {
+        $tenantId = self::requireTenantId();
+        $body = Auth::jsonBody();
+        $vehicleName = trim((string) ($body['vehicleName'] ?? $body['assetName'] ?? ''));
+        $vehiclePlate = trim((string) ($body['vehiclePlate'] ?? $body['plate'] ?? ''));
+        $vehicleId = trim((string) ($body['vehicleId'] ?? $body['assetId'] ?? $vehicleName));
+        $description = trim((string) ($body['description'] ?? ''));
+        $severity = trim((string) ($body['severity'] ?? 'minor'));
+
+        if ($vehicleName === '' || $description === '') {
+            Response::error('vehicleName and description required', 400);
+            return;
+        }
+        if ($vehicleId === '') {
+            $vehicleId = $vehicleName;
+        }
+
+        $id = self::uuid();
+        $location = json_encode(['lat' => 0, 'lng' => 0, 'address' => (string) ($body['address'] ?? '')]);
+        try {
+            Database::execute(
+                'INSERT INTO breakdown_reports
+                   (id, tenant_id, vehicle_id, vehicle_name, vehicle_plate, location, severity, description,
+                    breakdown_time, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())',
+                [$id, $tenantId, $vehicleId, $vehicleName, $vehiclePlate, $location, $severity, $description]
+            );
+        } catch (Throwable $e) {
+            error_log('DomainController workshopBreakdownCreate: ' . $e->getMessage());
+            Response::error('Failed to create breakdown report', 500);
+            return;
+        }
+        $rows = self::safeQuery('SELECT * FROM breakdown_reports WHERE id = ? LIMIT 1', [$id], 'breakdown_created');
+        Response::success($rows ? self::camelCase($rows[0]) : ['id' => $id], 201);
+    }
 }

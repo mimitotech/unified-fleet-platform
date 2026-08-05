@@ -779,7 +779,7 @@ class ClientController
             Response::success(['routes' => $routes, 'count' => count($routes)]);
         } catch (Throwable $e) {
             error_log('ClientController wialonRoutes: ' . $e->getMessage());
-            Response::error($e->getMessage(), 500);
+            Response::success(['routes' => [], 'count' => 0, 'error' => $e->getMessage()]);
         }
     }
 
@@ -793,7 +793,7 @@ class ClientController
             Response::success(['notifications' => $notifications, 'count' => count($notifications)]);
         } catch (Throwable $e) {
             error_log('ClientController wialonNotifications: ' . $e->getMessage());
-            Response::error($e->getMessage(), 500);
+            Response::success(['notifications' => [], 'count' => 0, 'error' => $e->getMessage()]);
         }
     }
 
@@ -807,8 +807,135 @@ class ClientController
             Response::success(['templates' => $templates, 'count' => count($templates)]);
         } catch (Throwable $e) {
             error_log('ClientController wialonReportTemplates: ' . $e->getMessage());
-            Response::error($e->getMessage(), 500);
+            Response::success(['templates' => [], 'count' => 0, 'error' => $e->getMessage()]);
         }
+    }
+
+    /** GET /client/wialon/units/:id/track?from=&to= — message positions for map trail */
+    public static function wialonUnitTrack(?string $id = null): void
+    {
+        $tenantId = self::requireTenantId();
+        $unitId = (int) ($id ?? 0);
+        if ($unitId <= 0) {
+            Response::error('Unit id required', 400);
+            return;
+        }
+        $from = (int) ($_GET['from'] ?? (time() - 86400));
+        $to = (int) ($_GET['to'] ?? time());
+        require_once __DIR__ . '/../../lib/TenantWialon.php';
+        require_once __DIR__ . '/../../lib/WialonClient.php';
+        try {
+            $creds = TenantWialon::loadCreds($tenantId);
+            $client = new WialonClient($creds['baseUrl']);
+            $client->login($creds['token'], $creds['operateAs']);
+            try {
+                $data = $client->call('messages/load_interval', [
+                    'itemId' => $unitId,
+                    'timeFrom' => $from,
+                    'timeTo' => $to,
+                    'flags' => 1,
+                    'flagsMask' => 65281,
+                    'loadCount' => 5000,
+                ]);
+                $messages = is_array($data['messages'] ?? null) ? $data['messages'] : [];
+                $points = [];
+                foreach ($messages as $msg) {
+                    if (!is_array($msg)) {
+                        continue;
+                    }
+                    $pos = $msg['pos'] ?? null;
+                    if (!is_array($pos) || !isset($pos['y'], $pos['x'])) {
+                        continue;
+                    }
+                    $points[] = [
+                        'lat' => (float) $pos['y'],
+                        'lng' => (float) $pos['x'],
+                        'speed' => (float) ($pos['s'] ?? 0),
+                        'time' => (int) ($msg['t'] ?? $pos['t'] ?? 0),
+                    ];
+                }
+                Response::success(['unitId' => $unitId, 'points' => $points, 'count' => count($points)]);
+            } finally {
+                $client->logout();
+            }
+        } catch (Throwable $e) {
+            error_log('ClientController wialonUnitTrack: ' . $e->getMessage());
+            Response::success(['unitId' => $unitId, 'points' => [], 'count' => 0, 'error' => $e->getMessage()]);
+        }
+    }
+
+    /** POST /client/wialon/commands — send remote command (best-effort) */
+    public static function wialonCommandSend(): void
+    {
+        $user = self::currentUser();
+        $tenantId = self::requireTenantId();
+        $body = Auth::jsonBody();
+        $unitId = (int) ($body['unitId'] ?? $body['wialonId'] ?? 0);
+        $command = trim((string) ($body['command'] ?? ''));
+        $assetId = isset($body['assetId']) ? (string) $body['assetId'] : null;
+        $assetName = isset($body['assetName']) ? (string) $body['assetName'] : null;
+        $param = isset($body['param']) ? (string) $body['param'] : '';
+
+        if ($unitId <= 0 || $command === '') {
+            Response::error('unitId and command required', 400);
+            return;
+        }
+
+        require_once __DIR__ . '/../../lib/TenantWialon.php';
+        require_once __DIR__ . '/../../lib/WialonClient.php';
+
+        $status = 'failed';
+        $responsePayload = null;
+        try {
+            $creds = TenantWialon::loadCreds($tenantId);
+            $client = new WialonClient($creds['baseUrl']);
+            $client->login($creds['token'], $creds['operateAs']);
+            try {
+                $responsePayload = $client->call('unit/exec_cmd', [
+                    'itemId' => $unitId,
+                    'commandName' => $command,
+                    'linkType' => '',
+                    'param' => $param,
+                    'timeout' => 60,
+                    'flags' => 0,
+                ]);
+                $status = 'sent';
+            } finally {
+                $client->logout();
+            }
+        } catch (Throwable $e) {
+            $responsePayload = ['error' => $e->getMessage()];
+            error_log('ClientController wialonCommandSend: ' . $e->getMessage());
+        }
+
+        $logId = self::uuid();
+        try {
+            Database::execute(
+                'INSERT INTO command_logs
+                   (id, tenant_id, asset_id, external_asset_id, asset_name, command, params, status, response, source_type, created_by, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, \'wialon\', ?, NOW())',
+                [
+                    $logId,
+                    $tenantId,
+                    $assetId,
+                    (string) $unitId,
+                    $assetName,
+                    $command,
+                    json_encode(['param' => $param], JSON_UNESCAPED_SLASHES),
+                    $status,
+                    json_encode($responsePayload, JSON_UNESCAPED_SLASHES),
+                    $user['id'] ?? null,
+                ]
+            );
+        } catch (Throwable $e) {
+            error_log('ClientController wialonCommandSend log: ' . $e->getMessage());
+        }
+
+        if ($status !== 'sent') {
+            Response::error(is_array($responsePayload) ? (string) ($responsePayload['error'] ?? 'Command failed') : 'Command failed', 500);
+            return;
+        }
+        Response::success(['id' => $logId, 'status' => $status, 'response' => $responsePayload]);
     }
 
     /** GET /client/integrations/status */
