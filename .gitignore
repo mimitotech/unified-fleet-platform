@@ -28,6 +28,8 @@ Thumbs.db
 stackcp-bundle/
 mamsmain/
 mams-stackcp-upload/
+deploy/imports/*.sql
+!deploy/imports/00_drop_all_mams_tables.sql
 
 # never publish legacy install trees
 legacy/node_modules/

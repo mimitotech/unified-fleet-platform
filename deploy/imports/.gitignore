@@ -1,0 +1,4 @@
+*
+!.gitignore
+!00_drop_all_mams_tables.sql
+!README.md

@@ -48,3 +48,4 @@ UPLOAD_DIR=uploads
 
 - `legacy/` is blocked by `.htaccess` (old Node source for developers only)
 - Same MySQL data as before
+- To replace DB with the Hostinger live dump (`u454222977_mams`), follow [`IMPORT_LIVE_DATABASE.md`](IMPORT_LIVE_DATABASE.md)

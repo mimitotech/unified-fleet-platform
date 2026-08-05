@@ -257,27 +257,27 @@
       <div class="card">
         <div class="card-header"><h3>Recent inspections</h3></div>
         ${tableWrap(['Asset', 'Result', 'When'], insp.slice(0, 20).map((i) => `<tr>
-          <td>${esc(i.assetName || i.assetId || '—')}</td>
-          <td>${esc(i.result || i.status || '—')}</td>
-          <td class="muted">${fmtDate(i.inspectedAt || i.createdAt)}</td>
+          <td>${esc(i.vehicleName || i.assetName || i.vehiclePlate || i.assetId || '—')}</td>
+          <td>${esc(i.overallStatus || i.result || i.status || '—')}</td>
+          <td class="muted">${fmtDate(i.inspectionDate || i.inspectedAt || i.createdAt)}</td>
         </tr>`).join(''), 'No inspections')}
       </div>
       <div class="card">
         <div class="card-header"><h3>Breakdowns</h3></div>
         ${tableWrap(['Asset', 'Status', 'When'], brk.slice(0, 20).map((b) => `<tr>
-          <td>${esc(b.assetName || b.assetId || '—')}</td>
-          <td>${statusBadge(b.status || 'open')}</td>
-          <td class="muted">${fmtDate(b.reportedAt || b.createdAt)}</td>
+          <td>${esc(b.vehicleName || b.assetName || b.vehiclePlate || b.assetId || '—')}</td>
+          <td>${statusBadge(b.resolutionTime ? 'resolved' : (b.status || 'open'))}</td>
+          <td class="muted">${fmtDate(b.breakdownTime || b.reportedAt || b.createdAt)}</td>
         </tr>`).join(''), 'No breakdowns')}
       </div>
     </div>
     <div class="card mt-2">
       <div class="card-header"><h3>Maintenance logs</h3></div>
       ${tableWrap(['Asset', 'Type', 'Status', 'When'], maint.slice(0, 40).map((m) => `<tr>
-        <td>${esc(m.assetName || m.assetId || '—')}</td>
-        <td>${esc(m.type || m.title || '—')}</td>
+        <td>${esc(m.vehicleName || m.assetName || m.vehiclePlate || m.assetId || '—')}</td>
+        <td>${esc(m.maintenanceType || m.type || m.title || '—')}</td>
         <td>${statusBadge(m.status || '—')}</td>
-        <td class="muted">${fmtDate(m.scheduledAt || m.createdAt)}</td>
+        <td class="muted">${fmtDate(m.startDate || m.scheduledAt || m.createdAt)}</td>
       </tr>`).join(''), 'No maintenance logs')}
     </div>`;
   }
