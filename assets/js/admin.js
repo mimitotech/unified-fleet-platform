@@ -37,6 +37,57 @@
     return `<div class="kpi"><div class="label">${esc(label)}</div><div class="n">${esc(value)}</div>${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</div>`;
   }
 
+  const SOURCE_LABELS = { wialon: 'Wialon', loconav: 'LocoNav', tracksolid: 'TrackSolid' };
+
+  function cap(s) {
+    const str = String(s || '');
+    return str.charAt(0).toUpperCase() + str.slice(1);
+  }
+
+  function fmtHourLabel(v) {
+    const d = new Date(String(v || '').replace(' ', 'T'));
+    return isNaN(d) ? esc(v) : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function fmtDayLabel(v) {
+    const d = new Date(String(v || ''));
+    return isNaN(d) ? esc(v) : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  function fmtTime(v) {
+    if (!v) return '—';
+    const d = new Date(v);
+    return isNaN(d) ? esc(v) : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function adminKpiCard(icon, tone, label, value, sub) {
+    return `<div class="admin-kpi-card tone-${esc(tone)}">
+      <div class="admin-kpi-icon">${MamsIcons.get(icon)}</div>
+      <div class="admin-kpi-body">
+        <div class="admin-kpi-label">${esc(label)}</div>
+        <div class="admin-kpi-value">${esc(value)}</div>
+        ${sub ? `<div class="admin-kpi-sub">${esc(sub)}</div>` : ''}
+      </div>
+    </div>`;
+  }
+
+  function chartPanelHtml(canvasId, title, desc, height, hasData, emptyMsg) {
+    const body = hasData
+      ? `<canvas id="${canvasId}"></canvas>`
+      : `<div class="empty-hint">${esc(emptyMsg || 'No data yet.')}</div>`;
+    return `<div class="chart-panel">
+      <div class="chart-panel-header"><h4>${esc(title)}</h4>${desc ? `<span class="muted">${esc(desc)}</span>` : ''}</div>
+      <div class="chart-canvas-wrap" style="height:${height}px">${body}</div>
+    </div>`;
+  }
+
+  function listPanelHtml(title, desc, bodyHtml) {
+    return `<div class="chart-panel">
+      <div class="chart-panel-header"><h4>${esc(title)}</h4>${desc ? `<span class="muted">${esc(desc)}</span>` : ''}</div>
+      ${bodyHtml}
+    </div>`;
+  }
+
   function tableWrap(headers, rowsHtml, emptyMsg) {
     if (!rowsHtml) {
       return `<div class="card card-flat">${emptyState('📋', emptyMsg || 'No data', 'Nothing to show yet.')}</div>`;
@@ -45,7 +96,7 @@
   }
 
   const ROUTES = {
-    dashboard: { title: 'Dashboard', subtitle: 'Platform overview', icon: '◉' },
+    dashboard: { title: 'Dashboard', subtitle: 'Real-time platform analytics', icon: '◉' },
     tenants: { title: 'Clients', subtitle: 'Tenant management', icon: '🏢' },
     users: { title: 'Client Users', subtitle: 'End-user accounts', icon: '👥' },
     'system-users': { title: 'System Users', subtitle: 'Platform administrators', icon: '🛡' },
@@ -58,42 +109,176 @@
     account: { title: 'My Account', subtitle: 'Profile & security', icon: '👤' },
   };
 
+  const NAV_ITEMS = [
+    { key: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard', path: '/admin/dashboard' },
+    { key: 'tenants', label: 'Clients', icon: 'Building2', path: '/admin/tenants' },
+    { key: 'users', label: 'Client Users', icon: 'Users', path: '/admin/users' },
+    { key: 'system-users', label: 'System Users', icon: 'Shield', path: '/admin/system-users', superAdminOnly: true },
+    { key: 'system', label: 'System Settings', icon: 'Settings', path: '/admin/system' },
+    { key: 'marketplace', label: 'Integrations', icon: 'Plug', path: '/admin/marketplace' },
+    { key: 'wialon', label: 'Wialon Center', icon: 'Satellite', path: '/admin/wialon' },
+    { key: 'loconav', label: 'LocoNav Center', icon: 'Navigation', path: '/admin/loconav' },
+    { key: 'tracksolid', label: 'TrackSolid Center', icon: 'Radio', path: '/admin/tracksolid' },
+    { key: 'support', label: 'Support', icon: 'LifeBuoy', path: '/admin/support' },
+    { key: 'account', label: 'My Account', icon: 'UserCircle', path: '/admin/account' },
+  ];
+
+  function buildNav(role) {
+    const nav = document.getElementById('admin-nav');
+    if (!nav) return;
+    const items = NAV_ITEMS.filter((item) => !item.superAdminOnly || role === 'super_admin');
+    nav.innerHTML = items.map((item) => `<a href="${esc(item.path)}" data-mod="${esc(item.key)}" data-label="${esc(item.label.toLowerCase())}">
+      <span class="nav-icon">${MamsIcons.get(item.icon)}</span>
+      <span class="nav-label">${esc(item.label)}</span>
+    </a>`).join('');
+  }
+
   async function renderDashboard() {
     const [dash, health] = await Promise.all([
       MamsApi.api('/admin/dashboard'),
-      MamsApi.api('/admin/system/health'),
+      MamsApi.api('/admin/system/health').catch(() => ({})),
     ]);
-    const dbOk = health.database?.status === 'ok' || health.overall === 'operational';
-    return `<div class="kpi-grid">
-      ${kpi('Clients', dash.totalTenants ?? 0, (dash.activeTenants ?? 0) + ' active')}
-      ${kpi('Vehicles', dash.totalVehicles ?? 0, (dash.activeVehicles ?? 0) + ' online')}
-      ${kpi('Users', dash.totalUsers ?? 0)}
-      ${kpi('Pending alerts', dash.pendingAlerts ?? 0)}
-      ${kpi('Client warnings', dash.tenantWarning ?? 0)}
-      ${kpi('System', dbOk ? 'Operational' : 'Degraded')}
-    </div>
-    <div class="grid-2 mt-2">
-      <div class="card">
-        <div class="card-header"><h3>Platform health</h3>
-          <span class="health-dot ${dbOk ? 'ok' : 'err'}"></span>
-        </div>
-        <div class="settings-grid">
-          <div><span class="muted">Overall</span><div><strong>${esc(health.overall || '—')}</strong></div></div>
-          <div><span class="muted">Database</span><div>${statusBadge(health.database?.status || 'unknown')}</div></div>
-          <div><span class="muted">API</span><div>${statusBadge(health.api?.status || 'ok')}</div></div>
-          <div><span class="muted">Generated</span><div class="muted">${fmtDate(dash.generatedAt)}</div></div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-header"><h3>Quick links</h3></div>
-        <div class="stack">
-          <a class="btn btn-ghost" href="/admin/tenants">Manage clients →</a>
-          <a class="btn btn-ghost" href="/admin/users">Client users →</a>
-          <a class="btn btn-ghost" href="/admin/wialon">Wialon Center →</a>
-          <a class="btn btn-ghost" href="/admin/system">System settings →</a>
-        </div>
-      </div>
+
+    const assetStatus = dash.assetStatusBreakdown || [];
+    const alertsTimeline = dash.alertsTimeline || [];
+    const alertsBySeverity = dash.alertsBySeverity || [];
+    const alertsVolume7d = dash.alertsVolume7d || [];
+    const syncTimeline = dash.syncTimeline || [];
+    const integrationsBySource = dash.integrationsBySource || [];
+    const healthHistory = dash.healthHistory || [];
+    const growthHistory = dash.growthHistory || [];
+    const recentActivity = dash.recentActivity || [];
+    const topTenants = dash.topTenants || [];
+    const recentSyncs = dash.recentSyncs || [];
+    const recentIncidents = dash.recentIncidents || [];
+
+    const kpiHtml = `<div class="admin-stat-strip">
+      ${adminKpiCard('Building2', 'primary', 'Clients', dash.totalTenants ?? 0, `${dash.activeTenants ?? 0} active`)}
+      ${adminKpiCard('Truck', 'info', 'Synced assets', dash.totalVehicles ?? 0, `${dash.activeVehiclesPct ?? 0}% online`)}
+      ${adminKpiCard('Users', 'success', 'Users', dash.totalUsers ?? 0, `${dash.logins24h ?? 0} logins`)}
+      ${adminKpiCard('AlertTriangle', 'destructive', 'Alerts', dash.pendingAlerts ?? 0, 'pending')}
+      ${adminKpiCard('RefreshCw', 'warning', 'Sync rate', `${dash.syncRate24h ?? 100}%`, `${dash.syncs24h ?? 0} today`)}
+      ${adminKpiCard('Radio', 'primary', 'Integrations', `${dash.integrationHealth ?? 0}%`, `${dash.webhooks24h ?? 0} webhooks`)}
     </div>`;
+
+    const syncFeedHtml = recentSyncs.length
+      ? `<div class="feed-list">${recentSyncs.map((s) => `<div class="feed-item">
+          <div class="feed-item-main">
+            <strong>${esc(s.tenantName || '—')}</strong> · ${esc(SOURCE_LABELS[s.sourceType] || s.sourceType || '—')}
+            <div class="muted feed-item-sub">${s.vehiclesSynced ?? 0} assets · ${fmtTime(s.startedAt)}</div>
+          </div>
+          <span class="badge ${s.status === 'success' ? 'badge-success' : s.status === 'failed' ? 'badge-critical' : 'badge-inactive'}">${esc(s.status || '—')}</span>
+        </div>`).join('')}</div>`
+      : '<p class="muted">No sync activity.</p>';
+
+    const topClientsLinks = topTenants.slice(0, 3).map((t) => `<a href="/admin/tenants">${esc(t.name)}</a>`).join('');
+
+    const activityHtml = recentActivity.length
+      ? `<div class="feed-list">${recentActivity.map((a) => `<div class="feed-item feed-item-plain">
+          <strong>${esc(a.action || 'Activity')}</strong>
+          ${a.message ? `<div class="muted feed-item-sub">${esc(a.message)}</div>` : ''}
+          <div class="muted feed-item-sub">${a.tenantName ? esc(a.tenantName) + ' · ' : ''}${fmtDate(a.createdAt)}</div>
+        </div>`).join('')}</div>`
+      : '<p class="muted">No activity.</p>';
+
+    const incidentsHtml = recentIncidents.length
+      ? `<div class="incident-list">${recentIncidents.map((i) => `<p class="incident-item"><strong>${esc(i.tenantName || '—')}</strong> — ${esc(i.message || 'Failed')} · ${fmtDate(i.startedAt)}</p>`).join('')}</div>`
+      : '';
+
+    const html = `${kpiHtml}
+    <div class="chart-grid chart-grid-3 mt-2">
+      ${chartPanelHtml('chart-fleet-status', 'Fleet status', 'Moving · idle · stopped · offline', 200, assetStatus.length > 0, 'No fleet data — sync integrations first.')}
+      ${chartPanelHtml('chart-alerts-24h', 'Alerts — 24 hours', 'Trend by severity', 200, alertsTimeline.length > 0, 'No alerts in the last 24 hours.')}
+      ${chartPanelHtml('chart-alert-volume', 'Alert volume', 'Last 7 days', 200, (alertsVolume7d.length || alertsBySeverity.length) > 0, 'No alert data.')}
+    </div>
+    <div class="chart-grid chart-grid-3 mt-1">
+      ${chartPanelHtml('chart-sync-timeline', 'Integration syncs', 'Success vs failed · 7 days', 180, syncTimeline.length > 0, 'No sync history yet.')}
+      ${chartPanelHtml('chart-sources', 'Telematics sources', 'Active vs inactive', 180, integrationsBySource.length > 0, 'No integrations configured.')}
+      ${chartPanelHtml('chart-integration-health', 'Integration health', 'Sync success rate · 7 days', 180, healthHistory.length > 0, 'Run client syncs to build history.')}
+    </div>
+    <div class="chart-grid mt-1" style="grid-template-columns:2fr 1fr">
+      ${listPanelHtml('Live sync feed', 'Latest integration syncs', syncFeedHtml)}
+      <div class="chart-panel">
+        <div class="chart-panel-header"><h4>Top clients</h4><span class="muted">Synced fleet size</span></div>
+        <div class="chart-canvas-wrap" style="height:180px">${topTenants.length ? '<canvas id="chart-top-clients"></canvas>' : '<div class="empty-hint">No clients yet.</div>'}</div>
+        ${topClientsLinks ? `<div class="top-clients-links">${topClientsLinks}</div>` : ''}
+      </div>
+    </div>
+    <div class="chart-grid chart-grid-2 mt-1">
+      ${listPanelHtml('Platform activity', '', activityHtml)}
+      ${chartPanelHtml('chart-growth', 'Client growth', 'New clients · 30 days', 160, true)}
+    </div>
+    ${recentIncidents.length ? `<div class="chart-panel mt-1"><div class="chart-panel-header"><h4>Sync failures</h4></div>${incidentsHtml}</div>` : ''}
+    <div class="admin-footer-stats mt-1">
+      <span>${dash.logins24h ?? 0} logins · ${dash.activeUsers7d ?? 0} active (7d)</span>
+      ${dash.lastSync ? `<span>Last sync: ${fmtDate(dash.lastSync)}</span>` : ''}
+    </div>`;
+
+    window.__adminDashPaint = function paintAdminDashboard() {
+      const p = MamsCharts.palette();
+
+      if (assetStatus.length) {
+        MamsCharts.bar('chart-fleet-status', assetStatus.map((s) => cap(s.status)),
+          [{ label: 'Assets', data: assetStatus.map((s) => s.count), backgroundColor: assetStatus.map((s) => p.fleet[s.status] || p.muted), borderRadius: 4 }],
+          { horizontal: true });
+      }
+
+      if (alertsTimeline.length) {
+        MamsCharts.line('chart-alerts-24h', alertsTimeline.map((r) => fmtHourLabel(r.hour)), [
+          { label: 'Critical', data: alertsTimeline.map((r) => r.critical), borderColor: p.severity.critical, backgroundColor: p.severity.critical },
+          { label: 'Warning', data: alertsTimeline.map((r) => r.warning), borderColor: p.severity.warning, backgroundColor: p.severity.warning },
+          { label: 'Info', data: alertsTimeline.map((r) => r.info), borderColor: p.severity.info, backgroundColor: p.severity.info },
+        ]);
+      }
+
+      if (alertsVolume7d.length) {
+        MamsCharts.bar('chart-alert-volume', alertsVolume7d.map((r) => fmtDayLabel(r.day)),
+          [{ label: 'Alerts', data: alertsVolume7d.map((r) => r.count), backgroundColor: p.danger, borderRadius: 4 }]);
+      } else if (alertsBySeverity.length) {
+        MamsCharts.bar('chart-alert-volume', alertsBySeverity.map((r) => cap(r.severity)),
+          [{ label: 'Alerts', data: alertsBySeverity.map((r) => r.count), backgroundColor: alertsBySeverity.map((r) => p.severity[r.severity] || p.muted), borderRadius: 4 }]);
+      }
+
+      if (syncTimeline.length) {
+        MamsCharts.bar('chart-sync-timeline', syncTimeline.map((r) => fmtDayLabel(r.day)), [
+          { label: 'Success', data: syncTimeline.map((r) => r.success), backgroundColor: p.success },
+          { label: 'Failed', data: syncTimeline.map((r) => r.failed), backgroundColor: p.danger },
+        ], { stacked: true });
+      }
+
+      if (integrationsBySource.length) {
+        MamsCharts.bar('chart-sources', integrationsBySource.map((r) => SOURCE_LABELS[r.source_type] || r.source_type), [
+          { label: 'Active', data: integrationsBySource.map((r) => r.active), backgroundColor: integrationsBySource.map((r) => p.sources[r.source_type] || p.primary) },
+          { label: 'Inactive', data: integrationsBySource.map((r) => Math.max(0, (r.total || 0) - (r.active || 0))), backgroundColor: p.muted },
+        ], { horizontal: true, stacked: true });
+      }
+
+      if (healthHistory.length) {
+        MamsCharts.line('chart-integration-health', healthHistory.map((r) => fmtDayLabel(r.day)),
+          [{ label: 'Health %', data: healthHistory.map((r) => r.score), borderColor: p.primary, backgroundColor: p.primary }]);
+      }
+
+      if (topTenants.length) {
+        MamsCharts.bar('chart-top-clients', topTenants.map((t) => (t.name && t.name.length > 14 ? t.name.slice(0, 14) + '…' : t.name)),
+          [{ label: 'Assets', data: topTenants.map((t) => t.vehicleCount), backgroundColor: p.primary, borderRadius: 4 }],
+          { horizontal: true });
+      }
+
+      const growthData = growthHistory.length ? growthHistory : [{ day: null, count: dash.totalTenants ?? 0 }];
+      MamsCharts.bar('chart-growth', growthData.map((r) => (r.day ? fmtDayLabel(r.day) : 'Now')),
+        [{ label: 'Clients', data: growthData.map((r) => r.count), backgroundColor: p.accent, borderRadius: 4 }]);
+
+      const livePill = document.getElementById('admin-live-pill');
+      if (livePill) {
+        const dbOk = health.overall === 'operational' || health.database?.status === 'ok';
+        livePill.classList.toggle('is-live', dbOk);
+        livePill.classList.toggle('is-partial', !dbOk);
+        const label = livePill.querySelector('span:last-child');
+        if (label) label.textContent = 'Live ' + new Date().toLocaleTimeString();
+      }
+    };
+
+    return html;
   }
 
   function tenantRowsHtml(tenants) {
@@ -448,6 +633,44 @@
     document.getElementById('sidebar-overlay')?.classList.remove('show');
   });
 
+  /* ── Topbar / nav chrome (icon parity with React AdminLayout) ── */
+  const menuToggleEl = document.getElementById('menu-toggle');
+  if (menuToggleEl) menuToggleEl.innerHTML = MamsIcons.get('Menu');
+  const refreshBtnEl = document.getElementById('refresh-btn');
+  if (refreshBtnEl) refreshBtnEl.innerHTML = MamsIcons.get('RefreshCw');
+  const logoutBtnEl = document.getElementById('logout-btn');
+  if (logoutBtnEl) logoutBtnEl.innerHTML = `${MamsIcons.get('LogOut')}<span>Sign out</span>`;
+
+  document.getElementById('admin-nav-search')?.addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    document.querySelectorAll('#admin-nav a').forEach((a) => {
+      const label = a.dataset.label || '';
+      a.style.display = !q || label.includes(q) ? '' : 'none';
+    });
+  });
+
+  async function refreshFooterHealth() {
+    const dot = document.getElementById('admin-footer-health');
+    if (!dot) return;
+    try {
+      const health = await MamsApi.api('/admin/system/health');
+      const ok = health.overall === 'operational' || health.database?.status === 'ok';
+      dot.className = 'health-dot ' + (ok ? 'ok' : 'err');
+    } catch (_) {
+      dot.className = 'health-dot err';
+    }
+  }
+
+  refreshBtnEl?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      await Promise.all([loadModule(), refreshFooterHealth()]);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
   function getModule() {
     const path = location.pathname.replace(/\/$/, '') || '/admin/dashboard';
     const parts = path.split('/').filter(Boolean);
@@ -508,11 +731,17 @@
     const route = ROUTES[mod];
     setActiveNav(mod);
 
+    MamsCharts.destroyAll();
+    window.__adminDashPaint = null;
+
     const titleEl = document.getElementById('page-title');
     const subEl = document.getElementById('page-sub');
     if (titleEl) titleEl.textContent = route.title;
     if (subEl) subEl.textContent = route.subtitle;
     document.title = route.title + ' — MAMS Admin';
+
+    const livePill = document.getElementById('admin-live-pill');
+    if (livePill) livePill.hidden = mod !== 'dashboard';
 
     if (mod === 'system-users' && currentUserRole !== 'super_admin') {
       content.innerHTML = `<div class="banner banner-warn">Only super administrators can manage system users.</div>`;
@@ -521,6 +750,10 @@
 
     const render = RENDERERS[mod] || RENDERERS.dashboard;
     content.innerHTML = await render();
+
+    if (typeof window.__adminDashPaint === 'function') {
+      window.__adminDashPaint();
+    }
   }
 
   content.addEventListener('click', async (e) => {
@@ -710,10 +943,10 @@
 
       currentUserRole = user.role;
       setUserChip(user);
+      buildNav(user.role);
 
-      if (user.role !== 'super_admin') {
-        document.getElementById('nav-system-users')?.remove();
-      }
+      refreshFooterHealth();
+      setInterval(refreshFooterHealth, 60000);
 
       await loadModule();
     } catch (e) {

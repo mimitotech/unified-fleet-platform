@@ -575,6 +575,102 @@ class ClientController
         ]);
     }
 
+    /** GET /client/wialon/context — status parity with React useWialonContext */
+    public static function wialonContext(): void
+    {
+        $tenantId = self::requireTenantId();
+
+        try {
+            $rows = Database::query(
+                'SELECT is_active, last_sync_at, last_error, connection_verified_at,
+                        wialon_account_name, wialon_resource_id, wialon_operate_as, wialon_session_meta,
+                        preview_asset_count
+                 FROM data_sources
+                 WHERE tenant_id = ? AND source_type = \'wialon\'
+                 LIMIT 1',
+                [$tenantId]
+            );
+        } catch (Throwable $e) {
+            Response::success([
+                'configured' => false,
+                'connected' => false,
+                'accountName' => null,
+                'accountTier' => null,
+                'unitCount' => 0,
+                'accountCount' => 0,
+                'lastError' => null,
+                'lastSyncAt' => null,
+            ]);
+            return;
+        }
+
+        if (!$rows) {
+            Response::success([
+                'configured' => false,
+                'connected' => false,
+                'accountName' => null,
+                'accountTier' => null,
+                'unitCount' => 0,
+                'accountCount' => 0,
+                'lastError' => null,
+                'lastSyncAt' => null,
+            ]);
+            return;
+        }
+
+        $row = $rows[0];
+        $isActive = (bool) ((int) ($row['is_active'] ?? 0));
+        $verified = !empty($row['connection_verified_at']);
+        $resourceId = isset($row['wialon_resource_id']) ? (int) $row['wialon_resource_id'] : 0;
+        $connected = $isActive && $verified && $resourceId > 0;
+
+        $sessionMeta = null;
+        if (!empty($row['wialon_session_meta'])) {
+            $decoded = is_string($row['wialon_session_meta'])
+                ? json_decode($row['wialon_session_meta'], true)
+                : $row['wialon_session_meta'];
+            $sessionMeta = is_array($decoded) ? $decoded : null;
+        }
+
+        $tier = null;
+        if (is_array($sessionMeta)) {
+            if (!empty($sessionMeta['scopedAccountId'])) {
+                $tier = 'admin';
+            } elseif (!empty($sessionMeta['accountTier'])) {
+                $tier = (string) $sessionMeta['accountTier'];
+            }
+        }
+
+        $unitCount = isset($row['preview_asset_count']) ? (int) $row['preview_asset_count'] : 0;
+        if ($unitCount <= 0) {
+            try {
+                $countRows = Database::query(
+                    'SELECT COUNT(DISTINCT am.asset_id) AS c
+                     FROM asset_mappings am
+                     JOIN assets a ON a.id = am.asset_id
+                     WHERE a.tenant_id = ? AND am.source_type = \'wialon\'',
+                    [$tenantId]
+                );
+                $unitCount = (int) ($countRows[0]['c'] ?? 0);
+            } catch (Throwable $e) {
+                $unitCount = 0;
+            }
+        }
+
+        Response::success([
+            'configured' => true,
+            'connected' => $connected,
+            'accountName' => $row['wialon_account_name'] ?? null,
+            'accountTier' => $tier,
+            'unitCount' => $unitCount,
+            'accountCount' => $resourceId > 0 ? 1 : 0,
+            'operateAs' => $row['wialon_operate_as'] ?? null,
+            'lastError' => $row['last_error'] ?? null,
+            'lastSyncAt' => $row['last_sync_at'] ?? null,
+            'sessionMeta' => $sessionMeta,
+        ]);
+    }
+
     /** GET /client/integrations/status */
     public static function integrationsStatus(): void
     {

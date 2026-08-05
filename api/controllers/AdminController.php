@@ -115,22 +115,32 @@ class AdminController
         }
     }
 
-    /** GET /admin/dashboard */
+    /** Safe query helper — returns [] on missing table / SQL error */
+    private static function safeRows(string $sql, array $params = []): array
+    {
+        try {
+            return Database::query($sql, $params);
+        } catch (Throwable $e) {
+            error_log('AdminController safeRows: ' . $e->getMessage());
+            return [];
+        }
+    }
+
+    /** GET /admin/dashboard — parity with Node AdminOrchestrator.getDashboardStats */
     public static function dashboard(): void
     {
         self::currentUser();
 
-        $tenantRows = Database::query(
+        $tenantStats = self::safeRows(
             "SELECT
                 COUNT(*) AS total,
                 SUM(CASE WHEN status = 'active' OR (status IS NULL AND is_active = 1) THEN 1 ELSE 0 END) AS active,
                 SUM(CASE WHEN status = 'warning' THEN 1 ELSE 0 END) AS warning,
                 SUM(CASE WHEN status IN ('inactive', 'suspended') OR is_active = 0 THEN 1 ELSE 0 END) AS inactive
              FROM tenants"
-        );
-        $tenantStats = $tenantRows[0] ?? [];
+        )[0] ?? [];
 
-        $vehicleRows = Database::query(
+        $vehicleStats = self::safeRows(
             "SELECT COUNT(*) AS total,
                     SUM(CASE WHEN (
                         SELECT s.status FROM asset_status s
@@ -139,23 +149,196 @@ class AdminController
                         LIMIT 1
                     ) IN ('moving', 'idle', 'stopped') THEN 1 ELSE 0 END) AS active
              FROM assets a"
-        );
-        $vehicleStats = $vehicleRows[0] ?? [];
+        )[0] ?? [];
 
-        $userRows = Database::query(
+        $userStats = self::safeRows(
             "SELECT COUNT(*) AS total FROM users WHERE role NOT IN ('platform_admin', 'super_admin')"
-        );
-        $userStats = $userRows[0] ?? [];
+        )[0] ?? [];
 
-        $alertRows = Database::query(
+        $alertStats = self::safeRows(
             'SELECT COUNT(*) AS pending FROM alerts WHERE acknowledged = 0'
+        )[0] ?? [];
+
+        $integrationStats = self::safeRows(
+            'SELECT COUNT(*) AS total,
+                    SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active
+             FROM data_sources'
+        )[0] ?? [];
+
+        $totalIntegrations = (int) ($integrationStats['total'] ?? 0);
+        $activeIntegrations = (int) ($integrationStats['active'] ?? 0);
+        $integrationHealth = $totalIntegrations > 0
+            ? round(($activeIntegrations / $totalIntegrations) * 1000) / 10
+            : 100.0;
+
+        $assetStatusBreakdown = self::safeRows(
+            "SELECT COALESCE((
+                 SELECT s.status FROM asset_status s
+                 WHERE s.asset_id = a.id
+                 ORDER BY s.recorded_at DESC LIMIT 1
+               ), 'offline') AS status,
+               COUNT(DISTINCT a.id) AS count
+             FROM assets a
+             GROUP BY status"
         );
-        $alertStats = $alertRows[0] ?? [];
+
+        $alertsTimeline = self::safeRows(
+            "SELECT DATE_FORMAT(occurred_at, '%Y-%m-%d %H:00:00') AS hour,
+                    SUM(CASE WHEN severity IN ('critical', 'emergency') THEN 1 ELSE 0 END) AS critical,
+                    SUM(CASE WHEN severity = 'warning' THEN 1 ELSE 0 END) AS warning,
+                    SUM(CASE WHEN severity = 'info' THEN 1 ELSE 0 END) AS info
+             FROM alerts
+             WHERE occurred_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+             GROUP BY hour
+             ORDER BY hour"
+        );
+
+        $alertsBySeverity = self::safeRows(
+            "SELECT severity, COUNT(*) AS count
+             FROM alerts
+             WHERE occurred_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+             GROUP BY severity
+             ORDER BY count DESC"
+        );
+
+        $alertsVolume7d = self::safeRows(
+            "SELECT DATE(occurred_at) AS day, COUNT(*) AS count
+             FROM alerts
+             WHERE occurred_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+             GROUP BY day
+             ORDER BY day"
+        );
+
+        $syncTimeline = self::safeRows(
+            "SELECT DATE(started_at) AS day,
+                    SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success,
+                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed
+             FROM integration_sync_logs
+             WHERE started_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+             GROUP BY day
+             ORDER BY day"
+        );
+
+        $healthHistory = self::safeRows(
+            "SELECT DATE(started_at) AS day,
+                    ROUND(AVG(CASE WHEN status = 'success' THEN 100 ELSE 0 END), 1) AS score
+             FROM integration_sync_logs
+             WHERE started_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+             GROUP BY day
+             ORDER BY day"
+        );
+
+        $integrationsBySource = self::safeRows(
+            "SELECT source_type,
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active
+             FROM data_sources
+             GROUP BY source_type
+             ORDER BY total DESC"
+        );
+
+        $tenantStatusBreakdown = self::safeRows(
+            "SELECT COALESCE(status, CASE WHEN is_active = 1 THEN 'active' ELSE 'inactive' END) AS status,
+                    COUNT(*) AS count
+             FROM tenants
+             GROUP BY status"
+        );
+
+        $growthHistory = self::safeRows(
+            "SELECT DATE(created_at) AS day, COUNT(*) AS count
+             FROM tenants
+             WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)
+             GROUP BY day
+             ORDER BY day"
+        );
+
+        $topTenants = self::safeRows(
+            "SELECT t.id, t.name, t.slug, t.status,
+                    (SELECT COUNT(*) FROM assets a WHERE a.tenant_id = t.id) AS vehicle_count,
+                    (SELECT COUNT(*) FROM users u WHERE u.tenant_id = t.id) AS user_count
+             FROM tenants t
+             ORDER BY vehicle_count DESC
+             LIMIT 5"
+        );
+
+        $recentSyncs = self::safeRows(
+            "SELECT isl.source_type, isl.status, isl.vehicles_synced, isl.started_at, isl.message,
+                    t.name AS tenant_name
+             FROM integration_sync_logs isl
+             JOIN tenants t ON t.id = isl.tenant_id
+             ORDER BY isl.started_at DESC
+             LIMIT 8"
+        );
+
+        $recentIncidents = self::safeRows(
+            "SELECT isl.id, isl.source_type, isl.status, isl.message, isl.started_at,
+                    t.name AS tenant_name
+             FROM integration_sync_logs isl
+             JOIN tenants t ON t.id = isl.tenant_id
+             WHERE isl.status = 'failed'
+             ORDER BY isl.started_at DESC
+             LIMIT 5"
+        );
+
+        $recentActivity = self::safeRows(
+            "SELECT af.*, t.name AS tenant_name
+             FROM activity_feed af
+             LEFT JOIN tenants t ON t.id = af.tenant_id
+             ORDER BY af.created_at DESC
+             LIMIT 10"
+        );
+
+        $loginStats = self::safeRows(
+            "SELECT
+                SUM(CASE WHEN last_login_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) THEN 1 ELSE 0 END) AS logins24h,
+                SUM(CASE WHEN last_login_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) AS activeUsers7d
+             FROM users WHERE is_active = 1"
+        )[0] ?? [];
+
+        $webhookStats = self::safeRows(
+            "SELECT COUNT(*) AS events24h FROM alerts
+             WHERE source_type IN ('loconav', 'tracksolid')
+               AND occurred_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)"
+        )[0] ?? [];
+
+        $syncStats24h = self::safeRows(
+            "SELECT COUNT(*) AS total,
+                    SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success,
+                    COALESCE(SUM(CASE WHEN status = 'success' THEN vehicles_synced ELSE 0 END), 0) AS assetsSynced
+             FROM integration_sync_logs
+             WHERE started_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)"
+        )[0] ?? [];
+
+        $lastSyncRows = self::safeRows('SELECT MAX(last_sync_at) AS last_sync FROM data_sources');
+        $lastSync = $lastSyncRows[0]['last_sync'] ?? null;
 
         $totalTenants = (int) ($tenantStats['total'] ?? 0);
         $activeTenants = (int) ($tenantStats['active'] ?? 0);
         $totalVehicles = (int) ($vehicleStats['total'] ?? 0);
         $activeVehicles = (int) ($vehicleStats['active'] ?? 0);
+        $syncs24h = (int) ($syncStats24h['total'] ?? 0);
+        $syncSuccess24h = (int) ($syncStats24h['success'] ?? 0);
+
+        $mapSeries = static function (array $rows, array $keys): array {
+            $out = [];
+            foreach ($rows as $row) {
+                $item = [];
+                foreach ($keys as $key) {
+                    $val = $row[$key] ?? null;
+                    if (is_numeric($val) && !str_contains((string) $key, 'name') && !str_contains((string) $key, 'slug')
+                        && !str_contains((string) $key, 'status') && !str_contains((string) $key, 'type')
+                        && !str_contains((string) $key, 'message') && !str_contains((string) $key, 'hour')
+                        && !str_contains((string) $key, 'day') && !str_contains((string) $key, 'severity')
+                        && $key !== 'id') {
+                        $item[$key] = str_contains((string) $val, '.') ? (float) $val : (int) $val;
+                    } else {
+                        $item[$key] = $val;
+                    }
+                }
+                $out[] = $item;
+            }
+            return $out;
+        };
 
         Response::success([
             'totalTenants' => $totalTenants,
@@ -168,7 +351,65 @@ class AdminController
             'pendingAlerts' => (int) ($alertStats['pending'] ?? 0),
             'tenantWarning' => (int) ($tenantStats['warning'] ?? 0),
             'tenantInactive' => (int) ($tenantStats['inactive'] ?? 0),
+            'integrationHealth' => $integrationHealth,
+            'healthScore' => $integrationHealth,
+            'logins24h' => (int) ($loginStats['logins24h'] ?? 0),
+            'activeUsers7d' => (int) ($loginStats['activeUsers7d'] ?? 0),
+            'webhooks24h' => (int) ($webhookStats['events24h'] ?? 0),
+            'syncs24h' => $syncs24h,
+            'syncSuccess24h' => $syncSuccess24h,
+            'syncRate24h' => $syncs24h > 0 ? (int) round(($syncSuccess24h / $syncs24h) * 100) : 100,
+            'assetsSynced24h' => (int) ($syncStats24h['assetsSynced'] ?? 0),
+            'lastSync' => $lastSync,
             'generatedAt' => gmdate('c'),
+            'assetStatusBreakdown' => $mapSeries($assetStatusBreakdown, ['status', 'count']),
+            'alertsTimeline' => $mapSeries($alertsTimeline, ['hour', 'critical', 'warning', 'info']),
+            'alertsBySeverity' => $mapSeries($alertsBySeverity, ['severity', 'count']),
+            'alertsVolume7d' => $mapSeries($alertsVolume7d, ['day', 'count']),
+            'syncTimeline' => $mapSeries($syncTimeline, ['day', 'success', 'failed']),
+            'healthHistory' => $mapSeries($healthHistory, ['day', 'score']),
+            'integrationsBySource' => $mapSeries($integrationsBySource, ['source_type', 'total', 'active']),
+            'tenantStatusBreakdown' => $mapSeries($tenantStatusBreakdown, ['status', 'count']),
+            'growthHistory' => $mapSeries($growthHistory, ['day', 'count']),
+            'topTenants' => array_map(static function (array $t): array {
+                return [
+                    'id' => $t['id'] ?? null,
+                    'name' => $t['name'] ?? '',
+                    'slug' => $t['slug'] ?? '',
+                    'status' => $t['status'] ?? null,
+                    'vehicleCount' => (int) ($t['vehicle_count'] ?? 0),
+                    'userCount' => (int) ($t['user_count'] ?? 0),
+                ];
+            }, $topTenants),
+            'recentSyncs' => array_map(static function (array $s): array {
+                return [
+                    'sourceType' => $s['source_type'] ?? null,
+                    'status' => $s['status'] ?? null,
+                    'vehiclesSynced' => isset($s['vehicles_synced']) ? (int) $s['vehicles_synced'] : 0,
+                    'startedAt' => $s['started_at'] ?? null,
+                    'message' => $s['message'] ?? null,
+                    'tenantName' => $s['tenant_name'] ?? null,
+                ];
+            }, $recentSyncs),
+            'recentIncidents' => array_map(static function (array $s): array {
+                return [
+                    'id' => $s['id'] ?? null,
+                    'sourceType' => $s['source_type'] ?? null,
+                    'status' => $s['status'] ?? null,
+                    'message' => $s['message'] ?? null,
+                    'startedAt' => $s['started_at'] ?? null,
+                    'tenantName' => $s['tenant_name'] ?? null,
+                ];
+            }, $recentIncidents),
+            'recentActivity' => array_map(static function (array $a): array {
+                return [
+                    'id' => $a['id'] ?? null,
+                    'action' => $a['action'] ?? ($a['event_type'] ?? null),
+                    'message' => $a['message'] ?? ($a['description'] ?? null),
+                    'tenantName' => $a['tenant_name'] ?? null,
+                    'createdAt' => $a['created_at'] ?? null,
+                ];
+            }, $recentActivity),
         ]);
     }
 

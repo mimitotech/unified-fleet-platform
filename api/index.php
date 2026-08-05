@@ -96,6 +96,9 @@ try {
     if ($apiPath === '/client/integrations/status' && $method === 'GET') {
         ClientController::integrationsStatus();
     }
+    if ($apiPath === '/client/wialon/context' && $method === 'GET') {
+        ClientController::wialonContext();
+    }
     if ($apiPath === '/client/preferences' && $method === 'GET') {
         ClientController::preferencesGet();
     }

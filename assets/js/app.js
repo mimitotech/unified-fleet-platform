@@ -44,6 +44,23 @@
     return `<span class="badge badge-brand">${esc(role || '—')}</span>`;
   }
 
+  const ADMIN_ROLES = ['tenant_admin', 'platform_admin', 'super_admin'];
+  function isAdminRole(role) {
+    return ADMIN_ROLES.includes(role);
+  }
+
+  /** Mirrors React moduleEnabledSet() — drops disabled modules and, for
+   * non-admin users, modules whose data has been hidden by the tenant admin. */
+  function moduleEnabledSet(modules, isAdmin) {
+    const set = new Set();
+    (Array.isArray(modules) ? modules : []).forEach((m) => {
+      if (!m || m.isEnabled === false) return;
+      if (m.isVisible === false && !isAdmin) return;
+      set.add(m.moduleKey);
+    });
+    return set;
+  }
+
   function emptyState(icon, title, desc) {
     return `<div class="empty-state"><div class="icon">${icon}</div><h3>${esc(title)}</h3><p>${esc(desc)}</p></div>`;
   }
@@ -87,48 +104,114 @@
     settings: { title: 'Settings', subtitle: 'Preferences & account', icon: '⚙' },
   };
 
-  /* Modules available for the quick-access grid — mirrors sidebar order */
+  /* Modules available for the quick-access grid — order mirrors React dashboardNav.ts */
   const QUICK_ACCESS_MODULES = [
-    { key: 'monitoring', label: 'Monitoring', desc: 'Live map & list', icon: '◎' },
-    { key: 'surveillance', label: 'Surveillance', desc: 'Video & cameras', icon: '📹' },
-    { key: 'drivers', label: 'Drivers', desc: 'Roster & scores', icon: '👤' },
-    { key: 'routes', label: 'Routes', desc: 'Trips & plans', icon: '🛣' },
-    { key: 'fuel', label: 'Fuel', desc: 'Fills & analysis', icon: '⛽' },
-    { key: 'emissions', label: 'Emissions', desc: 'Eco metrics', icon: '🌿' },
-    { key: 'workshop', label: 'Workshop', desc: 'Jobs & inspections', icon: '🔧' },
-    { key: 'alerts', label: 'Alerts', desc: 'Events & notify', icon: '🔔' },
-    { key: 'trailers', label: 'Trailers', desc: 'Assets & coupling', icon: '🚛' },
-    { key: 'sensors', label: 'Sensors', desc: 'Telemetry', icon: '📊' },
-    { key: 'geofencing', label: 'Geofencing', desc: 'Zones', icon: '📍' },
-    { key: 'commands', label: 'Commands', desc: 'Remote control', icon: '⌘' },
+    { key: 'monitoring', label: 'Monitoring', desc: 'Live map & tracks' },
+    { key: 'alerts', label: 'Alerts', desc: 'Inbox & severity' },
+    { key: 'fuel', label: 'Fuel', desc: 'Use, fills & drains' },
+    { key: 'workshop', label: 'Workshop', desc: 'Jobs & costs' },
+    { key: 'drivers', label: 'Drivers', desc: 'Roster & duty' },
+    { key: 'routes', label: 'Routes', desc: 'Plans & trips' },
+    { key: 'emissions', label: 'Emissions', desc: 'CO₂ & eco' },
+    { key: 'surveillance', label: 'Surveillance', desc: 'Cameras & video' },
+    { key: 'geofencing', label: 'Geofencing', desc: 'Zones & radius' },
+    { key: 'sensors', label: 'Sensors', desc: 'Fuel % & engine' },
+    { key: 'commands', label: 'Commands', desc: 'Remote control' },
+    { key: 'trailers', label: 'Trailers', desc: 'Trailer roster' },
   ];
 
-  function quickAccessGrid() {
+  function quickAccessGrid(enabled) {
+    const links = QUICK_ACCESS_MODULES.filter((m) => !enabled || enabled.has(m.key));
+    if (!links.length) return '';
     return `<div class="quick-access-grid">
-      ${QUICK_ACCESS_MODULES.map((m) => `<a class="quick-access-tile" href="/app/${m.key}">
-        <div class="qa-icon">${m.icon}</div>
+      ${links.map((m) => `<a class="quick-access-tile" href="/app/${m.key}">
+        <div class="qa-icon">${MamsIcons.forModule(m.key)}</div>
         <div class="qa-label">${esc(m.label)}</div>
         <div class="qa-desc">${esc(m.desc)}</div>
       </a>`).join('')}
     </div>`;
   }
 
+  /* ── Module-gated sidebar (#client-nav) ── */
+  const DEFAULT_MODULES_FALLBACK = [
+    { moduleKey: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard', sortOrder: 0, isEnabled: true, isVisible: true },
+    { moduleKey: 'monitoring', label: 'Monitoring', icon: 'Map', sortOrder: 1, isEnabled: true, isVisible: true },
+    { moduleKey: 'surveillance', label: 'Surveillance', icon: 'Video', sortOrder: 2, isEnabled: true, isVisible: true },
+    { moduleKey: 'alerts', label: 'Alerts', icon: 'Bell', sortOrder: 3, isEnabled: true, isVisible: true },
+  ];
+
+  function navLinkHtml(moduleKey, label, icon, isVisible, isAdmin) {
+    const hiddenData = isVisible === false && !isAdmin;
+    return `<a href="/app/${esc(moduleKey)}" data-mod="${esc(moduleKey)}" class="${hiddenData ? 'nav-hidden-data' : ''}"${hiddenData ? ' title="Data hidden by your tenant admin"' : ''}>
+      <span class="nav-icon">${MamsIcons.forModule(moduleKey, icon)}</span>
+      <span class="nav-label">${esc(label)}</span>
+      ${hiddenData ? `<span class="nav-hidden-badge" aria-label="Data hidden">${MamsIcons.get('EyeOff')}</span>` : ''}
+    </a>`;
+  }
+
+  function renderClientNavHtml(modules, isAdmin) {
+    const list = (Array.isArray(modules) ? modules : []).filter((m) => m && m.isEnabled !== false).slice();
+    list.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    const dashIdx = list.findIndex((m) => m.moduleKey === 'dashboard');
+    if (dashIdx > 0) {
+      const [dash] = list.splice(dashIdx, 1);
+      list.unshift(dash);
+    }
+    const links = list.map((m) => navLinkHtml(
+      m.moduleKey,
+      m.label || (ROUTES[m.moduleKey] && ROUTES[m.moduleKey].title) || m.moduleKey,
+      m.icon,
+      m.isVisible,
+      isAdmin
+    )).join('');
+    const settingsLink = navLinkHtml('settings', 'Settings', 'Settings', true, true);
+    return links + settingsLink;
+  }
+
+  async function initClientNav(isAdmin) {
+    let modules = DEFAULT_MODULES_FALLBACK;
+    try {
+      const data = await MamsApi.api('/client/modules');
+      if (Array.isArray(data) && data.length) modules = data;
+    } catch (_) { /* keep fallback */ }
+    const nav = document.getElementById('client-nav');
+    if (nav) nav.innerHTML = renderClientNavHtml(modules, isAdmin);
+    setActiveNav(getModule());
+    return modules;
+  }
+
   /* ── Module renderers ── */
   async function renderDashboard() {
-    const [kpis, snap, integrations, alerts] = await Promise.all([
-      MamsApi.api('/client/dashboard/kpis'),
-      MamsApi.api('/client/fleet/snapshot').catch(() => ({ units: [] })),
+    const [kpis, snap, integrations, alertsRaw, wialonCtx, modulesRaw, fuelTrend, workshopKpis, driverStats, routeStats] = await Promise.all([
+      MamsApi.api('/client/dashboard/kpis').catch(() => ({})),
+      MamsApi.api('/client/fleet/snapshot').catch(() => ({ units: [], counts: {} })),
       MamsApi.api('/client/integrations/status').catch(() => []),
       MamsApi.api('/client/alerts').catch(() => []),
+      MamsApi.api('/client/wialon/context').catch(() => ({ configured: false, connected: false })),
+      MamsApi.api('/client/modules').catch(() => DEFAULT_MODULES_FALLBACK),
+      MamsApi.api('/client/fuel/monthly-trend').catch(() => []),
+      MamsApi.api('/client/workshop/kpis').catch(() => ({})),
+      MamsApi.api('/client/drivers/stats').catch(() => ({})),
+      MamsApi.api('/client/routes/stats').catch(() => ({})),
     ]);
+
     const units = snap.units || [];
+    const counts = snap.counts || {};
     const intList = Array.isArray(integrations) ? integrations : [];
-    const alertList = Array.isArray(alerts) ? alerts : alerts.alerts || [];
+    const alertList = Array.isArray(alertsRaw) ? alertsRaw : alertsRaw.alerts || [];
+    const modules = Array.isArray(modulesRaw) ? modulesRaw : [];
+    const trend = Array.isArray(fuelTrend) ? fuelTrend : [];
+    const isAdmin = isAdminRole(currentUserRole);
+    const enabled = moduleEnabledSet(modules, isAdmin);
+
     const openAlerts = alertList.filter((a) => !a.acknowledged).length;
+    const criticalAlerts = alertList.filter((a) => !a.acknowledged && ['critical', 'emergency'].includes(String(a.severity || '').toLowerCase())).length;
     const online = intList.filter((i) => i.connected).length;
-    const moving = kpis.moving ?? 0;
-    const total = kpis.totalVehicles ?? units.length;
-    const util = total ? Math.round((moving / total) * 100) : 0;
+    const moving = kpis.moving ?? counts.moving ?? 0;
+    const idle = kpis.idle ?? counts.idle ?? 0;
+    const total = kpis.totalVehicles ?? counts.total ?? units.length;
+    const onlineCount = Math.max(0, total - (counts.offline ?? 0));
+    const util = total ? Math.round(((moving + idle) / total) * 100) : 0;
 
     const rows = units.slice(0, 12).map((u) => `<tr>
       <td><strong>${esc(u.name)}</strong>${u.plate ? `<br><span class="muted">${esc(u.plate)}</span>` : ''}</td>
@@ -138,39 +221,227 @@
       <td class="muted">${u.position ? fmtDate(u.position.time * 1000) : '—'}</td>
     </tr>`).join('');
 
-    return `
+    const metrics = [];
+    if (enabled.has('monitoring')) {
+      metrics.push(metricCard('Assets', total, 'Total fleet units', 'Truck'));
+      metrics.push(metricCard('Online', onlineCount, `${util}% utilization`, 'Activity'));
+      metrics.push(metricCard('Moving', moving, 'In motion now', 'Zap'));
+      metrics.push(metricCard('Idle', idle, 'Engine on, stopped', 'Gauge'));
+    }
+    if (enabled.has('alerts')) {
+      metrics.push(metricCard('Alerts', openAlerts || (kpis.unacknowledgedAlerts ?? 0), `${criticalAlerts || (kpis.criticalAlerts ?? 0)} critical`, 'AlertTriangle'));
+    }
+    if (enabled.has('drivers')) {
+      metrics.push(metricCard('Drivers', kpis.totalDrivers ?? driverStats?.total ?? 0, `${kpis.activeDrivers ?? 0} active`, 'Users'));
+    }
+    if (enabled.has('fuel')) {
+      metrics.push(metricCard('Fuel tx', kpis.fuelTransactions30d ?? 0, 'Last 30 days', 'Fuel'));
+    }
+    metrics.push(metricCard('Sources', intList.length ? `${online}/${intList.length}` : '—', 'Integrations linked', 'Plug'));
+
+    const chartCards = [];
+    if (enabled.has('monitoring') && total > 0 && fleetStatusSlices(counts).length) {
+      chartCards.push(chartCardHtml('Fleet status', 'Moving · idle · stopped · offline', 'dash-chart-fleet-status'));
+    }
+    if (enabled.has('monitoring') && total > 0) {
+      chartCards.push(chartCardHtml('Connection status', 'Live online vs offline', 'dash-chart-connection'));
+    }
+    if (enabled.has('alerts') && alertSeveritySlices(alertList).length) {
+      chartCards.push(chartCardHtml('Alert severity', 'Critical · warning · info', 'dash-chart-alert-severity'));
+    }
+    const hasFuel = enabled.has('fuel');
+    if (hasFuel && trend.some((r) => Number(r.filled) > 0 || Number(r.consumed) > 0)) {
+      chartCards.push(chartCardHtml('Monthly fill vs consumption', 'From fuel reports', 'dash-chart-fuel-trend'));
+    }
+    const workshopHasData = workshopKpis && Object.values(workshopKpis).some((v) => Number(v) > 0);
+    if (enabled.has('workshop') && workshopHasData) {
+      chartCards.push(chartCardHtml('Workshop load', 'Pending · done · breakdowns', 'dash-chart-workshop'));
+    }
+    if (enabled.has('drivers') && Number(driverStats?.total) > 0) {
+      chartCards.push(chartCardHtml('Driver duty', 'Live roster split', 'dash-chart-driver-duty'));
+    }
+    if (enabled.has('routes') && Number(routeStats?.total) > 0) {
+      chartCards.push(chartCardHtml('Route pipeline', 'Scheduled · in progress · completed', 'dash-chart-route-pipeline'));
+    }
+    if (intList.length) {
+      chartCards.push(chartCardHtml('Integration sources', 'Connected vs configured', 'dash-chart-sources'));
+    }
+
+    const html = `
     <div class="dash-meta">
       <div><span class="muted">Fleet</span><strong>${total} assets</strong></div>
-      <div><span class="muted">Online</span><strong>${online}/${intList.length || '—'}</strong></div>
+      <div><span class="muted">Online</span><strong>${onlineCount}/${total || '—'}</strong></div>
       <div><span class="muted">Utilization</span><strong>${util}%</strong></div>
       <div><span class="muted">Open alerts</span><strong>${openAlerts || (kpis.unacknowledgedAlerts ?? 0)}</strong></div>
+      <div><span class="muted">Modules</span><strong>${enabled.size}</strong></div>
+      ${wialonCtx?.connected ? `<div><span class="muted">Wialon</span><strong>Linked</strong></div>` : ''}
     </div>
-    <div class="metric-strip">
-      ${metricCard('Assets', total, 'Total fleet units')}
-      ${metricCard('Online', moving + (kpis.idle ?? 0), 'Moving + idle')}
-      ${metricCard('Moving', moving, 'In motion now')}
-      ${metricCard('Idle', kpis.idle ?? 0, 'Engine on, stopped')}
-      ${metricCard('Alerts', openAlerts || (kpis.unacknowledgedAlerts ?? 0), (kpis.criticalAlerts ?? 0) + ' critical')}
-      ${metricCard('Drivers', kpis.totalDrivers ?? 0, (kpis.activeDrivers ?? 0) + ' active')}
-      ${metricCard('Fuel tx', kpis.fuelTransactions30d ?? 0, 'Last 30 days')}
-      ${metricCard('Sources', intList.length ? `${online}/${intList.length}` : '—', 'Integrations linked')}
-    </div>
+    <div class="metric-strip">${metrics.join('')}</div>
+    ${wialonBannerHtml(wialonCtx)}
+    ${wialonSummaryHtml(wialonCtx)}
+    ${chartCards.length ? `<div class="dash-section">
+      <div class="dash-section-label">Charts</div>
+      <div class="dash-widget-grid">${chartCards.join('')}</div>
+    </div>` : ''}
     <div class="dash-section">
       <div class="dash-section-label">Quick access · your modules</div>
-      ${quickAccessGrid()}
+      ${quickAccessGrid(enabled)}
     </div>
     <div class="card mt-2">
       <div class="card-header"><h3>Live fleet snapshot</h3><span class="muted">${units.length} units</span></div>
       ${tableWrap(['Asset', 'Status', 'Speed', 'Fuel', 'Updated'], rows, 'No fleet units')}
     </div>`;
+
+    window.__dashPaint = () => paintDashboardCharts({
+      counts, alertList, trend, workshopKpis, driverStats, routeStats, intList, onlineCount, total,
+    });
+
+    return html;
   }
 
-  function metricCard(label, value, sub) {
+  function metricCard(label, value, sub, iconName) {
     return `<div class="metric-card">
+      ${iconName ? `<div class="metric-icon">${MamsIcons.get(iconName)}</div>` : ''}
       <div class="metric-label">${esc(label)}</div>
       <div class="metric-value">${esc(value)}</div>
       ${sub ? `<div class="metric-sub">${esc(sub)}</div>` : ''}
     </div>`;
+  }
+
+  function chartCardHtml(title, subtitle, canvasId) {
+    return `<div class="dash-widget chart-panel">
+      <div class="chart-panel-head">
+        <h4>${esc(title)}</h4>
+        ${subtitle ? `<span class="muted">${esc(subtitle)}</span>` : ''}
+      </div>
+      <div class="chart-box"><canvas id="${canvasId}"></canvas></div>
+    </div>`;
+  }
+
+  function fleetStatusSlices(counts) {
+    const c = counts || {};
+    const p = MamsCharts.palette();
+    return [
+      { label: 'Moving', value: c.moving || 0, color: p.fleet.moving },
+      { label: 'Idle', value: c.idle || 0, color: p.fleet.idle },
+      { label: 'Stopped', value: c.stopped || 0, color: p.fleet.stopped },
+      { label: 'Offline', value: c.offline || 0, color: p.fleet.offline },
+    ].filter((s) => s.value > 0);
+  }
+
+  function alertSeveritySlices(alertList) {
+    const p = MamsCharts.palette();
+    const buckets = { critical: 0, warning: 0, info: 0 };
+    (alertList || []).forEach((a) => {
+      const s = String(a.severity || 'info').toLowerCase();
+      if (s === 'critical' || s === 'emergency') buckets.critical += 1;
+      else if (s === 'warning') buckets.warning += 1;
+      else buckets.info += 1;
+    });
+    return [
+      { label: 'Critical', value: buckets.critical, color: p.severity.critical },
+      { label: 'Warning', value: buckets.warning, color: p.severity.warning },
+      { label: 'Info', value: buckets.info, color: p.severity.info },
+    ].filter((s) => s.value > 0);
+  }
+
+  /** Error-state banner mirrors React WialonContextBanner (errorOnly variant). */
+  function wialonBannerHtml(ctx) {
+    if (!ctx || !ctx.configured || ctx.connected) return '';
+    return `<div class="wialon-banner wialon-banner--error">
+      <span class="wialon-banner-icon">${MamsIcons.get('Satellite')}</span>
+      <span>Telematics is configured but not connected${ctx.lastError ? ': ' + esc(ctx.lastError) : '.'} Contact your account manager to restore the connection.</span>
+    </div>`;
+  }
+
+  function wialonSummaryHtml(ctx) {
+    if (!ctx || !ctx.connected) return '';
+    return `<div class="wialon-banner wialon-banner--ok">
+      <span class="wialon-banner-icon">${MamsIcons.get('Satellite')}</span>
+      <span><strong>${esc(ctx.accountName || 'Connected account')}</strong></span>
+      ${ctx.accountTier ? `<span class="badge badge-brand">${esc(ctx.accountTier)}</span>` : ''}
+      ${ctx.unitCount != null ? `<span class="muted">${esc(ctx.unitCount)} units on this account</span>` : ''}
+    </div>`;
+  }
+
+  /** Paints Chart.js canvases into the dashboard HTML after it is in the DOM. */
+  function paintDashboardCharts(data) {
+    if (typeof Chart === 'undefined') return;
+    const { counts, alertList, trend, workshopKpis, driverStats, routeStats, intList, onlineCount, total } = data;
+    const p = MamsCharts.palette();
+
+    const fleetSlices = fleetStatusSlices(counts);
+    if (fleetSlices.length && document.getElementById('dash-chart-fleet-status')) {
+      MamsCharts.doughnut('dash-chart-fleet-status', fleetSlices.map((s) => s.label), fleetSlices.map((s) => s.value), fleetSlices.map((s) => s.color));
+    }
+
+    if (document.getElementById('dash-chart-connection')) {
+      const offline = Math.max(0, (total || 0) - (onlineCount || 0));
+      const connSlices = [
+        { label: 'Online', value: onlineCount || 0, color: p.primary },
+        { label: 'Offline', value: offline, color: p.fleet.offline },
+      ].filter((s) => s.value > 0);
+      if (connSlices.length) {
+        MamsCharts.doughnut('dash-chart-connection', connSlices.map((s) => s.label), connSlices.map((s) => s.value), connSlices.map((s) => s.color));
+      }
+    }
+
+    const severitySlices = alertSeveritySlices(alertList);
+    if (severitySlices.length && document.getElementById('dash-chart-alert-severity')) {
+      MamsCharts.doughnut('dash-chart-alert-severity', severitySlices.map((s) => s.label), severitySlices.map((s) => s.value), severitySlices.map((s) => s.color));
+    }
+
+    if (document.getElementById('dash-chart-fuel-trend')) {
+      const rows = (trend || []).slice(-8);
+      MamsCharts.composed('dash-chart-fuel-trend', rows.map((r) => String(r.month || r.name || '')),
+        { label: 'Filled (L)', data: rows.map((r) => Number(r.filled) || 0) },
+        { label: 'Consumed (L)', data: rows.map((r) => Number(r.consumed) || 0) },
+        { bar: p.primary, line: p.accent });
+    }
+
+    if (document.getElementById('dash-chart-workshop')) {
+      const w = workshopKpis || {};
+      const rows = [
+        { label: 'Pending', value: Number(w.pendingMaintenance) || 0, color: p.warn },
+        { label: 'Done (mo)', value: Number(w.completedThisMonth) || 0, color: p.primary },
+        { label: 'Breakdowns', value: Number(w.openBreakdowns) || 0, color: p.danger },
+      ].filter((r) => r.value > 0);
+      if (rows.length) {
+        MamsCharts.bar('dash-chart-workshop', rows.map((r) => r.label), [{ label: 'Workshop', data: rows.map((r) => r.value), backgroundColor: rows.map((r) => r.color) }]);
+      }
+    }
+
+    if (document.getElementById('dash-chart-driver-duty')) {
+      const d = driverStats || {};
+      const rows = [
+        { label: 'Available', value: Number(d.available) || 0, color: p.fleet.moving },
+        { label: 'Driving', value: Number(d.driving) || 0, color: p.primary },
+        { label: 'Off duty', value: Number(d.offDuty) || 0, color: p.fleet.offline },
+      ].filter((r) => r.value > 0);
+      if (rows.length) {
+        MamsCharts.doughnut('dash-chart-driver-duty', rows.map((r) => r.label), rows.map((r) => r.value), rows.map((r) => r.color));
+      }
+    }
+
+    if (document.getElementById('dash-chart-route-pipeline')) {
+      const r = routeStats || {};
+      const rows = [
+        { label: 'Scheduled', value: Number(r.scheduled) || 0, color: p.fleet.idle },
+        { label: 'In progress', value: Number(r.inProgress) || 0, color: p.primary },
+        { label: 'Completed', value: Number(r.completed) || 0, color: p.accent },
+      ].filter((row) => row.value > 0);
+      if (rows.length) {
+        MamsCharts.bar('dash-chart-route-pipeline', rows.map((row) => row.label), [{ label: 'Routes', data: rows.map((row) => row.value), backgroundColor: rows.map((row) => row.color) }]);
+      }
+    }
+
+    if (document.getElementById('dash-chart-sources')) {
+      const list = intList || [];
+      if (list.length) {
+        MamsCharts.bar('dash-chart-sources', list.map((i) => String(i.sourceType || '—')),
+          [{ label: 'Connected', data: list.map((i) => (i.connected ? 1 : 0)), backgroundColor: p.primary }]);
+      }
+    }
   }
 
   async function renderMonitoring() {
@@ -730,6 +1001,23 @@
   const content = document.getElementById('app-content');
   if (!content) return;
 
+  let currentUserRole = '';
+  let currentTenantName = 'MAMS';
+
+  /** Sets static topbar/menu icons from MamsIcons — parity with React ICON_MAP. */
+  function initTopbarIcons() {
+    const menu = document.getElementById('menu-toggle');
+    if (menu) menu.innerHTML = MamsIcons.get('Menu');
+    const refresh = document.getElementById('refresh-btn');
+    if (refresh) refresh.innerHTML = MamsIcons.get('RefreshCw');
+    const bell = document.getElementById('alerts-bell-icon');
+    if (bell) bell.innerHTML = MamsIcons.get('Bell');
+    const settingsLink = document.getElementById('user-settings-link');
+    if (settingsLink) settingsLink.innerHTML = `<span class="dropdown-item-icon">${MamsIcons.get('Settings')}</span> Settings`;
+    const logoutBtn = document.getElementById('logout-btn');
+    if (logoutBtn) logoutBtn.innerHTML = `<span class="dropdown-item-icon">${MamsIcons.get('LogOut')}</span> Sign out`;
+  }
+
   document.getElementById('logout-btn')?.addEventListener('click', () => {
     MamsApi.clearAuth();
     location.href = '/auth/login';
@@ -812,12 +1100,33 @@
     } catch (_) { /* ignore */ }
   }
 
+  /** Updates the topbar status pill + footer connection line from integration status. */
+  function updateFooter(list) {
+    const footer = document.getElementById('app-footer');
+    const tenantEl = document.getElementById('app-footer-tenant');
+    const statusEl = document.getElementById('app-footer-status');
+    if (!footer) return;
+    if (!list.length) { footer.hidden = true; return; }
+    const allConnected = list.every((i) => i.connected);
+    const anyConnected = list.some((i) => i.connected);
+    if (tenantEl) tenantEl.textContent = currentTenantName;
+    if (statusEl) {
+      statusEl.textContent = allConnected
+        ? 'All integrations connected'
+        : anyConnected
+          ? 'Some integrations connected'
+          : 'Integrations offline';
+    }
+    footer.hidden = false;
+  }
+
   async function refreshStatusPill() {
     try {
       const integrations = await MamsApi.api('/client/integrations/status');
       const list = Array.isArray(integrations) ? integrations : [];
       const pill = document.getElementById('status-pill');
       const text = document.getElementById('status-pill-text');
+      updateFooter(list);
       if (!pill || !text || !list.length) { if (pill) pill.hidden = true; return; }
       const allConnected = list.every((i) => i.connected);
       const anyConnected = list.some((i) => i.connected);
@@ -829,6 +1138,9 @@
 
   /* ── Post-render module hook + event delegation ── */
   async function loadModule() {
+    MamsCharts.destroyAll();
+    window.__dashPaint = null;
+
     const mod = getModule();
     const route = ROUTES[mod];
     setActiveNav(mod);
@@ -841,6 +1153,14 @@
 
     const render = RENDERERS[mod] || RENDERERS.dashboard;
     content.innerHTML = await render();
+
+    if (mod === 'dashboard' && typeof window.__dashPaint === 'function') {
+      const paint = window.__dashPaint;
+      requestAnimationFrame(() => {
+        paint();
+        window.__dashPaint = null;
+      });
+    }
 
     if (mod === 'monitoring') {
       const snap = await MamsApi.api('/client/fleet/snapshot').catch(() => ({ units: [] }));
@@ -1048,6 +1368,7 @@
       return;
     }
 
+    initTopbarIcons();
     content.innerHTML = loader();
 
     try {
@@ -1062,24 +1383,39 @@
         return;
       }
 
+      currentUserRole = user.role || '';
+      const isAdmin = isAdminRole(currentUserRole);
+
       let tenantName = 'MAMS';
       try {
         const tenant = await MamsApi.api('/client/tenant');
+        const branding = MamsBranding.apply(tenant || {});
         if (tenant?.name) tenantName = tenant.name;
+        currentTenantName = tenantName;
+
         const nameEl = document.getElementById('tenant-name');
         if (nameEl && tenant?.name) nameEl.textContent = tenant.name;
         const slugEl = document.getElementById('tenant-slug');
         if (slugEl && tenant?.slug) slugEl.textContent = tenant.slug;
         const topbarName = document.getElementById('topbar-tenant-name');
         if (topbarName && tenant?.name) topbarName.textContent = tenant.name;
-        document.title = tenant?.name ? `${tenant.name} — MAMS` : 'MAMS';
-        if (tenant?.logoUrl) {
-          const logo = document.getElementById('tenant-logo');
-          if (logo) { logo.src = tenant.logoUrl; logo.hidden = false; }
+        document.title = `${branding.name} — Fleet Management`;
+
+        const logo = document.getElementById('tenant-logo');
+        if (logo && branding.logoUrl) { logo.src = branding.logoUrl; logo.hidden = false; }
+        const topbarLogo = document.getElementById('topbar-logo');
+        if (topbarLogo && branding.logoUrl) topbarLogo.src = branding.logoUrl;
+
+        const poweredEl = document.getElementById('sidebar-powered');
+        if (poweredEl) {
+          poweredEl.textContent = branding.usesMamsLogo
+            ? 'Mimito Asset Management System'
+            : 'Powered by MAMS';
         }
       } catch (_) {}
 
       setUserChip(user, tenantName);
+      await initClientNav(isAdmin);
       refreshAlertsBell();
       refreshStatusPill();
       setInterval(refreshAlertsBell, 60000);
