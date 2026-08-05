@@ -43,11 +43,6 @@ function route_match(string $pattern, string $path, ?array &$params = null): boo
 }
 
 try {
-    // Health
-    if ($method === 'GET' && ($apiPath === '/health' || $apiPath === '' && isset($_GET['health']))) {
-        // also support /api/../health via separate rewrite — handled in site index too
-    }
-
     // Auth
     if ($apiPath === '/auth/login' && $method === 'POST') {
         AuthController::login();
@@ -76,7 +71,7 @@ try {
         PublicController::loginTrustLogos();
     }
 
-    // Client
+    // Client — core
     if ($apiPath === '/client/tenant' && $method === 'GET') {
         ClientController::tenant();
     }
@@ -95,6 +90,12 @@ try {
     if ($apiPath === '/client/alerts' && $method === 'GET') {
         ClientController::alerts();
     }
+    if (route_match('/client/alerts/:id/acknowledge', $apiPath, $p) && $method === 'POST') {
+        ClientController::alertAcknowledge($p['id']);
+    }
+    if ($apiPath === '/client/integrations/status' && $method === 'GET') {
+        ClientController::integrationsStatus();
+    }
     if ($apiPath === '/client/preferences' && $method === 'GET') {
         ClientController::preferencesGet();
     }
@@ -102,24 +103,95 @@ try {
         ClientController::preferencesPut();
     }
 
-    // Domain stubs
+    // Client — tenant users
+    if ($apiPath === '/client/users' && $method === 'GET') {
+        ClientController::clientUsers();
+    }
+    if ($apiPath === '/client/users' && $method === 'POST') {
+        ClientController::clientUsersCreate();
+    }
+    if (route_match('/client/users/:id', $apiPath, $p) && $method === 'PATCH') {
+        ClientController::clientUsersPatch($p['id']);
+    }
+    if (route_match('/client/users/:id/reset-password', $apiPath, $p) && $method === 'POST') {
+        ClientController::clientUsersResetPassword($p['id']);
+    }
+
+    // Client — domain modules
     if ($apiPath === '/client/drivers' && $method === 'GET') {
         DomainController::drivers();
+    }
+    if ($apiPath === '/client/drivers' && $method === 'POST') {
+        DomainController::driversCreate();
+    }
+    if ($apiPath === '/client/drivers/stats' && $method === 'GET') {
+        DomainController::driversStats();
+    }
+    if (route_match('/client/drivers/:id', $apiPath, $p) && $method === 'PATCH') {
+        DomainController::driversPatch($p['id']);
+    }
+    if (route_match('/client/drivers/:id', $apiPath, $p) && $method === 'DELETE') {
+        DomainController::driversDelete($p['id']);
     }
     if ($apiPath === '/client/routes' && $method === 'GET') {
         DomainController::routes();
     }
+    if ($apiPath === '/client/routes/stats' && $method === 'GET') {
+        DomainController::routesStats();
+    }
+    if ($apiPath === '/client/routes/trips' && $method === 'GET') {
+        DomainController::routesTrips();
+    }
     if ($apiPath === '/client/fuel/transactions' && $method === 'GET') {
         DomainController::fuelTransactions();
+    }
+    if ($apiPath === '/client/fuel/kpis' && $method === 'GET') {
+        DomainController::fuelKpis();
+    }
+    if ($apiPath === '/client/fuel/monthly-trend' && $method === 'GET') {
+        DomainController::fuelMonthlyTrend();
+    }
+    if ($apiPath === '/client/fuel/sync-status' && $method === 'GET') {
+        DomainController::fuelSyncStatus();
     }
     if ($apiPath === '/client/workshop/kpis' && $method === 'GET') {
         DomainController::workshopKpis();
     }
+    if ($apiPath === '/client/workshop/inspections' && $method === 'GET') {
+        DomainController::workshopInspections();
+    }
+    if ($apiPath === '/client/workshop/maintenance' && $method === 'GET') {
+        DomainController::workshopMaintenance();
+    }
+    if ($apiPath === '/client/workshop/breakdowns' && $method === 'GET') {
+        DomainController::workshopBreakdowns();
+    }
+    if ($apiPath === '/client/workshop/mechanics' && $method === 'GET') {
+        DomainController::workshopMechanics();
+    }
     if ($apiPath === '/client/geofences' && $method === 'GET') {
         DomainController::geofences();
     }
+    if ($apiPath === '/client/geofences' && $method === 'POST') {
+        DomainController::geofencesCreate();
+    }
+    if (route_match('/client/geofences/:id', $apiPath, $p) && $method === 'DELETE') {
+        DomainController::geofencesDelete($p['id']);
+    }
+    if ($apiPath === '/client/emissions/violations' && $method === 'GET') {
+        DomainController::emissionsViolations();
+    }
     if ($apiPath === '/client/emissions/metrics' && $method === 'GET') {
-        DomainController::emissions();
+        DomainController::emissionsMetrics();
+    }
+    if ($apiPath === '/client/commands/history' && $method === 'GET') {
+        DomainController::commandsHistory();
+    }
+    if ($apiPath === '/client/reports/types' && $method === 'GET') {
+        DomainController::reportTypes();
+    }
+    if (route_match('/client/reports/data/:type', $apiPath, $p) && $method === 'GET') {
+        DomainController::reportsData($p['type']);
     }
 
     // Admin
@@ -129,14 +201,53 @@ try {
     if ($apiPath === '/admin/system/health' && $method === 'GET') {
         AdminController::systemHealth();
     }
+    if ($apiPath === '/admin/system/settings' && $method === 'GET') {
+        AdminController::systemSettings();
+    }
+    if ($apiPath === '/admin/marketplace' && $method === 'GET') {
+        AdminController::marketplace();
+    }
+    if ($apiPath === '/admin/audit' && $method === 'GET') {
+        AdminController::auditLog();
+    }
+    if ($apiPath === '/admin/system-users' && $method === 'GET') {
+        AdminController::systemUsers();
+    }
     if ($apiPath === '/admin/tenants' && $method === 'GET') {
         AdminController::tenants();
+    }
+    if ($apiPath === '/admin/tenants' && $method === 'POST') {
+        AdminController::tenantCreate();
     }
     if (route_match('/admin/tenants/:id', $apiPath, $p) && $method === 'GET') {
         AdminController::tenant($p['id']);
     }
+    if (route_match('/admin/tenants/:id', $apiPath, $p) && $method === 'PATCH') {
+        AdminController::tenantPatch($p['id']);
+    }
+    if (route_match('/admin/tenants/:id/modules', $apiPath, $p) && $method === 'GET') {
+        AdminController::tenantModules($p['id']);
+    }
+    if (route_match('/admin/tenants/:id/modules', $apiPath, $p) && $method === 'PUT') {
+        AdminController::tenantModulesPut($p['id']);
+    }
+    if (route_match('/admin/tenants/:id/integrations', $apiPath, $p) && $method === 'GET') {
+        AdminController::tenantIntegrations($p['id']);
+    }
     if ($apiPath === '/admin/users' && $method === 'GET') {
         AdminController::users();
+    }
+    if (route_match('/admin/users/:id', $apiPath, $p) && $method === 'PATCH') {
+        AdminController::userPatch($p['id']);
+    }
+    if (route_match('/admin/users/:id/reset-password', $apiPath, $p) && $method === 'POST') {
+        AdminController::userResetPassword($p['id']);
+    }
+    if (route_match('/admin/system/settings/:key', $apiPath, $p) && $method === 'PUT') {
+        AdminController::systemSettingPut($p['key']);
+    }
+    if (route_match('/admin/marketplace/:key', $apiPath, $p) && $method === 'PATCH') {
+        AdminController::marketplacePatch($p['key']);
     }
 
     Response::error('Not found', 404);

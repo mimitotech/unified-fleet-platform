@@ -1,7 +1,7 @@
 <?php
 /**
  * MAMS PHP front controller — HTML pages + /health
- * Document root should be this `site/` folder on StackCP.
+ * Document root should be the repo clone root on StackCP.
  */
 declare(strict_types=1);
 

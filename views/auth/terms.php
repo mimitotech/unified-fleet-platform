@@ -6,6 +6,7 @@
     <button id="accept-terms" class="btn" style="margin-top:1rem;width:100%">I accept</button>
   </div>
 </div>
+<script src="/assets/js/api.js"></script>
 <script>
 (async () => {
   if (!MamsApi.getToken()) location.href = '/auth/login';
