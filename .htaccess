@@ -1,5 +1,26 @@
-# Protect VCS / secrets when clone sits under the document root.
-RedirectMatch 404 /\.git
-RedirectMatch 404 /\.cpanel\.yml$
-RedirectMatch 404 /\.env
-RedirectMatch 404 /node_modules
+RewriteEngine On
+RewriteBase /
+
+# Block secrets & non-public trees
+RewriteRule ^\.env - [F,L]
+RewriteRule ^lib/ - [F,L]
+RewriteRule ^legacy/ - [F,L]
+RewriteRule ^deploy/ - [F,L]
+RewriteRule ^database/ - [F,L]
+RewriteRule ^migrations/ - [F,L]
+RewriteRule ^docs/ - [F,L]
+RewriteRule ^bootstrap\.php$ - [F,L]
+
+# Health
+RewriteRule ^health$ index.php?route=health [L,QSA]
+
+# API
+RewriteRule ^api/(.*)$ api/index.php [QSA,L]
+
+# Static files
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Front controller
+RewriteRule ^ index.php [QSA,L]

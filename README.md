@@ -1,50 +1,42 @@
 # Unified Fleet Platform / MAMS
 
-Multi-tenant fleet management unifying **Wialon**, **LocoNav**, and **TrackSolid Pro**.
+PHP + HTML + CSS + JavaScript on Apache (StackCP). Same MySQL database and domain.
 
-## Standard layout (Git clone = app root)
+## Layout (document root = clone root)
 
 ```
 repos/mams/                 ← Git clone AND domain document root
-  hostinger-start.mjs       ← entry file
-  package.json
-  ecosystem.config.js
-  backend/
-  frontend/
-  packages/
+  index.php                 ← pages + /health
+  .htaccess
   .env                      ← create on server (not in git)
+  bootstrap.php
+  api/                      ← JSON API (/api/*)
+  assets/                   ← css, js, images
+  lib/                      ← PHP core
+  views/                    ← HTML templates
+  uploads/
+  database/                 ← SQL schema reference
+  deploy/                   ← deploy docs
+  legacy/                   ← old Node app (reference only, not served)
 ```
 
-## Production (StackCP + GitHub) — PHP site (current)
+## Production
 
 | Setting | Value |
 |---------|--------|
 | Domain | https://mams.mimitotracking.co.ug |
-| Git repo | https://github.com/mimitotech/unified-fleet-platform.git |
-| Clone path | `repos/mams` |
-| Document root | **`repos/mams/site`** |
-| Stack | PHP 8.1+ / HTML / CSS / JS (no Node build) |
+| GitHub | https://github.com/mimitotech/unified-fleet-platform.git |
+| Document root | `repos/mams` |
+| PHP | 8.1+ |
+| Database | `mamsdb-35303030746b` / user `nsamba` |
 | Branch | `master` |
-| Database | same MySQL: `mamsdb-35303030746b` / `nsamba` |
 
-**Deploy guide:** [`deploy/PHP_SITE_DEPLOY.md`](deploy/PHP_SITE_DEPLOY.md)
+Guide: [`deploy/PHP_SITE_DEPLOY.md`](deploy/PHP_SITE_DEPLOY.md)
 
-The legacy Node app (`hostinger-start.mjs`, `backend/`, `frontend/`) remains in the repo as reference while modules finish porting to `site/`.
-
-## Local development
+## Local
 
 ```bash
-cp .env.example .env
-npm install
-npm run dev
+cp .env.example .env   # set DB_* 
+# Point a local PHP 8.1+ vhost at this folder, or:
+php -S 127.0.0.1:8080
 ```
-
-- Frontend: http://localhost:5173  
-- API: http://localhost:3000/health  
-
-```bash
-npm run build          # production build
-node hostinger-start.mjs
-```
-
-Redis optional (`REDIS_DISABLED=1`).

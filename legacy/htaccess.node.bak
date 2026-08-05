@@ -1,0 +1,5 @@
+# Protect VCS / secrets when clone sits under the document root.
+RedirectMatch 404 /\.git
+RedirectMatch 404 /\.cpanel\.yml$
+RedirectMatch 404 /\.env
+RedirectMatch 404 /node_modules

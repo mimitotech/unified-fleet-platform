@@ -1,17 +1,16 @@
-# dependencies & builds
+# runtime
 node_modules/
 **/node_modules/
-# Keep production build outputs in git for StackCP (server often cannot build)
-# dist/ ignored except the three app packages below
 build/
 coverage/
 .turbo/
+uploads/*
+!uploads/.gitkeep
 
-# secrets & local env
+# secrets
 .env
 .env.local
 .env.*.local
-site/.env
 .env.platform.backup
 deploy/*.local.env
 deploy/hostinger.env
@@ -23,18 +22,14 @@ deploy/cpanel-clone-url.local.txt
 .DS_Store
 Thumbs.db
 
-# runtime uploads
-backend/uploads/**
-!backend/uploads/.gitkeep
-
-# local dumps / one-off scratch
-scripts/dump-*.mts
+# local dumps / bundles
 *.sql.bak
-
-# StackCP upload bundle (built locally)
+*.zip
 stackcp-bundle/
-mams-stackcp-upload.zip
 mamsmain/
-mamsmain.zip
-mams-dist-only.zip
 mams-stackcp-upload/
+
+# never publish legacy install trees
+legacy/node_modules/
+legacy/mamsmain/
+legacy/**/node_modules/

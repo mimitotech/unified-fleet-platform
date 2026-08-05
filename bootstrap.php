@@ -1,10 +1,11 @@
 <?php
 /**
  * MAMS PHP bootstrap — no Node, no build step.
+ * Document root = this directory (repo clone root).
  */
 declare(strict_types=1);
 
-define('SITE_ROOT', dirname(__DIR__));
+define('SITE_ROOT', __DIR__);
 
 require_once SITE_ROOT . '/lib/Env.php';
 require_once SITE_ROOT . '/lib/Database.php';
@@ -13,7 +14,6 @@ require_once SITE_ROOT . '/lib/Response.php';
 require_once SITE_ROOT . '/lib/Auth.php';
 
 Env::load(SITE_ROOT . '/.env');
-Env::load(dirname(SITE_ROOT) . '/.env'); // fallback: repo root .env
 
 date_default_timezone_set('UTC');
 

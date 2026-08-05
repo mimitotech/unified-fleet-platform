@@ -14,11 +14,6 @@ if ($path === '/') {
     $path = '/';
 }
 
-// Strip /site prefix if aliased
-if (str_starts_with($path, '/site/')) {
-    $path = substr($path, 5) ?: '/';
-}
-
 if ($route === 'health' || $path === '/health') {
     $ok = Database::ping();
     header('Content-Type: application/json; charset=utf-8');
