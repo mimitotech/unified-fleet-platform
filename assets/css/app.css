@@ -992,6 +992,7 @@ label > span { display: block; margin-bottom: 0.35rem; font-size: 0.8125rem; fon
 }
 .chart-panel-head h4 { margin: 0; font-size: 0.875rem; color: var(--brand-dark); }
 .chart-panel-head .muted { font-size: 0.7rem; white-space: nowrap; }
+.dash-widget-insight { font-size: 0.7rem; color: var(--muted); margin-top: 0.35rem; line-height: 1.25; }
 .chart-box { position: relative; height: 160px; width: 100%; }
 
 .wialon-banner {

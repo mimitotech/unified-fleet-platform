@@ -206,6 +206,9 @@
 
     const openAlerts = alertList.filter((a) => !a.acknowledged).length;
     const criticalAlerts = alertList.filter((a) => !a.acknowledged && ['critical', 'emergency'].includes(String(a.severity || '').toLowerCase())).length;
+    const acknowledgedAlerts = Math.max(0, (alertList.length || 0) - openAlerts);
+    const warningAlerts = alertList.filter((a) => String(a.severity || '').toLowerCase() === 'warning').length;
+    const infoAlerts = Math.max(0, (alertList.length || 0) - criticalAlerts - warningAlerts);
     const online = intList.filter((i) => i.connected).length;
     const moving = kpis.moving ?? counts.moving ?? 0;
     const idle = kpis.idle ?? counts.idle ?? 0;
@@ -243,26 +246,46 @@
 
     // Monitoring widget board (structure parity with legacy React dashboard)
     if (enabled.has('monitoring')) {
-      chartCards.push(chartCardHtml('Health check status', 'Live connection · freshness · fuel risk', 'dash-widget-health-check'));
-      chartCards.push(chartCardHtml('Connection status', 'Live online vs offline', 'dash-chart-connection'));
-      chartCards.push(chartCardHtml('Motion state', 'Live motion · ignition · not period-filtered', 'dash-widget-motion-state'));
-      chartCards.push(chartCardHtml('Fleet status', 'Moving · idle · stopped · offline', 'dash-chart-fleet-status'));
-      chartCards.push(chartCardHtml('Mileage', 'Live odometer total · not period-filtered', 'dash-widget-mileage'));
-      chartCards.push(chartCardHtml('Top units by mileage', 'Live odometer leaders · not period-filtered', 'dash-widget-top-mileage'));
-      chartCards.push(chartCardHtml('Fleet utilization', 'Moving + idle share · not period-filtered', 'dash-widget-fleet-utilization'));
-      chartCards.push(chartCardHtml('Geofences', 'Zones & boundaries (preview)', 'dash-widget-geofences'));
-      chartCards.push(chartCardHtml('Device battery', 'Battery health snapshot', 'dash-widget-device-battery'));
-      chartCards.push(chartCardHtml('Voltage level', 'Voltage distribution', 'dash-widget-voltage-level'));
+      chartCards.push(chartCardHtml(
+        'Health check status',
+        'Live connection · freshness · fuel risk',
+        'dash-widget-health-check',
+        `${moving} healthy · ${idle} watch · ${(counts.offline ?? 0)} offline`
+      ));
+      chartCards.push(chartCardHtml(
+        'Connection status',
+        'Live online vs offline',
+        'dash-chart-connection',
+        `${onlineCount}/${total} online now`
+      ));
+      chartCards.push(chartCardHtml(
+        'Motion state',
+        'Live motion · ignition · not period-filtered',
+        'dash-widget-motion-state',
+        `${moving} moving · ${idle} idle · ${(counts.stopped ?? 0)} stopped`
+      ));
+      chartCards.push(chartCardHtml(
+        'Fleet status',
+        'Moving · idle · stopped · offline',
+        'dash-chart-fleet-status',
+        `${(counts.moving ?? moving)} moving · ${(counts.idle ?? idle)} idle`
+      ));
+      chartCards.push(chartCardHtml('Mileage', 'Live odometer total · not period-filtered', 'dash-widget-mileage', 'No data yet (preview)'));
+      chartCards.push(chartCardHtml('Top units by mileage', 'Live odometer leaders · not period-filtered', 'dash-widget-top-mileage', 'No data yet (preview)'));
+      chartCards.push(chartCardHtml('Fleet utilization', 'Moving + idle share · not period-filtered', 'dash-widget-fleet-utilization', `${util}% utilization`));
+      chartCards.push(chartCardHtml('Geofences', 'Zones & boundaries (preview)', 'dash-widget-geofences', 'No data yet (preview)'));
+      chartCards.push(chartCardHtml('Device battery', 'Battery health snapshot', 'dash-widget-device-battery', 'No data yet (preview)'));
+      chartCards.push(chartCardHtml('Voltage level', 'Voltage distribution', 'dash-widget-voltage-level', 'No data yet (preview)'));
     }
 
     // Alerts widget board (structure parity with legacy React dashboard)
     if (enabled.has('alerts')) {
-      chartCards.push(chartCardHtml('Alerts trend', 'Last 24h alert volume', 'dash-widget-alerts-trend'));
-      chartCards.push(chartCardHtml('Alerts ack', 'Acknowledged vs unacknowledged', 'dash-widget-alerts-ack'));
-      chartCards.push(chartCardHtml('Alert severity', 'Critical · warning · info', 'dash-chart-alert-severity'));
-      chartCards.push(chartCardHtml('Alert types', 'By alert type', 'dash-widget-alerts-types'));
-      chartCards.push(chartCardHtml('Notifications', 'Latest notifications (preview)', 'dash-widget-notifications'));
-      chartCards.push(chartCardHtml('Speedings', 'Speeding events (preview)', 'dash-widget-speedings'));
+      chartCards.push(chartCardHtml('Alerts trend', 'Last 24h alert volume', 'dash-widget-alerts-trend', 'Live alert volume preview'));
+      chartCards.push(chartCardHtml('Alerts ack', 'Acknowledged vs unacknowledged', 'dash-widget-alerts-ack', `${openAlerts} open · ${acknowledgedAlerts} acknowledged`));
+      chartCards.push(chartCardHtml('Alert severity', 'Critical · warning · info', 'dash-chart-alert-severity', `${criticalAlerts} critical · ${warningAlerts} warning · ${infoAlerts} info`));
+      chartCards.push(chartCardHtml('Alert types', 'By alert type', 'dash-widget-alerts-types', 'Top types breakdown'));
+      chartCards.push(chartCardHtml('Notifications', 'Latest notifications (preview)', 'dash-widget-notifications', `${alertList.length} latest alerts`));
+      chartCards.push(chartCardHtml('Speedings', 'Speeding events (preview)', 'dash-widget-speedings', 'No data yet (preview)'));
     }
 
     // Fuel / Ops charts (what we already have data for)
@@ -328,12 +351,13 @@
     </div>`;
   }
 
-  function chartCardHtml(title, subtitle, canvasId) {
+  function chartCardHtml(title, subtitle, canvasId, insight) {
     return `<div class="dash-widget chart-panel">
       <div class="chart-panel-head">
         <h4>${esc(title)}</h4>
         ${subtitle ? `<span class="muted">${esc(subtitle)}</span>` : ''}
       </div>
+      ${insight ? `<div class="dash-widget-insight">${esc(insight)}</div>` : ''}
       <div class="chart-box"><canvas id="${canvasId}"></canvas></div>
     </div>`;
   }
