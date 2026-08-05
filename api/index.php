@@ -103,20 +103,35 @@ try {
     if ($apiPath === '/client/wialon/fleet' && $method === 'GET') {
         ClientController::wialonFleet();
     }
-    if (route_match('/client/wialon/units/:id', $apiPath, $p) && $method === 'GET') {
-        ClientController::wialonUnitDetail($p['id']);
-    }
     if (route_match('/client/wialon/units/:id/track', $apiPath, $p) && $method === 'GET') {
         ClientController::wialonUnitTrack($p['id']);
     }
+    if (route_match('/client/wialon/units/:id/sensors', $apiPath, $p) && $method === 'GET') {
+        ClientController::wialonUnitSensors($p['id']);
+    }
+    if (route_match('/client/wialon/units/:id/trips', $apiPath, $p) && $method === 'GET') {
+        ClientController::wialonUnitTrips($p['id']);
+    }
+    if (route_match('/client/wialon/units/:id', $apiPath, $p) && $method === 'GET') {
+        ClientController::wialonUnitDetail($p['id']);
+    }
     if ($apiPath === '/client/wialon/routes' && $method === 'GET') {
         ClientController::wialonRoutes();
+    }
+    if ($apiPath === '/client/wialon/geofences' && $method === 'GET') {
+        ClientController::wialonGeofences();
     }
     if ($apiPath === '/client/wialon/notifications' && $method === 'GET') {
         ClientController::wialonNotifications();
     }
     if ($apiPath === '/client/wialon/reports/templates' && $method === 'GET') {
         ClientController::wialonReportTemplates();
+    }
+    if ($apiPath === '/client/wialon/reports/exec' && $method === 'POST') {
+        ClientController::wialonReportExec();
+    }
+    if ($apiPath === '/client/wialon/fuel/live' && $method === 'GET') {
+        ClientController::wialonFuelLive();
     }
     if ($apiPath === '/client/wialon/commands' && $method === 'POST') {
         ClientController::wialonCommandSend();

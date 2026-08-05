@@ -232,4 +232,293 @@ final class WialonLive
         } while (count($all) < $total && $from < 20000);
         return $all;
     }
+
+    /** Geofence zones from linked account resources. @return array<int, array<string, mixed>> */
+    public static function listGeofences(string $tenantId, int $limit = 200): array
+    {
+        $creds = self::creds($tenantId);
+        $client = new WialonClient($creds['baseUrl']);
+        $flags = 0x1001; // BASE | ZONES
+        try {
+            $client->login($creds['token'], $creds['operateAs']);
+            $accountId = $creds['accountId'] ?? null;
+            $resources = self::searchAll($client, self::resourceSpec($accountId), $flags);
+            if (!$resources) {
+                $resources = self::searchAll($client, self::resourceSpec(null), $flags);
+            }
+            $zones = [];
+            foreach ($resources as $resource) {
+                $rid = (int) ($resource['id'] ?? 0);
+                $rname = (string) ($resource['nm'] ?? '');
+                $zl = is_array($resource['zl'] ?? null) ? $resource['zl'] : [];
+                try {
+                    $detail = $client->call('core/search_item', ['id' => $rid, 'flags' => $flags]);
+                    if (is_array($detail['item']['zl'] ?? null)) {
+                        $zl = $detail['item']['zl'];
+                    }
+                } catch (Throwable $e) {
+                    // keep list zl
+                }
+                foreach ($zl as $z) {
+                    if (!is_array($z) || empty($z['id'])) {
+                        continue;
+                    }
+                    $t = (int) ($z['t'] ?? 0);
+                    $center = null;
+                    if (is_array($z['b'] ?? null) && isset($z['b']['cen_y'], $z['b']['cen_x'])) {
+                        $center = ['lat' => (float) $z['b']['cen_y'], 'lng' => (float) $z['b']['cen_x']];
+                    }
+                    $zones[] = [
+                        'resourceId' => $rid,
+                        'resourceName' => $rname,
+                        'id' => (int) $z['id'],
+                        'name' => (string) ($z['n'] ?? ''),
+                        'type' => $t === 3 ? 'circle' : ($t === 2 ? 'polygon' : 'unknown'),
+                        'radius' => isset($z['w']) ? (float) $z['w'] : null,
+                        'center' => $center,
+                    ];
+                    if (count($zones) >= $limit) {
+                        return $zones;
+                    }
+                }
+            }
+            return $zones;
+        } finally {
+            $client->logout();
+        }
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    public static function unitSensors(string $tenantId, int $unitId): array
+    {
+        $creds = self::creds($tenantId);
+        $client = new WialonClient($creds['baseUrl']);
+        try {
+            $client->login($creds['token'], $creds['operateAs']);
+            $data = $client->call('unit/calc_last_message', [
+                'unitId' => $unitId,
+                'sensors' => [],
+                'flags' => 1,
+            ]);
+            $sensors = is_array($data['sensors'] ?? null) ? $data['sensors'] : [];
+            $out = [];
+            foreach ($sensors as $s) {
+                if (!is_array($s)) {
+                    continue;
+                }
+                $out[] = [
+                    'name' => (string) ($s['n'] ?? ''),
+                    'value' => $s['v'] ?? null,
+                    'unit' => $s['u'] ?? null,
+                    'type' => $s['t'] ?? null,
+                ];
+            }
+            return $out;
+        } finally {
+            $client->logout();
+        }
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    public static function unitTrips(string $tenantId, int $unitId, int $from, int $to): array
+    {
+        $creds = self::creds($tenantId);
+        $client = new WialonClient($creds['baseUrl']);
+        try {
+            $client->login($creds['token'], $creds['operateAs']);
+            $loadCount = 0;
+            try {
+                $load = $client->call('messages/load_interval', [
+                    'itemId' => $unitId,
+                    'timeFrom' => $from,
+                    'timeTo' => $to,
+                    'flags' => 1,
+                    'flagsMask' => 65281,
+                    'loadCount' => 1,
+                ]);
+                $loadCount = (int) ($load['count'] ?? 0);
+            } catch (Throwable $e) {
+                if (stripos($e->getMessage(), '1001') !== false || stripos($e->getMessage(), 'No messages') !== false) {
+                    return [];
+                }
+                throw $e;
+            }
+            if ($loadCount <= 0) {
+                try {
+                    $client->call('messages/unload', []);
+                } catch (Throwable $e) {
+                }
+                return [];
+            }
+            try {
+                $result = $client->call('unit/get_trips', [
+                    'itemId' => $unitId,
+                    'timeFrom' => $from,
+                    'timeTo' => $to,
+                    'msgsSource' => 1,
+                ]);
+                $raw = [];
+                if (isset($result[0]) || $result === []) {
+                    // numeric array wrapped oddly — Wialon sometimes returns list at top
+                }
+                if (isset($result['trips']) && is_array($result['trips'])) {
+                    $raw = $result['trips'];
+                } elseif (array_is_list($result)) {
+                    $raw = $result;
+                }
+                $out = [];
+                foreach ($raw as $trip) {
+                    if (!is_array($trip)) {
+                        continue;
+                    }
+                    $fromBlock = is_array($trip['from'] ?? null) ? $trip['from'] : [];
+                    $toBlock = is_array($trip['to'] ?? null) ? $trip['to'] : [];
+                    $t1 = (int) ($fromBlock['t'] ?? $trip['t1'] ?? $trip['tm'] ?? $trip['begin'] ?? 0);
+                    $t2 = (int) ($toBlock['t'] ?? $trip['t2'] ?? $trip['end'] ?? 0);
+                    $meters = (float) ($trip['m'] ?? $trip['distance'] ?? $trip['mileage'] ?? 0);
+                    $mileageKm = $meters > 0 ? ($meters > 500 ? $meters / 1000 : $meters) : 0;
+                    $out[] = [
+                        't1' => $t1,
+                        't2' => $t2,
+                        'mileage' => round($mileageKm, 2),
+                        'from' => $fromBlock,
+                        'to' => $toBlock,
+                    ];
+                }
+                return $out;
+            } finally {
+                try {
+                    $client->call('messages/unload', []);
+                } catch (Throwable $e) {
+                }
+            }
+        } finally {
+            $client->logout();
+        }
+    }
+
+    /**
+     * Simplified report exec — sync first, then poll briefly; return tables + sample rows.
+     * @return array<string, mixed>
+     */
+    public static function execReport(
+        string $tenantId,
+        int $reportResourceId,
+        int $reportTemplateId,
+        int $reportObjectId,
+        int $from,
+        int $to,
+        int $maxRows = 200
+    ): array {
+        $creds = self::creds($tenantId);
+        $client = new WialonClient($creds['baseUrl']);
+        try {
+            $client->login($creds['token'], $creds['operateAs']);
+            try {
+                $client->call('report/cleanup_result', []);
+            } catch (Throwable $e) {
+            }
+
+            $execParams = [
+                'reportResourceId' => $reportResourceId,
+                'reportTemplateId' => $reportTemplateId,
+                'reportObjectId' => $reportObjectId,
+                'reportObjectSecId' => 0,
+                'interval' => ['from' => $from, 'to' => $to, 'flags' => 0],
+            ];
+
+            $ready = false;
+            $result = [];
+            try {
+                $result = $client->call('report/exec_report', array_merge($execParams, ['remoteExec' => 0]));
+                $tables = $result['reportResult']['tables'] ?? ($result['tables'] ?? []);
+                if (is_array($tables) && ($tables || isset($result['reportResult']))) {
+                    $ready = true;
+                }
+            } catch (Throwable $e) {
+                $ready = false;
+            }
+
+            if (!$ready) {
+                try {
+                    $client->call('report/cleanup_result', []);
+                } catch (Throwable $e) {
+                }
+                $client->call('report/exec_report', array_merge($execParams, ['remoteExec' => 1]));
+                for ($attempt = 0; $attempt < 40; $attempt++) {
+                    $statusRes = $client->call('report/get_report_status', []);
+                    $code = (int) ($statusRes['status'] ?? 0);
+                    if ($code === 4) {
+                        $ready = true;
+                        break;
+                    }
+                    if ($code === 8 || $code === 16) {
+                        throw new RuntimeException($statusRes['error'] ?? ('Wialon report failed (status ' . $code . ')'));
+                    }
+                    usleep($attempt < 10 ? 200000 : 400000);
+                }
+                if (!$ready) {
+                    throw new RuntimeException('Wialon report timed out before completion');
+                }
+                $result = $client->call('report/apply_report_result', []);
+            }
+
+            $tables = $result['reportResult']['tables'] ?? ($result['tables'] ?? []);
+            if (!is_array($tables) || !$tables) {
+                try {
+                    $applied = $client->call('report/apply_report_result', []);
+                    $tables = $applied['reportResult']['tables'] ?? ($applied['tables'] ?? []);
+                } catch (Throwable $e) {
+                    $tables = [];
+                }
+            }
+
+            $outTables = [];
+            foreach (array_values($tables) as $tableIndex => $meta) {
+                if (!is_array($meta)) {
+                    continue;
+                }
+                $totalRows = (int) ($meta['rows'] ?? 0);
+                $fetchTo = min($totalRows, $maxRows);
+                $rows = [];
+                if ($fetchTo > 0) {
+                    try {
+                        $rowData = $client->call('report/get_result_rows', [
+                            'tableIndex' => $tableIndex,
+                            'indexFrom' => 0,
+                            'indexTo' => $fetchTo - 1,
+                        ]);
+                        if (is_array($rowData)) {
+                            $rows = isset($rowData['rows']) && is_array($rowData['rows'])
+                                ? $rowData['rows']
+                                : (array_is_list($rowData) ? $rowData : []);
+                        }
+                    } catch (Throwable $e) {
+                        $rows = [];
+                    }
+                }
+                $outTables[] = [
+                    'index' => $tableIndex,
+                    'name' => (string) ($meta['name'] ?? $meta['label'] ?? ('Table ' . $tableIndex)),
+                    'rows' => $totalRows,
+                    'header' => $meta['header'] ?? ($meta['columns'] ?? null),
+                    'sample' => array_slice($rows, 0, $maxRows),
+                ];
+            }
+
+            try {
+                $client->call('report/cleanup_result', []);
+            } catch (Throwable $e) {
+            }
+
+            return [
+                'tables' => $outTables,
+                'tableCount' => count($outTables),
+                'from' => $from,
+                'to' => $to,
+            ];
+        } finally {
+            $client->logout();
+        }
+    }
 }

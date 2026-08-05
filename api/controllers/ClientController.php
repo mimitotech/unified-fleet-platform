@@ -938,6 +938,123 @@ class ClientController
         Response::success(['id' => $logId, 'status' => $status, 'response' => $responsePayload]);
     }
 
+    /** GET /client/wialon/geofences */
+    public static function wialonGeofences(): void
+    {
+        $tenantId = self::requireTenantId();
+        require_once __DIR__ . '/../../lib/WialonLive.php';
+        try {
+            $geofences = WialonLive::listGeofences($tenantId);
+            Response::success(['geofences' => $geofences, 'count' => count($geofences)]);
+        } catch (Throwable $e) {
+            error_log('ClientController wialonGeofences: ' . $e->getMessage());
+            Response::success(['geofences' => [], 'count' => 0, 'error' => $e->getMessage()]);
+        }
+    }
+
+    /** GET /client/wialon/units/:id/sensors */
+    public static function wialonUnitSensors(?string $id = null): void
+    {
+        $tenantId = self::requireTenantId();
+        $unitId = (int) ($id ?? 0);
+        if ($unitId <= 0) {
+            Response::error('Unit id required', 400);
+            return;
+        }
+        require_once __DIR__ . '/../../lib/WialonLive.php';
+        try {
+            $sensors = WialonLive::unitSensors($tenantId, $unitId);
+            Response::success(['unitId' => $unitId, 'sensors' => $sensors]);
+        } catch (Throwable $e) {
+            error_log('ClientController wialonUnitSensors: ' . $e->getMessage());
+            Response::success(['unitId' => $unitId, 'sensors' => [], 'error' => $e->getMessage()]);
+        }
+    }
+
+    /** GET /client/wialon/units/:id/trips */
+    public static function wialonUnitTrips(?string $id = null): void
+    {
+        $tenantId = self::requireTenantId();
+        $unitId = (int) ($id ?? 0);
+        if ($unitId <= 0) {
+            Response::error('Unit id required', 400);
+            return;
+        }
+        $from = (int) ($_GET['from'] ?? (time() - 86400));
+        $to = (int) ($_GET['to'] ?? time());
+        require_once __DIR__ . '/../../lib/WialonLive.php';
+        try {
+            $trips = WialonLive::unitTrips($tenantId, $unitId, $from, $to);
+            Response::success([
+                'unitId' => $unitId,
+                'trips' => $trips,
+                'count' => count($trips),
+                'from' => $from,
+                'to' => $to,
+            ]);
+        } catch (Throwable $e) {
+            error_log('ClientController wialonUnitTrips: ' . $e->getMessage());
+            Response::success(['unitId' => $unitId, 'trips' => [], 'count' => 0, 'error' => $e->getMessage()]);
+        }
+    }
+
+    /** GET /client/wialon/fuel/live — live fuel levels from fleet snapshot */
+    public static function wialonFuelLive(): void
+    {
+        $tenantId = self::requireTenantId();
+        require_once __DIR__ . '/../../lib/WialonFleet.php';
+        $live = WialonFleet::tryLiveSnapshot($tenantId);
+        if (!$live) {
+            Response::success(['units' => [], 'count' => 0, 'live' => false]);
+            return;
+        }
+        $units = [];
+        foreach ($live['units'] ?? [] as $u) {
+            $units[] = [
+                'id' => $u['id'] ?? null,
+                'wialonId' => $u['wialonId'] ?? null,
+                'name' => $u['name'] ?? null,
+                'plate' => $u['plate'] ?? null,
+                'status' => $u['status'] ?? null,
+                'fuelLevel' => $u['fuelLevel'] ?? null,
+                'mileage' => $u['mileage'] ?? null,
+                'battery' => WialonFleet::unitParam($u, 'battery'),
+                'voltage' => WialonFleet::unitParam($u, 'pwr_ext', 'ext_voltage', 'external_voltage', 'battery_voltage', 'pwr_int'),
+            ];
+        }
+        Response::success([
+            'units' => $units,
+            'count' => count($units),
+            'live' => true,
+            'fetchedAt' => $live['fetchedAt'] ?? gmdate('c'),
+        ]);
+    }
+
+    /** POST /client/wialon/reports/exec */
+    public static function wialonReportExec(): void
+    {
+        $tenantId = self::requireTenantId();
+        $body = Auth::jsonBody();
+        $resourceId = (int) ($body['reportResourceId'] ?? $body['resourceId'] ?? 0);
+        $templateId = (int) ($body['reportTemplateId'] ?? $body['templateId'] ?? 0);
+        $objectId = (int) ($body['reportObjectId'] ?? $body['objectId'] ?? 0);
+        $from = (int) ($body['from'] ?? (time() - 86400));
+        $to = (int) ($body['to'] ?? time());
+        $maxRows = (int) ($body['maxRows'] ?? 200);
+        if ($resourceId <= 0 || $templateId <= 0 || $objectId <= 0) {
+            Response::error('reportResourceId, reportTemplateId, and reportObjectId required', 400);
+            return;
+        }
+        require_once __DIR__ . '/../../lib/WialonLive.php';
+        try {
+            $result = WialonLive::execReport($tenantId, $resourceId, $templateId, $objectId, $from, $to, max(50, min(500, $maxRows)));
+            Response::success($result);
+        } catch (Throwable $e) {
+            error_log('ClientController wialonReportExec: ' . $e->getMessage());
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
     /** GET /client/integrations/status */
     public static function integrationsStatus(): void
     {

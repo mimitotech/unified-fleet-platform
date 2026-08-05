@@ -809,7 +809,7 @@
     const rows = units.map((u) => {
       const batt = unitParam(u, 'battery');
       const km = Number(u.mileage) > 0 ? `${Math.round(Number(u.mileage)).toLocaleString()} km` : '—';
-      return `<tr class="row-clickable" data-action="open-unit" data-id="${esc(u.id)}" data-lat="${u.position?.lat ?? ''}" data-lng="${u.position?.lng ?? ''}" data-name="${esc(u.name)}">
+      return `<tr class="row-clickable" data-action="open-unit" data-id="${esc(u.wialonId || u.id)}" data-lat="${u.position?.lat ?? ''}" data-lng="${u.position?.lng ?? ''}" data-name="${esc(u.name)}">
       <td><strong>${esc(u.name)}</strong>${u.plate ? `<div class="muted">${esc(u.plate)}</div>` : ''}</td>
       <td>${statusBadge(u.status)}</td>
       <td>${u.position ? Number(u.position.speed || 0).toFixed(0) + ' km/h' : '—'}</td>
@@ -885,18 +885,20 @@
   }
 
   async function renderFuel() {
-    const [data, monthly] = await Promise.all([
+    const [data, monthly, liveFuel] = await Promise.all([
       MamsApi.api('/client/fuel/transactions').catch(() => ({ transactions: [], kpis: {} })),
       MamsApi.api('/client/fuel/monthly-trend').catch(() => []),
+      MamsApi.api('/client/wialon/fuel/live').catch(() => ({ units: [], live: false })),
     ]);
     const txs = data.transactions || (Array.isArray(data) ? data : []);
     const kpis = data.kpis || {};
     const trend = Array.isArray(monthly) ? monthly : [];
+    const liveUnits = liveFuel.units || [];
     const params = new URLSearchParams(location.search);
     const tab = (params.get('fuelTab') || 'all').toLowerCase();
     const fills = txs.filter((t) => Number(t.filled) > 0);
     const drains = txs.filter((t) => Number(t.fuelUsed || t.fuel_used) > 0 && !(Number(t.filled) > 0));
-    const shown = tab === 'fills' ? fills : tab === 'drains' ? drains : txs;
+    const shown = tab === 'fills' ? fills : tab === 'drains' ? drains : tab === 'live' ? [] : txs;
 
     const rows = shown.slice(0, 100).map((t) => `<tr>
       <td>${fmtDate(t.timestamp ? t.timestamp * 1000 : t.date)}</td>
@@ -907,29 +909,44 @@
       <td class="muted">${t.mileage != null ? esc(Math.round(Number(t.mileage))) + ' km' : '—'}</td>
     </tr>`).join('');
 
+    const liveRows = liveUnits.slice(0, 80).map((u) => `<tr>
+      <td><strong>${esc(u.name)}</strong>${u.plate ? `<div class="muted">${esc(u.plate)}</div>` : ''}</td>
+      <td>${statusBadge(u.status)}</td>
+      <td>${u.fuelLevel != null ? esc(Math.round(u.fuelLevel)) + '%' : '—'}</td>
+      <td class="muted">${u.mileage != null ? esc(Math.round(Number(u.mileage))).toLocaleString() + ' km' : '—'}</td>
+      <td>${u.battery != null ? esc(Math.round(u.battery)) + '%' : '—'}</td>
+      <td>${u.voltage != null ? esc(Math.round(u.voltage * 10) / 10) + ' V' : '—'}</td>
+    </tr>`).join('');
+
     const trendRows = trend.slice(-8).map((m) => `<tr>
       <td>${esc(m.month)}</td>
       <td>${esc(m.filled)} L</td>
       <td>${esc(m.consumed)} L</td>
     </tr>`).join('');
 
-    const banner = txs.length > 0
-      ? `<div class="banner banner-info">Showing ${shown.length} of ${txs.length} fuel events for ${esc(data.from || '')} – ${esc(data.to || '')}.</div>`
-      : integrationBanner('Wialon fuel reports');
+    const banner = liveFuel.live
+      ? `<div class="banner banner-success">Live Wialon fuel levels available · ${liveUnits.length} units</div>`
+      : (txs.length > 0
+        ? `<div class="banner banner-info">Showing fuel events for ${esc(data.from || '')} – ${esc(data.to || '')}.</div>`
+        : integrationBanner('Wialon fuel reports'));
 
     return `${banner}
     <div class="kpi-grid">
       ${kpi('Filled', (kpis.totalFilled ?? 0) + ' L')}
       ${kpi('Consumed', (kpis.totalConsumed ?? 0) + ' L')}
       ${kpi('Avg L/100km', kpis.avgConsumptionL100km ?? 0)}
-      ${kpi('Transactions', kpis.transactionCount ?? txs.length)}
+      ${kpi('Live units', liveUnits.length)}
     </div>
     <div class="tab-bar mt-2">
       <a class="tab ${tab === 'all' ? 'active' : ''}" href="/app/fuel?fuelTab=all">All (${txs.length})</a>
       <a class="tab ${tab === 'fills' ? 'active' : ''}" href="/app/fuel?fuelTab=fills">Fills (${fills.length})</a>
       <a class="tab ${tab === 'drains' ? 'active' : ''}" href="/app/fuel?fuelTab=drains">Consumption (${drains.length})</a>
+      <a class="tab ${tab === 'live' ? 'active' : ''}" href="/app/fuel?fuelTab=live">Live levels (${liveUnits.length})</a>
     </div>
-    <div class="grid-main-side mt-2">
+    ${tab === 'live' ? `<div class="card mt-2">
+      <div class="card-header"><h3>Live fuel / battery</h3><span class="badge ${liveFuel.live ? 'badge-success' : 'badge-inactive'}">${liveFuel.live ? 'Live' : 'Offline'}</span></div>
+      ${tableWrap(['Asset', 'Status', 'Fuel', 'Mileage', 'Battery', 'Voltage'], liveRows, 'No live fuel levels (link + verify Wialon)')}
+    </div>` : `<div class="grid-main-side mt-2">
       <div class="card">
         <div class="card-header"><h3>Fuel events</h3></div>
         ${tableWrap(['Date', 'Asset', 'Type', 'Volume', 'Location', 'Odo'], rows, 'No fuel transactions yet')}
@@ -939,7 +956,7 @@
         ${tableWrap(['Month', 'Filled', 'Consumed'], trendRows, 'No trend data yet')}
         ${trend.some((r) => Number(r.filled) > 0 || Number(r.consumed) > 0) ? '<div class="chart-box mt-1" style="height:180px"><canvas id="fuel-page-trend"></canvas></div>' : ''}
       </div>
-    </div>`;
+    </div>`}`;
   }
 
   async function renderWorkshop() {
@@ -1179,14 +1196,24 @@
   }
 
   async function renderGeofencing() {
-    const geofences = await MamsApi.api('/client/geofences').catch(() => []);
+    const [geofences, liveZones] = await Promise.all([
+      MamsApi.api('/client/geofences').catch(() => []),
+      MamsApi.api('/client/wialon/geofences').catch(() => ({ geofences: [] })),
+    ]);
     const list = Array.isArray(geofences) ? geofences : geofences.items || [];
+    const live = liveZones.geofences || [];
     const rows = list.map((g) => `<tr>
       <td><strong>${esc(g.name || g.id)}</strong></td>
       <td>${esc(g.type || 'circle')}</td>
       <td>${g.isActive !== false ? '<span class="badge badge-success">Active</span>' : '<span class="badge badge-inactive">Inactive</span>'}</td>
       <td class="muted">${fmtDate(g.createdAt)}</td>
       <td><button class="btn btn-sm btn-ghost" data-action="delete-geofence" data-id="${esc(g.id)}">Delete</button></td>
+    </tr>`).join('');
+    const liveRows = live.slice(0, 100).map((g) => `<tr>
+      <td><strong>${esc(g.name)}</strong><div class="muted">${esc(g.resourceName || '')}</div></td>
+      <td>${esc(g.type)}</td>
+      <td>${g.radius != null ? esc(Math.round(g.radius)) + ' m' : '—'}</td>
+      <td class="muted">${g.center ? `${Number(g.center.lat).toFixed(4)}, ${Number(g.center.lng).toFixed(4)}` : '—'}</td>
     </tr>`).join('');
 
     return `<div class="card">
@@ -1204,8 +1231,12 @@
       </form>
     </div>
     <div class="card mt-2">
-      <div class="card-header"><h3>Geofences</h3><span class="muted">${list.length} zones</span></div>
+      <div class="card-header"><h3>Platform geofences</h3><span class="muted">${list.length} zones</span></div>
       ${tableWrap(['Name', 'Type', 'Status', 'Created', 'Actions'], rows, 'No geofences defined')}
+    </div>
+    <div class="card mt-2">
+      <div class="card-header"><h3>Wialon geofences</h3><span class="muted">${live.length}</span></div>
+      ${tableWrap(['Name', 'Type', 'Radius', 'Center'], liveRows, 'No live Wialon geofences')}
     </div>`;
   }
 
@@ -1301,17 +1332,33 @@
   async function renderSensors() {
     const snap = await MamsApi.api('/client/fleet/snapshot').catch(() => ({ units: [] }));
     const units = snap.units || [];
-    const rows = units.map((u) => `<tr>
-      <td><strong>${esc(u.name)}</strong></td>
+    const rows = units.map((u) => {
+      const batt = unitParam(u, 'battery');
+      const volt = unitParam(u, 'pwr_ext', 'ext_voltage', 'external_voltage', 'battery_voltage', 'pwr_int');
+      const sensCount = Array.isArray(u.sens) ? u.sens.length : 0;
+      const prmCount = Array.isArray(u.prms) ? u.prms.length : 0;
+      return `<tr class="row-clickable" data-action="open-sensors" data-id="${esc(u.wialonId || u.id)}" data-name="${esc(u.name)}">
+      <td><strong>${esc(u.name)}</strong>${u.plate ? `<div class="muted">${esc(u.plate)}</div>` : ''}</td>
       <td>${u.fuelLevel != null ? esc(Math.round(u.fuelLevel)) + '%' : '—'}</td>
+      <td>${batt != null ? esc(Math.round(batt)) + '%' : '—'}</td>
+      <td>${volt != null ? esc(Math.round(volt * 10) / 10) + ' V' : '—'}</td>
       <td>${u.position ? Number(u.position.speed || 0).toFixed(0) + ' km/h' : '—'}</td>
+      <td class="muted">${sensCount} sens · ${prmCount} params</td>
       <td>${statusBadge(u.status)}</td>
-    </tr>`).join('');
+    </tr>`;
+    }).join('');
 
-    return `<div class="card">
-      <div class="card-header"><h3>Sensor readings</h3><span class="muted">From latest fleet snapshot</span></div>
-      ${tableWrap(['Asset', 'Fuel level', 'Speed', 'Status'], rows, 'No sensor data')}
-    </div>`;
+    return `<div class="kpi-grid">
+      ${kpi('Units', units.length)}
+      ${kpi('With fuel', units.filter((u) => u.fuelLevel != null).length)}
+      ${kpi('With battery', units.filter((u) => unitParam(u, 'battery') != null).length)}
+      ${kpi('Source', snap.live ? 'Live Wialon' : 'Cached')}
+    </div>
+    <div class="card mt-2">
+      <div class="card-header"><h3>Sensor readings</h3><span class="muted">Click a unit for live calc_last_message</span></div>
+      ${tableWrap(['Asset', 'Fuel', 'Battery', 'Voltage', 'Speed', 'Defs', 'Status'], rows, 'No sensor data')}
+    </div>
+    <div id="sensors-detail-root"></div>`;
   }
 
   async function renderTrailers() {
@@ -1385,33 +1432,42 @@
   }
 
   async function renderReports() {
-    const [types, templates] = await Promise.all([
+    const [types, templates, snap] = await Promise.all([
       MamsApi.api('/client/reports/types').catch(() => []),
       MamsApi.api('/client/wialon/reports/templates').catch(() => ({ templates: [] })),
+      MamsApi.api('/client/fleet/snapshot').catch(() => ({ units: [] })),
     ]);
     const list = Array.isArray(types) ? types : [];
     const tplList = templates.templates || [];
+    const units = snap.units || [];
     const options = list.map((t) => `<option value="${esc(t.id)}">${esc(t.label)}</option>`).join('');
-    const tplRows = tplList.slice(0, 100).map((t) => `<tr>
-      <td><strong>${esc(t.name)}</strong></td>
-      <td class="muted">${esc(t.resourceName || '')}</td>
-      <td class="muted">${esc(t.type || '—')}</td>
-      <td class="muted">${esc(t.id)}</td>
-    </tr>`).join('');
+    const tplOptions = tplList.slice(0, 200).map((t) =>
+      `<option value="${esc(t.resourceId)}:${esc(t.id)}" data-resource="${esc(t.resourceId)}" data-template="${esc(t.id)}">${esc(t.name)} (${esc(t.resourceName || t.resourceId)})</option>`
+    ).join('');
+    const unitOptions = units.slice(0, 300).map((u) =>
+      `<option value="${esc(u.wialonId || u.id)}">${esc(u.name)}${u.plate ? ' · ' + esc(u.plate) : ''}</option>`
+    ).join('');
 
     return `<div class="card">
-      <div class="card-header"><h3>Generate report</h3></div>
+      <div class="card-header"><h3>Generate DB report</h3></div>
       <form id="report-form" class="form-grid">
         <label><span>Report type</span><select class="select" name="type">${options}</select></label>
         <div class="form-grid-action"><button type="submit" class="btn">Load report</button></div>
       </form>
     </div>
-    <div class="card mt-2" id="report-result">
-      ${emptyState('📄', 'No report loaded', 'Choose a report type above and click Load report.')}
-    </div>
     <div class="card mt-2">
-      <div class="card-header"><h3>Wialon report templates</h3><span class="muted">${tplList.length}</span></div>
-      ${tableWrap(['Template', 'Resource', 'Type', 'ID'], tplRows, 'No Wialon templates (link + verify Wialon)')}
+      <div class="card-header"><h3>Run Wialon template</h3><span class="muted">${tplList.length} templates</span></div>
+      <form id="wialon-report-form" class="form-grid">
+        <label><span>Template</span><select class="select" name="template" required>${tplOptions || '<option value="">No templates</option>'}</select></label>
+        <label><span>Object (unit)</span><select class="select" name="objectId" required>${unitOptions || '<option value="">No units</option>'}</select></label>
+        <label><span>From (unix)</span><input class="input" name="from" type="number" value="${Math.floor(Date.now() / 1000) - 86400}" /></label>
+        <label><span>To (unix)</span><input class="input" name="to" type="number" value="${Math.floor(Date.now() / 1000)}" /></label>
+        <div class="form-grid-action"><button type="submit" class="btn">Execute</button></div>
+        <p id="wialon-report-error" class="error" hidden></p>
+      </form>
+    </div>
+    <div class="card mt-2" id="report-result">
+      ${emptyState('📄', 'No report loaded', 'Choose a DB report or run a Wialon template.')}
     </div>`;
   }
 
@@ -1724,11 +1780,13 @@
         const detail = await MamsApi.api(`/client/wialon/units/${encodeURIComponent(id)}`);
         const u = detail.unit || {};
         const h = detail.health || {};
+        const uid = u.wialonId || u.id || id;
         root.innerHTML = `<div class="card mt-2">
           <div class="card-header">
             <h3>${esc(u.name || 'Unit')}</h3>
             <div class="actions">
-              <button type="button" class="btn btn-sm" data-action="load-unit-track" data-id="${esc(u.id)}">Load 24h track</button>
+              <button type="button" class="btn btn-sm" data-action="load-unit-track" data-id="${esc(uid)}">Load 24h track</button>
+              <button type="button" class="btn btn-sm" data-action="load-unit-trips" data-id="${esc(uid)}">Load 24h trips</button>
               <button type="button" class="btn btn-sm btn-ghost" data-action="close-unit-detail">Close</button>
             </div>
           </div>
@@ -1743,6 +1801,7 @@
             <div><span class="muted">Position</span><div>${u.position ? `${Number(u.position.lat).toFixed(5)}, ${Number(u.position.lng).toFixed(5)}` : '—'}</div></div>
           </div>
           <div id="unit-track-map" class="map-panel mt-1" style="min-height:220px">Track map idle — click Load 24h track</div>
+          <div id="unit-trips-root" class="mt-1 muted">Trips idle — click Load 24h trips</div>
         </div>`;
       } catch (ex) {
         root.innerHTML = `<div class="banner banner-error mt-2">${esc(ex.message || 'Unit detail unavailable (live Wialon required)')}</div>`;
@@ -1752,6 +1811,42 @@
 
     if (action === 'close-unit-detail') {
       const root = document.getElementById('unit-detail-root');
+      if (root) root.innerHTML = '';
+      return;
+    }
+
+    if (action === 'open-sensors') {
+      const root = document.getElementById('sensors-detail-root');
+      if (!root) return;
+      const name = btn.dataset.name || id;
+      root.innerHTML = `<div class="card mt-2">${typeof loader === 'function' ? loader() : 'Loading…'}</div>`;
+      try {
+        const data = await MamsApi.api(`/client/wialon/units/${encodeURIComponent(id)}/sensors`);
+        const sensors = data.sensors || [];
+        const rows = sensors.slice(0, 80).map((s) => {
+          const val = s.value != null ? s.value : (s.val != null ? s.val : (s.m != null ? s.m : '—'));
+          return `<tr>
+            <td><strong>${esc(s.name || s.n || s.id || 'Sensor')}</strong></td>
+            <td>${esc(s.type || s.t || '—')}</td>
+            <td>${esc(typeof val === 'object' ? JSON.stringify(val) : val)}</td>
+            <td class="muted">${esc(s.unit || s.measure || '')}</td>
+          </tr>`;
+        }).join('');
+        root.innerHTML = `<div class="card mt-2">
+          <div class="card-header">
+            <h3>${esc(name)} — live sensors</h3>
+            <button type="button" class="btn btn-sm btn-ghost" data-action="close-sensors-detail">Close</button>
+          </div>
+          ${tableWrap(['Sensor', 'Type', 'Value', 'Unit'], rows, data.error ? esc(data.error) : 'No sensor values')}
+        </div>`;
+      } catch (ex) {
+        root.innerHTML = `<div class="banner banner-error mt-2">${esc(ex.message || 'Sensors unavailable')}</div>`;
+      }
+      return;
+    }
+
+    if (action === 'close-sensors-detail') {
+      const root = document.getElementById('sensors-detail-root');
       if (root) root.innerHTML = '';
       return;
     }
@@ -1801,6 +1896,37 @@
         }
       } catch (ex) {
         mapEl.textContent = ex.message || 'Track unavailable';
+      } finally {
+        btn.disabled = false;
+      }
+      return;
+    }
+
+    if (action === 'load-unit-trips') {
+      const unitId = btn.dataset.id;
+      const tripsEl = document.getElementById('unit-trips-root');
+      if (!unitId || !tripsEl) return;
+      btn.disabled = true;
+      tripsEl.innerHTML = typeof loader === 'function' ? loader() : 'Loading trips…';
+      try {
+        const data = await MamsApi.api(`/client/wialon/units/${encodeURIComponent(unitId)}/trips`);
+        const trips = data.trips || [];
+        const rows = trips.slice(0, 40).map((t) => {
+          const fromTs = t.t1 || (typeof t.from === 'object' ? t.from?.t : null);
+          const toTs = t.t2 || (typeof t.to === 'object' ? t.to?.t : null);
+          const durSec = (fromTs && toTs && toTs > fromTs) ? (toTs - fromTs) : null;
+          const dist = t.mileage != null ? t.mileage : t.distance;
+          return `<tr>
+            <td>${fromTs ? fmtDate(fromTs * 1000) : '—'}</td>
+            <td>${toTs ? fmtDate(toTs * 1000) : '—'}</td>
+            <td>${dist != null ? esc(Math.round(Number(dist) * 10) / 10) + ' km' : '—'}</td>
+            <td class="muted">${durSec != null ? esc(Math.round(durSec / 60)) + ' min' : '—'}</td>
+          </tr>`;
+        }).join('');
+        tripsEl.innerHTML = `<div class="card-header"><h3>Trips (24h)</h3><span class="muted">${trips.length}</span></div>
+          ${tableWrap(['From', 'To', 'Distance', 'Duration'], rows, data.error ? esc(data.error) : 'No trips in range')}`;
+      } catch (ex) {
+        tripsEl.innerHTML = `<div class="banner banner-error">${esc(ex.message || 'Trips unavailable')}</div>`;
       } finally {
         btn.disabled = false;
       }
@@ -1974,6 +2100,79 @@
       e.preventDefault();
       const fd = new FormData(form);
       loadReport(fd.get('type'));
+      return;
+    }
+
+    if (form.id === 'wialon-report-form') {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const errEl = document.getElementById('wialon-report-error');
+      const resultEl = document.getElementById('report-result');
+      if (errEl) errEl.hidden = true;
+      const tpl = String(fd.get('template') || '');
+      const [resourceId, templateId] = tpl.split(':');
+      const objectId = fd.get('objectId');
+      if (!resourceId || !templateId || !objectId) {
+        if (errEl) { errEl.textContent = 'Template and object are required'; errEl.hidden = false; }
+        return;
+      }
+      if (resultEl) resultEl.innerHTML = loader();
+      try {
+        const data = await MamsApi.api('/client/wialon/reports/exec', {
+          method: 'POST',
+          body: JSON.stringify({
+            reportResourceId: Number(resourceId),
+            reportTemplateId: Number(templateId),
+            reportObjectId: Number(objectId),
+            from: Number(fd.get('from')) || undefined,
+            to: Number(fd.get('to')) || undefined,
+            maxRows: 100,
+          }),
+        });
+        const tables = data.tables || [];
+        if (!tables.length) {
+          if (resultEl) {
+            resultEl.innerHTML = `<div class="card-header"><h3>Wialon report</h3></div>${emptyState('📄', 'Empty result', 'Template returned no tables for this interval.')}`;
+          }
+          return;
+        }
+        const blocks = tables.map((t) => {
+          const sample = t.sample || [];
+          const header = Array.isArray(t.header) ? t.header.map((h) => (typeof h === 'object' ? (h.n || h.name || JSON.stringify(h)) : String(h))) : null;
+          let cols = header;
+          let bodyRows = sample;
+          if (!cols || !cols.length) {
+            if (sample.length && Array.isArray(sample[0]?.c)) {
+              cols = sample[0].c.map((_, i) => 'Col ' + (i + 1));
+              bodyRows = sample.map((r) => ({ cells: (r.c || []).map((c) => (c && typeof c === 'object' ? (c.t ?? c.v ?? JSON.stringify(c)) : c)) }));
+            } else if (sample.length && typeof sample[0] === 'object' && !Array.isArray(sample[0])) {
+              cols = Object.keys(sample[0]).slice(0, 8);
+              bodyRows = sample.map((r) => ({ cells: cols.map((c) => r[c]) }));
+            } else {
+              cols = ['Row'];
+              bodyRows = sample.map((r) => ({ cells: [typeof r === 'object' ? JSON.stringify(r) : r] }));
+            }
+          } else {
+            bodyRows = sample.map((r) => {
+              if (Array.isArray(r?.c)) {
+                return { cells: r.c.map((c) => (c && typeof c === 'object' ? (c.t ?? c.v ?? JSON.stringify(c)) : c)) };
+              }
+              if (Array.isArray(r)) return { cells: r };
+              return { cells: cols.map((c) => (r && typeof r === 'object' ? r[c] : r)) };
+            });
+          }
+          const body = bodyRows.slice(0, 50).map((r) =>
+            `<tr>${(r.cells || []).slice(0, cols.length).map((v) => `<td>${esc(v != null && typeof v === 'object' ? JSON.stringify(v) : v)}</td>`).join('')}</tr>`
+          ).join('');
+          return `<div class="mt-1"><div class="card-header"><h3>${esc(t.name || 'Table')}</h3><span class="muted">${esc(t.rows || 0)} rows</span></div>${tableWrap(cols, body, 'No sample rows')}</div>`;
+        }).join('');
+        if (resultEl) {
+          resultEl.innerHTML = `<div class="card-header"><h3>Wialon report result</h3><span class="muted">${tables.length} table(s)</span></div>${blocks}`;
+        }
+      } catch (ex) {
+        if (errEl) { errEl.textContent = ex.message || 'Report exec failed'; errEl.hidden = false; }
+        if (resultEl) resultEl.innerHTML = `<div class="banner banner-error">${esc(ex.message || 'Report exec failed')}</div>`;
+      }
       return;
     }
 
