@@ -182,7 +182,7 @@
 
   /* ── Module renderers ── */
   async function renderDashboard() {
-    const [kpis, snap, integrations, alertsRaw, wialonCtx, modulesRaw, fuelTrend, workshopKpis, driverStats, routeStats] = await Promise.all([
+    const [kpis, snap, integrations, alertsRaw, wialonCtx, modulesRaw, fuelTrend, workshopKpis, driverStats, routeStats, geofencesRaw] = await Promise.all([
       MamsApi.api('/client/dashboard/kpis').catch(() => ({})),
       MamsApi.api('/client/fleet/snapshot').catch(() => ({ units: [], counts: {} })),
       MamsApi.api('/client/integrations/status').catch(() => []),
@@ -193,6 +193,7 @@
       MamsApi.api('/client/workshop/kpis').catch(() => ({})),
       MamsApi.api('/client/drivers/stats').catch(() => ({})),
       MamsApi.api('/client/routes/stats').catch(() => ({})),
+      MamsApi.api('/client/geofences').catch(() => []),
     ]);
 
     const units = snap.units || [];
@@ -201,6 +202,7 @@
     const alertList = Array.isArray(alertsRaw) ? alertsRaw : alertsRaw.alerts || [];
     const modules = Array.isArray(modulesRaw) ? modulesRaw : [];
     const trend = Array.isArray(fuelTrend) ? fuelTrend : [];
+    const geofences = Array.isArray(geofencesRaw) ? geofencesRaw : (geofencesRaw.geofences || []);
     const isAdmin = isAdminRole(currentUserRole);
     const enabled = moduleEnabledSet(modules, isAdmin);
 
@@ -273,7 +275,7 @@
       chartCards.push(chartCardHtml('Mileage', 'Live odometer total · not period-filtered', 'dash-widget-mileage', 'No data yet (preview)'));
       chartCards.push(chartCardHtml('Top units by mileage', 'Live odometer leaders · not period-filtered', 'dash-widget-top-mileage', 'No data yet (preview)'));
       chartCards.push(chartCardHtml('Fleet utilization', 'Moving + idle share · not period-filtered', 'dash-widget-fleet-utilization', `${util}% utilization`));
-      chartCards.push(chartCardHtml('Geofences', 'Zones & boundaries (preview)', 'dash-widget-geofences', 'No data yet (preview)'));
+      chartCards.push(chartCardHtml('Geofences', 'Zones & boundaries', 'dash-widget-geofences', `${geofences.length} zones configured`));
       chartCards.push(chartCardHtml('Device battery', 'Battery health snapshot', 'dash-widget-device-battery', 'No data yet (preview)'));
       chartCards.push(chartCardHtml('Voltage level', 'Voltage distribution', 'dash-widget-voltage-level', 'No data yet (preview)'));
     }
@@ -336,7 +338,7 @@
     </div>`;
 
     window.__dashPaint = () => paintDashboardCharts({
-      counts, alertList, trend, workshopKpis, driverStats, routeStats, intList, onlineCount, total,
+      counts, alertList, trend, workshopKpis, driverStats, routeStats, intList, onlineCount, total, geofences,
     });
 
     return html;
@@ -411,7 +413,7 @@
   /** Paints Chart.js canvases into the dashboard HTML after it is in the DOM. */
   function paintDashboardCharts(data) {
     if (typeof Chart === 'undefined') return;
-    const { counts, alertList, trend, workshopKpis, driverStats, routeStats, intList, onlineCount, total } = data;
+    const { counts, alertList, trend, workshopKpis, driverStats, routeStats, intList, onlineCount, total, geofences } = data;
     const p = MamsCharts.palette();
 
     const drawNoDataDoughnut = (canvasId, label = 'No data') => {
@@ -499,14 +501,22 @@
       }
     }
 
-    // No-data placeholders (we don’t yet have endpoints wired for these)
+    // No-data placeholders (endpoints not fully wired yet)
     [
       'dash-widget-mileage',
       'dash-widget-top-mileage',
-      'dash-widget-geofences',
       'dash-widget-device-battery',
       'dash-widget-voltage-level',
     ].forEach((id) => drawNoDataDoughnut(id, 'No data'));
+
+    if (document.getElementById('dash-widget-geofences')) {
+      const count = Array.isArray(geofences) ? geofences.length : 0;
+      if (count > 0) {
+        MamsCharts.doughnut('dash-widget-geofences', ['Zones', 'Slots'], [count, Math.max(1, 12 - count)], [p.primary, p.muted]);
+      } else {
+        drawNoDataDoughnut('dash-widget-geofences', 'No zones');
+      }
+    }
 
     // Alerts trend (last 24 hours, preview)
     if (document.getElementById('dash-widget-alerts-trend')) {

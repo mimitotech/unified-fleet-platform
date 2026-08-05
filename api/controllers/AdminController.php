@@ -1051,9 +1051,15 @@ class AdminController
         $fields = [];
         $params = [];
 
-        if (array_key_exists('enabled', $body) && self::columnExists('marketplace_integrations', 'is_enabled_globally')) {
+        $enabledValue = null;
+        if (array_key_exists('isEnabledGlobally', $body)) {
+            $enabledValue = (bool) $body['isEnabledGlobally'];
+        } elseif (array_key_exists('enabled', $body)) {
+            $enabledValue = (bool) $body['enabled'];
+        }
+        if ($enabledValue !== null && self::columnExists('marketplace_integrations', 'is_enabled_globally')) {
             $fields[] = 'is_enabled_globally = ?';
-            $params[] = (bool) $body['enabled'] ? 1 : 0;
+            $params[] = $enabledValue ? 1 : 0;
         }
         if (array_key_exists('status', $body) && self::columnExists('marketplace_integrations', 'status')) {
             $fields[] = 'status = ?';
@@ -1145,5 +1151,362 @@ class AdminController
 
         $rows = Database::query('SELECT * FROM tenants WHERE id = ? LIMIT 1', [$id]);
         Response::success($rows ? self::mapTenant($rows[0]) : ['id' => $id, 'name' => $name, 'slug' => $slug], 201);
+    }
+
+    /** GET /admin/centers/:source — LocoNav / TrackSolid rollup (IntegrationCenterService parity) */
+    public static function integrationCenter(?string $source = null): void
+    {
+        self::currentUser();
+        $sourceType = strtolower(trim((string) ($source ?? '')));
+        if (!in_array($sourceType, ['loconav', 'tracksolid'], true)) {
+            Response::error('Unsupported integration center', 400);
+            return;
+        }
+
+        try {
+            $rows = Database::query(
+                "SELECT t.id AS tenant_id, t.name AS tenant_name, t.slug AS tenant_slug,
+                        ds.is_active, ds.connection_verified_at, ds.last_sync_at, ds.last_error,
+                        (SELECT COUNT(*) FROM asset_mappings am
+                           JOIN assets a ON a.id = am.asset_id
+                          WHERE a.tenant_id = t.id AND am.source_type = ?) AS asset_count,
+                        (SELECT COUNT(*) FROM alerts al
+                          WHERE al.tenant_id = t.id AND al.source_type = ?
+                            AND al.occurred_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS alerts_24h
+                 FROM data_sources ds
+                 INNER JOIN tenants t ON t.id = ds.tenant_id
+                 WHERE ds.source_type = ? AND (t.is_active = 1 OR t.status = 'active')
+                 ORDER BY t.name",
+                [$sourceType, $sourceType, $sourceType]
+            );
+        } catch (Throwable $e) {
+            error_log('AdminController integrationCenter: ' . $e->getMessage());
+            $rows = [];
+        }
+
+        $tenants = [];
+        foreach ($rows as $row) {
+            $verified = !empty($row['connection_verified_at']);
+            $active = (bool) ((int) ($row['is_active'] ?? 0)) && $verified;
+            $tenants[] = [
+                'tenantId' => $row['tenant_id'],
+                'tenantName' => $row['tenant_name'],
+                'tenantSlug' => $row['tenant_slug'],
+                'isActive' => $active,
+                'verifiedAt' => $row['connection_verified_at'] ?? null,
+                'lastSyncAt' => $row['last_sync_at'] ?? null,
+                'lastError' => $row['last_error'] ?? null,
+                'assetCount' => (int) ($row['asset_count'] ?? 0),
+                'alerts24h' => (int) ($row['alerts_24h'] ?? 0),
+            ];
+        }
+
+        $connectedTenants = count(array_filter($tenants, static fn(array $t): bool => !empty($t['isActive'])));
+        $totalAssets = array_sum(array_map(static fn(array $t): int => (int) $t['assetCount'], $tenants));
+
+        Response::success([
+            'sourceType' => $sourceType,
+            'configured' => count($tenants) > 0,
+            'connected' => $connectedTenants > 0,
+            'tenantCount' => count($tenants),
+            'connectedTenants' => $connectedTenants,
+            'totalAssets' => $totalAssets,
+            'tenants' => $tenants,
+            'webhookNote' => $sourceType === 'loconav'
+                ? 'LocoNav camera and safety alerts are delivered via webhooks. Configure the webhook URL in each client integration.'
+                : 'TrackSolid alarms sync on schedule and via webhooks when configured.',
+        ]);
+    }
+
+    /** @param array<string, mixed> $row */
+    private static function mapMother(array $row): array
+    {
+        $meta = [];
+        if (!empty($row['session_meta'])) {
+            $decoded = is_string($row['session_meta'])
+                ? json_decode($row['session_meta'], true)
+                : $row['session_meta'];
+            $meta = is_array($decoded) ? $decoded : [];
+        }
+        $counts = isset($meta['counts']) && is_array($meta['counts']) ? $meta['counts'] : null;
+        $isActive = (bool) ((int) ($row['is_active'] ?? 0));
+        $verified = !empty($row['connection_verified_at']);
+        $lastError = $row['last_error'] ?? null;
+
+        return [
+            'id' => $row['id'],
+            'name' => $row['name'] ?? '',
+            'baseUrl' => $row['base_url'] ?? null,
+            'isActive' => $isActive,
+            'connected' => $isActive && $verified && empty($lastError),
+            'verifiedAt' => $row['connection_verified_at'] ?? null,
+            'lastError' => $lastError,
+            'meta' => $meta,
+            'accountTier' => $row['account_tier'] ?? null,
+            'linkedTenantCount' => (int) ($row['linked_tenant_count'] ?? 0),
+            'counts' => $counts ? [
+                'units' => isset($counts['units']) ? (int) $counts['units'] : null,
+                'accounts' => isset($counts['accounts']) ? (int) $counts['accounts'] : null,
+                'users' => isset($counts['users']) ? (int) $counts['users'] : null,
+            ] : null,
+        ];
+    }
+
+    /** GET /admin/centers/wialon */
+    public static function wialonCenterStatus(): void
+    {
+        self::currentUser();
+        require_once __DIR__ . '/../../lib/Crypto.php';
+
+        $mothers = [];
+        try {
+            $rows = Database::query(
+                "SELECT m.*,
+                        (SELECT COUNT(*) FROM data_sources ds
+                          WHERE ds.wialon_mother_account_id = m.id
+                            AND ds.source_type = 'wialon' AND ds.is_active = 1) AS linked_tenant_count
+                 FROM wialon_mother_accounts m
+                 ORDER BY m.created_at ASC"
+            );
+            $mothers = array_map([self::class, 'mapMother'], $rows);
+        } catch (Throwable $e) {
+            error_log('AdminController wialonCenterStatus: ' . $e->getMessage());
+        }
+
+        $assigned = 0;
+        try {
+            $countRows = Database::query(
+                "SELECT COUNT(*) AS c FROM data_sources
+                 WHERE source_type = 'wialon' AND is_active = 1
+                   AND wialon_resource_id IS NOT NULL AND wialon_resource_id > 0"
+            );
+            $assigned = (int) ($countRows[0]['c'] ?? 0);
+        } catch (Throwable $e) {
+            $assigned = 0;
+        }
+
+        $connected = count(array_filter($mothers, static fn(array $m): bool => !empty($m['connected'])));
+        $first = $mothers[0] ?? null;
+
+        Response::success([
+            'configured' => count($mothers) > 0,
+            'connected' => $connected > 0,
+            'verifiedAt' => $first['verifiedAt'] ?? null,
+            'lastError' => $first['lastError'] ?? null,
+            'meta' => $first['meta'] ?? null,
+            'motherAccounts' => $mothers,
+            'motherAccountCount' => count($mothers),
+            'assignedAccountCount' => $assigned,
+        ]);
+    }
+
+    /** GET /admin/centers/wialon/mothers */
+    public static function wialonMothersList(): void
+    {
+        self::currentUser();
+        try {
+            $rows = Database::query(
+                "SELECT m.*,
+                        (SELECT COUNT(*) FROM data_sources ds
+                          WHERE ds.wialon_mother_account_id = m.id
+                            AND ds.source_type = 'wialon' AND ds.is_active = 1) AS linked_tenant_count
+                 FROM wialon_mother_accounts m
+                 ORDER BY m.created_at ASC"
+            );
+            $mothers = array_map([self::class, 'mapMother'], $rows);
+            Response::success(['mothers' => $mothers, 'count' => count($mothers)]);
+        } catch (Throwable $e) {
+            error_log('AdminController wialonMothersList: ' . $e->getMessage());
+            Response::success(['mothers' => [], 'count' => 0]);
+        }
+    }
+
+    /** POST /admin/centers/wialon/mothers */
+    public static function wialonMothersCreate(): void
+    {
+        self::currentUser();
+        require_once __DIR__ . '/../../lib/Crypto.php';
+        $body = Auth::jsonBody();
+        $creds = is_array($body['credentials'] ?? null) ? $body['credentials'] : $body;
+        $name = trim((string) ($creds['name'] ?? $body['name'] ?? 'Mother account'));
+        $token = trim((string) ($creds['token'] ?? ''));
+        $baseUrl = trim((string) ($creds['baseUrl'] ?? $body['baseUrl'] ?? ''));
+
+        if ($token === '') {
+            Response::error('Wialon token is required', 400);
+            return;
+        }
+
+        $id = self::uuid();
+        try {
+            $encrypted = Crypto::encrypt([
+                'token' => $token,
+                'baseUrl' => $baseUrl !== '' ? $baseUrl : null,
+            ]);
+            $meta = json_encode([
+                'baseUrl' => $baseUrl !== '' ? $baseUrl : 'https://hst-api.wialon.com/wialon/ajax.html',
+                'configuredAt' => gmdate('c'),
+            ]);
+            Database::execute(
+                'INSERT INTO wialon_mother_accounts
+                   (id, name, credentials_encrypted, base_url, is_active, connection_verified_at, last_error, session_meta, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, 1, NULL, NULL, ?, NOW(), NOW())',
+                [$id, $name !== '' ? $name : 'Mother account', $encrypted, $baseUrl !== '' ? $baseUrl : null, $meta]
+            );
+            $rows = Database::query(
+                "SELECT m.*, 0 AS linked_tenant_count FROM wialon_mother_accounts m WHERE m.id = ? LIMIT 1",
+                [$id]
+            );
+            Response::success(['mother' => self::mapMother($rows[0] ?? ['id' => $id, 'name' => $name])], 201);
+        } catch (Throwable $e) {
+            error_log('AdminController wialonMothersCreate: ' . $e->getMessage());
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /** PUT /admin/centers/wialon/mothers/:id */
+    public static function wialonMothersUpdate(?string $id = null): void
+    {
+        self::currentUser();
+        require_once __DIR__ . '/../../lib/Crypto.php';
+        $motherId = $id ?? '';
+        if ($motherId === '') {
+            Response::error('Mother id required', 400);
+            return;
+        }
+        $body = Auth::jsonBody();
+        $creds = is_array($body['credentials'] ?? null) ? $body['credentials'] : $body;
+
+        try {
+            $existing = Database::query('SELECT * FROM wialon_mother_accounts WHERE id = ? LIMIT 1', [$motherId]);
+            if (!$existing) {
+                Response::error('Mother account not found', 404);
+                return;
+            }
+
+            $name = array_key_exists('name', $creds)
+                ? trim((string) $creds['name'])
+                : (string) ($existing[0]['name'] ?? '');
+            $baseUrl = array_key_exists('baseUrl', $creds)
+                ? trim((string) $creds['baseUrl'])
+                : (string) ($existing[0]['base_url'] ?? '');
+            $isActive = array_key_exists('isActive', $creds)
+                ? (!empty($creds['isActive']) ? 1 : 0)
+                : (int) ($existing[0]['is_active'] ?? 1);
+
+            $encrypted = null;
+            $token = trim((string) ($creds['token'] ?? ''));
+            if ($token !== '') {
+                $encrypted = Crypto::encrypt([
+                    'token' => $token,
+                    'baseUrl' => $baseUrl !== '' ? $baseUrl : null,
+                ]);
+            }
+
+            if ($encrypted !== null) {
+                Database::execute(
+                    'UPDATE wialon_mother_accounts
+                     SET name=?, base_url=?, is_active=?, credentials_encrypted=?, updated_at=NOW()
+                     WHERE id=?',
+                    [$name !== '' ? $name : 'Mother account', $baseUrl !== '' ? $baseUrl : null, $isActive, $encrypted, $motherId]
+                );
+            } else {
+                Database::execute(
+                    'UPDATE wialon_mother_accounts SET name=?, base_url=?, is_active=?, updated_at=NOW() WHERE id=?',
+                    [$name !== '' ? $name : 'Mother account', $baseUrl !== '' ? $baseUrl : null, $isActive, $motherId]
+                );
+            }
+
+            $rows = Database::query(
+                "SELECT m.*,
+                        (SELECT COUNT(*) FROM data_sources ds
+                          WHERE ds.wialon_mother_account_id = m.id AND ds.source_type='wialon' AND ds.is_active=1) AS linked_tenant_count
+                 FROM wialon_mother_accounts m WHERE m.id = ? LIMIT 1",
+                [$motherId]
+            );
+            Response::success(['mother' => self::mapMother($rows[0] ?? [])]);
+        } catch (Throwable $e) {
+            error_log('AdminController wialonMothersUpdate: ' . $e->getMessage());
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /** DELETE /admin/centers/wialon/mothers/:id */
+    public static function wialonMothersDelete(?string $id = null): void
+    {
+        self::currentUser();
+        $motherId = $id ?? '';
+        if ($motherId === '') {
+            Response::error('Mother id required', 400);
+            return;
+        }
+        try {
+            $updated = Database::execute('DELETE FROM wialon_mother_accounts WHERE id = ?', [$motherId]);
+            if ($updated === 0) {
+                Response::error('Mother account not found', 404);
+                return;
+            }
+            Response::success(['deleted' => true]);
+        } catch (Throwable $e) {
+            error_log('AdminController wialonMothersDelete: ' . $e->getMessage());
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /** POST /admin/centers/wialon/mothers/:id/test — marks verified when token decrypts (full probe later) */
+    public static function wialonMothersTest(?string $id = null): void
+    {
+        self::currentUser();
+        require_once __DIR__ . '/../../lib/Crypto.php';
+        $motherId = $id ?? '';
+        if ($motherId === '') {
+            Response::error('Mother id required', 400);
+            return;
+        }
+        try {
+            $rows = Database::query(
+                'SELECT credentials_encrypted, base_url, is_active FROM wialon_mother_accounts WHERE id = ? LIMIT 1',
+                [$motherId]
+            );
+            if (!$rows) {
+                Response::error('Mother account not found', 404);
+                return;
+            }
+            if (!(int) ($rows[0]['is_active'] ?? 0)) {
+                Response::error('Mother account is inactive', 400);
+                return;
+            }
+            $creds = Crypto::decrypt((string) ($rows[0]['credentials_encrypted'] ?? ''));
+            $token = trim((string) ($creds['token'] ?? ''));
+            if ($token === '') {
+                Response::error('Mother account token is missing', 400);
+                return;
+            }
+
+            Database::execute(
+                'UPDATE wialon_mother_accounts
+                 SET connection_verified_at = NOW(), last_error = NULL, updated_at = NOW()
+                 WHERE id = ?',
+                [$motherId]
+            );
+
+            Response::success([
+                'connected' => true,
+                'probe' => [
+                    'counts' => ['accounts' => 0, 'units' => 0, 'users' => 0],
+                    'note' => 'Token stored and decryptable. Live Wialon hierarchy probe can be enabled with outbound API access.',
+                ],
+            ]);
+        } catch (Throwable $e) {
+            try {
+                Database::execute(
+                    'UPDATE wialon_mother_accounts SET last_error = ?, updated_at = NOW() WHERE id = ?',
+                    [$e->getMessage(), $motherId]
+                );
+            } catch (Throwable $ignored) {
+            }
+            error_log('AdminController wialonMothersTest: ' . $e->getMessage());
+            Response::error($e->getMessage(), 500);
+        }
     }
 }

@@ -10,6 +10,7 @@ require_once __DIR__ . '/controllers/AuthController.php';
 require_once __DIR__ . '/controllers/PublicController.php';
 require_once __DIR__ . '/controllers/ClientController.php';
 require_once __DIR__ . '/controllers/AdminController.php';
+require_once __DIR__ . '/controllers/AdminMediaController.php';
 require_once __DIR__ . '/controllers/DomainController.php';
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -251,6 +252,55 @@ try {
     }
     if (route_match('/admin/marketplace/:key', $apiPath, $p) && $method === 'PATCH') {
         AdminController::marketplacePatch($p['key']);
+    }
+
+    // Admin — login media CRUD
+    if ($apiPath === '/admin/login-slides' && $method === 'GET') {
+        AdminMediaController::loginSlidesList();
+    }
+    if ($apiPath === '/admin/login-slides' && $method === 'POST') {
+        AdminMediaController::loginSlidesCreate();
+    }
+    if (route_match('/admin/login-slides/:id', $apiPath, $p) && $method === 'PATCH') {
+        AdminMediaController::loginSlidesPatch($p['id']);
+    }
+    if (route_match('/admin/login-slides/:id', $apiPath, $p) && $method === 'DELETE') {
+        AdminMediaController::loginSlidesDelete($p['id']);
+    }
+    if ($apiPath === '/admin/login-trust-logos' && $method === 'GET') {
+        AdminMediaController::trustLogosList();
+    }
+    if ($apiPath === '/admin/login-trust-logos' && $method === 'POST') {
+        AdminMediaController::trustLogosCreate();
+    }
+    if (route_match('/admin/login-trust-logos/:id', $apiPath, $p) && $method === 'PATCH') {
+        AdminMediaController::trustLogosPatch($p['id']);
+    }
+    if (route_match('/admin/login-trust-logos/:id', $apiPath, $p) && $method === 'DELETE') {
+        AdminMediaController::trustLogosDelete($p['id']);
+    }
+
+    // Admin — integration centers
+    if ($apiPath === '/admin/centers/wialon' && $method === 'GET') {
+        AdminController::wialonCenterStatus();
+    }
+    if ($apiPath === '/admin/centers/wialon/mothers' && $method === 'GET') {
+        AdminController::wialonMothersList();
+    }
+    if ($apiPath === '/admin/centers/wialon/mothers' && $method === 'POST') {
+        AdminController::wialonMothersCreate();
+    }
+    if (route_match('/admin/centers/wialon/mothers/:id', $apiPath, $p) && $method === 'PUT') {
+        AdminController::wialonMothersUpdate($p['id']);
+    }
+    if (route_match('/admin/centers/wialon/mothers/:id', $apiPath, $p) && $method === 'DELETE') {
+        AdminController::wialonMothersDelete($p['id']);
+    }
+    if (route_match('/admin/centers/wialon/mothers/:id/test', $apiPath, $p) && $method === 'POST') {
+        AdminController::wialonMothersTest($p['id']);
+    }
+    if (route_match('/admin/centers/:source', $apiPath, $p) && $method === 'GET') {
+        AdminController::integrationCenter($p['source']);
     }
 
     Response::error('Not found', 404);

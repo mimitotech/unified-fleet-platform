@@ -61,8 +61,8 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script src="/assets/js/api.js?v=20260805j"></script>
-<script src="/assets/js/icons.js?v=20260805j"></script>
-<script src="/assets/js/branding.js?v=20260805j"></script>
-<script src="/assets/js/charts.js?v=20260805j"></script>
-<script src="/assets/js/app.js?v=20260805j"></script>
+<script src="/assets/js/api.js?v=20260805k"></script>
+<script src="/assets/js/icons.js?v=20260805k"></script>
+<script src="/assets/js/branding.js?v=20260805k"></script>
+<script src="/assets/js/charts.js?v=20260805k"></script>
+<script src="/assets/js/app.js?v=20260805k"></script>

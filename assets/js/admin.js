@@ -470,10 +470,19 @@
         <button type="button" class="btn btn-sm mt-1" data-action="save-system-setting" data-key="general">Save general</button>
       </div>
       <div id="system-tab-login" class="mt-1" hidden>
-        <p class="muted">Login media can be managed using the platform login slides and trust logos admin endpoints.</p>
-        <div class="settings-grid">
-          <div class="setting-item"><span class="muted">Slides endpoint</span><div><code>/api/public/login-slides</code></div></div>
-          <div class="setting-item"><span class="muted">Trust logos endpoint</span><div><code>/api/public/login-trust-logos</code></div></div>
+        <div class="grid-2">
+          <div>
+            <div class="card-header"><h3>Login slides</h3>
+              <button type="button" class="btn btn-sm" data-action="media-slide-new">Add slide</button>
+            </div>
+            <div id="login-slides-admin-root"><div class="page-loader"><div class="spinner"></div>Loading…</div></div>
+          </div>
+          <div>
+            <div class="card-header"><h3>Trust logos</h3>
+              <button type="button" class="btn btn-sm" data-action="media-logo-new">Add logo</button>
+            </div>
+            <div id="login-logos-admin-root"><div class="page-loader"><div class="spinner"></div>Loading…</div></div>
+          </div>
         </div>
       </div>
       <div id="system-tab-email" class="mt-1" hidden>
@@ -607,21 +616,143 @@
   }
 
   async function renderWialon() {
-    return renderIntegrationHub('wialon', 'Wialon Center', 'Central hub for Wialon hosting URLs, account trees, sync jobs, report templates and fleet mapping.', [
-      'Account tree', 'Sync status', 'Report templates', 'Fuel intelligence', 'Video streams',
-    ]);
+    const status = await MamsApi.api('/admin/centers/wialon').catch(() => ({ motherAccounts: [] }));
+    const mothers = status.motherAccounts || [];
+    const connected = mothers.filter((m) => m.connected).length;
+    const rows = mothers.map((m) => `<tr>
+      <td><strong>${esc(m.name)}</strong></td>
+      <td>${m.connected ? '<span class="badge badge-success">Connected</span>' : '<span class="badge badge-inactive">Idle</span>'}</td>
+      <td>${esc(m.accountTier || '—')}</td>
+      <td>${esc(m.linkedTenantCount ?? 0)}</td>
+      <td class="muted">${fmtDate(m.verifiedAt)}</td>
+      <td class="actions">
+        <button type="button" class="btn btn-sm btn-ghost" data-action="wialon-mother-test" data-id="${esc(m.id)}">Test</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="wialon-mother-delete" data-id="${esc(m.id)}">Delete</button>
+      </td>
+    </tr>`).join('');
+
+    return `<div class="kpi-grid">
+      ${kpi('Mother accounts', mothers.length)}
+      ${kpi('Connected', `${connected}/${mothers.length || 0}`)}
+      ${kpi('Linked clients', status.assignedAccountCount ?? 0)}
+      ${kpi('Status', status.connected ? 'Online' : (status.configured ? 'Configured' : 'Empty'))}
+    </div>
+    <div class="card mt-2">
+      <div class="card-header"><h3>Add mother account</h3></div>
+      <form id="wialon-mother-form" class="form-stack" style="max-width:520px">
+        <label><span>Display name</span><input class="input" name="name" placeholder="e.g. Mimito East Africa" /></label>
+        <label><span>API token</span><input class="input" name="token" type="password" required placeholder="Wialon access_token" autocomplete="off" /></label>
+        <label><span>API host (optional)</span><input class="input" name="baseUrl" placeholder="https://hst-api.wialon.com/wialon/ajax.html" /></label>
+        <p id="wialon-mother-error" class="error" hidden></p>
+        <button type="submit" class="btn">Save mother account</button>
+      </form>
+    </div>
+    <div class="card mt-2">
+      <div class="card-header"><h3>Saved mother accounts</h3><span class="muted">${mothers.length}</span></div>
+      ${tableWrap(['Name', 'Status', 'Tier', 'Linked', 'Verified', 'Actions'], rows, 'No mother accounts yet')}
+      <p class="muted mt-1">Clients pick a mother account, then link any admin/sub-account in that Wialon tree from the client Integrations tab.</p>
+    </div>`;
   }
 
   async function renderLoconav() {
-    return renderIntegrationHub('loconav', 'LocoNav Center', 'Manage LocoNav API credentials, device imports and live position sync for supported tenants.', [
-      'Credentials', 'Device sync', 'Live positions',
-    ]);
+    return renderSourceCenter('loconav', 'LocoNav Center', 'Client connections, fleet coverage, and webhook health');
   }
 
   async function renderTracksolid() {
-    return renderIntegrationHub('tracksolid', 'TrackSolid Center', 'TrackSolid / Jimi IoT integration for GPS trackers, commands and sensor data.', [
-      'Device registry', 'Commands', 'Sensor polling',
-    ]);
+    return renderSourceCenter('tracksolid', 'TrackSolid Center', 'Client connections, mapped assets, and alarm coverage');
+  }
+
+  async function renderSourceCenter(sourceType, title, subtitle) {
+    const data = await MamsApi.api(`/admin/centers/${sourceType}`).catch(() => ({ tenants: [] }));
+    const tenants = data.tenants || [];
+    const alerts24h = tenants.reduce((s, t) => s + (Number(t.alerts24h) || 0), 0);
+    const rows = tenants.map((t) => `<tr>
+      <td><strong>${esc(t.tenantName)}</strong><div class="muted">${esc(t.tenantSlug)}</div></td>
+      <td>${t.isActive ? '<span class="badge badge-success">Verified</span>' : '<span class="badge badge-inactive">Idle</span>'}</td>
+      <td>${esc(t.assetCount ?? 0)}</td>
+      <td>${esc(t.alerts24h ?? 0)}</td>
+      <td class="muted">${fmtDate(t.lastSyncAt)}</td>
+      <td class="muted">${esc(t.lastError || '—')}</td>
+      <td><a class="btn btn-sm btn-ghost" href="/admin/tenants">Open client</a></td>
+    </tr>`).join('');
+
+    return `<div class="integration-panel">
+      <h3>${esc(title)}</h3>
+      <p>${esc(subtitle)}</p>
+    </div>
+    <div class="kpi-grid mt-1">
+      ${kpi('Clients linked', data.tenantCount ?? tenants.length)}
+      ${kpi('Verified', data.connectedTenants ?? 0)}
+      ${kpi('Mapped assets', data.totalAssets ?? 0)}
+      ${kpi('Alerts (24h)', alerts24h)}
+    </div>
+    ${data.webhookNote ? `<div class="banner banner-info mt-1">${esc(data.webhookNote)}</div>` : ''}
+    <div class="card mt-2">
+      <div class="card-header"><h3>Client connections</h3>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="reload-module">Refresh</button>
+      </div>
+      ${tableWrap(['Client', 'Status', 'Assets', 'Alerts 24h', 'Last sync', 'Error', ''], rows, 'No clients configured for this source yet')}
+    </div>`;
+  }
+
+  async function loadLoginMediaPanels() {
+    const slidesRoot = document.getElementById('login-slides-admin-root');
+    const logosRoot = document.getElementById('login-logos-admin-root');
+    if (!slidesRoot && !logosRoot) return;
+
+    if (slidesRoot) {
+      try {
+        const data = await MamsApi.api('/admin/login-slides');
+        const slides = data.slides || [];
+        slidesRoot.innerHTML = slides.length
+          ? `<div class="feed-list">${slides.map((s) => `<div class="feed-item">
+              <div class="feed-item-main">
+                <strong>${esc(s.title)}</strong>
+                <div class="muted feed-item-sub">${esc(s.eyebrow || '')} · sort ${esc(s.sortOrder)}</div>
+                ${s.imageUrl ? `<img src="${esc(s.imageUrl)}" alt="" style="max-width:120px;max-height:64px;object-fit:cover;border-radius:6px;margin-top:0.35rem" />` : ''}
+              </div>
+              <div class="actions">
+                <span class="badge ${s.isEnabled ? 'badge-success' : 'badge-inactive'}">${s.isEnabled ? 'On' : 'Off'}</span>
+                <button type="button" class="btn btn-sm btn-ghost" data-action="media-slide-toggle" data-id="${esc(s.id)}" data-enabled="${s.isEnabled ? '1' : '0'}">${s.isEnabled ? 'Disable' : 'Enable'}</button>
+                <button type="button" class="btn btn-sm btn-ghost" data-action="media-slide-delete" data-id="${esc(s.id)}">Delete</button>
+              </div>
+            </div>`).join('')}</div>`
+          : '<p class="muted">No login slides yet.</p>';
+      } catch (ex) {
+        slidesRoot.innerHTML = `<div class="banner banner-error">${esc(ex.message || 'Failed to load slides')}</div>`;
+      }
+    }
+
+    if (logosRoot) {
+      try {
+        const data = await MamsApi.api('/admin/login-trust-logos');
+        const logos = data.logos || [];
+        logosRoot.innerHTML = logos.length
+          ? `<div class="feed-list">${logos.map((l) => `<div class="feed-item">
+              <div class="feed-item-main" style="display:flex;align-items:center;gap:0.75rem">
+                ${l.imageUrl ? `<img src="${esc(l.imageUrl)}" alt="" style="width:48px;height:32px;object-fit:contain" />` : ''}
+                <div><strong>${esc(l.name)}</strong><div class="muted feed-item-sub">sort ${esc(l.sortOrder)}</div></div>
+              </div>
+              <div class="actions">
+                <span class="badge ${l.isEnabled ? 'badge-success' : 'badge-inactive'}">${l.isEnabled ? 'On' : 'Off'}</span>
+                <button type="button" class="btn btn-sm btn-ghost" data-action="media-logo-toggle" data-id="${esc(l.id)}" data-enabled="${l.isEnabled ? '1' : '0'}">${l.isEnabled ? 'Disable' : 'Enable'}</button>
+                <button type="button" class="btn btn-sm btn-ghost" data-action="media-logo-delete" data-id="${esc(l.id)}">Delete</button>
+              </div>
+            </div>`).join('')}</div>`
+          : '<p class="muted">No trust logos yet.</p>';
+      } catch (ex) {
+        logosRoot.innerHTML = `<div class="banner banner-error">${esc(ex.message || 'Failed to load logos')}</div>`;
+      }
+    }
+  }
+
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Could not read file'));
+      reader.readAsDataURL(file);
+    });
   }
 
   async function renderSupport() {
@@ -824,6 +955,11 @@
     if (typeof window.__adminDashPaint === 'function') {
       window.__adminDashPaint();
     }
+
+    if (mod === 'system') {
+      // Prefetch login media so the Login media tab is ready
+      loadLoginMediaPanels();
+    }
   }
 
   content.addEventListener('click', async (e) => {
@@ -919,6 +1055,142 @@
         content.querySelectorAll('[data-action="switch-system-tab"]').forEach((el) => {
           el.classList.toggle('active', el === btn);
         });
+        if (tab === 'login') loadLoginMediaPanels();
+        return;
+      }
+
+      if (action === 'reload-module') {
+        await loadModule();
+        return;
+      }
+
+      if (action === 'media-slide-new') {
+        const title = prompt('Slide title:');
+        if (!title) return;
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = 'image/*';
+        fileInput.onchange = async () => {
+          try {
+            const file = fileInput.files && fileInput.files[0];
+            const payload = { title, details: '', eyebrow: '', sortOrder: 0, isEnabled: true };
+            if (file) {
+              payload.fileName = file.name;
+              payload.mimeType = file.type || 'image/jpeg';
+              payload.dataBase64 = await readFileAsDataUrl(file);
+            }
+            await MamsApi.api('/admin/login-slides', { method: 'POST', body: JSON.stringify(payload) });
+            await loadLoginMediaPanels();
+          } catch (ex) {
+            alert(ex.message || 'Failed to create slide');
+          }
+        };
+        fileInput.click();
+        return;
+      }
+
+      if (action === 'media-slide-toggle') {
+        try {
+          await MamsApi.api(`/admin/login-slides/${encodeURIComponent(btn.dataset.id)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ isEnabled: btn.dataset.enabled !== '1' }),
+          });
+          await loadLoginMediaPanels();
+        } catch (ex) {
+          alert(ex.message || 'Failed to update slide');
+        }
+        return;
+      }
+
+      if (action === 'media-slide-delete') {
+        if (!confirm('Delete this login slide?')) return;
+        try {
+          await MamsApi.api(`/admin/login-slides/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
+          await loadLoginMediaPanels();
+        } catch (ex) {
+          alert(ex.message || 'Failed to delete slide');
+        }
+        return;
+      }
+
+      if (action === 'media-logo-new') {
+        const name = prompt('Client / brand name:');
+        if (!name) return;
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = 'image/*';
+        fileInput.onchange = async () => {
+          try {
+            const file = fileInput.files && fileInput.files[0];
+            if (!file) {
+              alert('Logo image is required');
+              return;
+            }
+            await MamsApi.api('/admin/login-trust-logos', {
+              method: 'POST',
+              body: JSON.stringify({
+                name,
+                sortOrder: 0,
+                isEnabled: true,
+                fileName: file.name,
+                mimeType: file.type || 'image/png',
+                dataBase64: await readFileAsDataUrl(file),
+              }),
+            });
+            await loadLoginMediaPanels();
+          } catch (ex) {
+            alert(ex.message || 'Failed to create logo');
+          }
+        };
+        fileInput.click();
+        return;
+      }
+
+      if (action === 'media-logo-toggle') {
+        try {
+          await MamsApi.api(`/admin/login-trust-logos/${encodeURIComponent(btn.dataset.id)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ isEnabled: btn.dataset.enabled !== '1' }),
+          });
+          await loadLoginMediaPanels();
+        } catch (ex) {
+          alert(ex.message || 'Failed to update logo');
+        }
+        return;
+      }
+
+      if (action === 'media-logo-delete') {
+        if (!confirm('Delete this trust logo?')) return;
+        try {
+          await MamsApi.api(`/admin/login-trust-logos/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
+          await loadLoginMediaPanels();
+        } catch (ex) {
+          alert(ex.message || 'Failed to delete logo');
+        }
+        return;
+      }
+
+      if (action === 'wialon-mother-test') {
+        btn.disabled = true;
+        try {
+          const res = await MamsApi.api(`/admin/centers/wialon/mothers/${encodeURIComponent(btn.dataset.id)}/test`, { method: 'POST', body: '{}' });
+          alert(res.connected ? 'Connection OK — token verified.' : 'Test completed.');
+          await loadModule();
+        } catch (ex) {
+          alert(ex.message || 'Test failed');
+          btn.disabled = false;
+        }
+        return;
+      }
+
+      if (action === 'wialon-mother-delete') {
+        if (!confirm('Remove this mother account?')) return;
+        try {
+          await MamsApi.api(`/admin/centers/wialon/mothers/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
+          await loadModule();
+        } catch (ex) {
+          alert(ex.message || 'Delete failed');
+        }
         return;
       }
 
@@ -1018,6 +1290,28 @@
         await reloadTenants('');
       } catch (ex) {
         if (errEl) { errEl.textContent = ex.message || 'Failed to create client'; errEl.hidden = false; }
+      }
+      return;
+    }
+
+    if (form.id === 'wialon-mother-form') {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const errEl = document.getElementById('wialon-mother-error');
+      if (errEl) errEl.hidden = true;
+      try {
+        await MamsApi.api('/admin/centers/wialon/mothers', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: fd.get('name') || 'Mother account',
+            token: fd.get('token'),
+            baseUrl: fd.get('baseUrl') || undefined,
+          }),
+        });
+        form.reset();
+        await loadModule();
+      } catch (ex) {
+        if (errEl) { errEl.textContent = ex.message || 'Failed to save mother account'; errEl.hidden = false; }
       }
       return;
     }
