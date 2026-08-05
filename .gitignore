@@ -11,6 +11,7 @@ coverage/
 .env
 .env.local
 .env.*.local
+site/.env
 .env.platform.backup
 deploy/*.local.env
 deploy/hostinger.env

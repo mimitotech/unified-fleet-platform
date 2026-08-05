@@ -1,0 +1,640 @@
+<?php
+
+require_once __DIR__ . '/../../lib/Database.php';
+require_once __DIR__ . '/../../lib/Auth.php';
+require_once __DIR__ . '/../../lib/Response.php';
+
+class ClientController
+{
+    /** @param array<string, mixed> $row */
+    private static function camelCase(array $row): array
+    {
+        $out = [];
+        foreach ($row as $key => $value) {
+            $camel = preg_replace_callback('/_([a-z])/', static fn(array $m): string => strtoupper($m[1]), (string) $key);
+            $out[$camel] = $value;
+        }
+        return $out;
+    }
+
+    /** @param array<int, array<string, mixed>> $rows */
+    private static function camelRows(array $rows): array
+    {
+        return array_map([self::class, 'camelCase'], $rows);
+    }
+
+    /** @return array<string, mixed> */
+    private static function jsonInput(): array
+    {
+        $raw = file_get_contents('php://input');
+        if ($raw === false || $raw === '') {
+            return [];
+        }
+        $decoded = json_decode($raw, true);
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    private static function normalizeUploadPath(?string $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (preg_match('#^https?://localhost#i', $value)) {
+            $path = parse_url($value, PHP_URL_PATH);
+            return is_string($path) && $path !== '' ? $path : null;
+        }
+        if (str_starts_with($value, '/uploads/')) {
+            return $value;
+        }
+        return $value;
+    }
+
+    /** @return array<string, mixed> */
+    private static function currentUser(): array
+    {
+        Auth::requireAuth();
+        $user = Auth::user();
+        return is_array($user) ? $user : [];
+    }
+
+    private static function tenantId(): ?string
+    {
+        $user = self::currentUser();
+        $tenantId = $user['tenant_id'] ?? $user['tenantId'] ?? null;
+        return $tenantId !== null && $tenantId !== '' ? (string) $tenantId : null;
+    }
+
+    private static function requireTenantId(): string
+    {
+        $tenantId = self::tenantId();
+        if ($tenantId === null) {
+            Response::error('Tenant context required', 403);
+            exit;
+        }
+        return $tenantId;
+    }
+
+    private static function safeScalar(string $sql, array $params, string $label, int $default = 0): int
+    {
+        try {
+            $rows = Database::query($sql, $params);
+            if (!$rows) {
+                return $default;
+            }
+            $row = $rows[0];
+            $value = reset($row);
+            return is_numeric($value) ? (int) $value : $default;
+        } catch (Throwable $e) {
+            error_log("ClientController query failed ($label): " . $e->getMessage());
+            return $default;
+        }
+    }
+
+    /** GET /client/tenant */
+    public static function tenant(): void
+    {
+        $tenantId = self::requireTenantId();
+        $rows = Database::query('SELECT * FROM tenants WHERE id = ? LIMIT 1', [$tenantId]);
+        if (!$rows) {
+            Response::error('Tenant not found', 404);
+            return;
+        }
+        $t = $rows[0];
+        Response::success([
+            'id' => $t['id'],
+            'name' => $t['name'],
+            'slug' => $t['slug'],
+            'primaryColor' => $t['primary_color'] ?? null,
+            'secondaryColor' => $t['secondary_color'] ?? null,
+            'accentColor' => $t['accent_color'] ?? null,
+            'logoUrl' => self::normalizeUploadPath(isset($t['logo_url']) ? (string) $t['logo_url'] : null),
+            'faviconUrl' => self::normalizeUploadPath(isset($t['favicon_url']) ? (string) $t['favicon_url'] : null),
+            'customCss' => $t['custom_css'] ?? null,
+            'contactEmail' => $t['contact_email'] ?? null,
+            'phone' => $t['phone'] ?? null,
+            'timezone' => $t['timezone'] ?? null,
+        ]);
+    }
+
+    /** GET /client/modules */
+    public static function modules(): void
+    {
+        $tenantId = self::requireTenantId();
+        $user = self::currentUser();
+        $role = (string) ($user['role'] ?? 'viewer');
+        $userId = (string) ($user['id'] ?? '');
+
+        $connectedSources = Database::query(
+            'SELECT source_type FROM data_sources
+             WHERE tenant_id = ? AND is_active = 1 AND connection_verified_at IS NOT NULL',
+            [$tenantId]
+        );
+        $connected = [];
+        foreach ($connectedSources as $src) {
+            $connected[(string) $src['source_type']] = true;
+        }
+
+        $rows = Database::query(
+            'SELECT md.`key` AS module_key, md.label, md.icon, md.sources, md.sort_order,
+                    tm.is_enabled, COALESCE(tm.is_visible, 1) AS is_visible
+             FROM tenant_modules tm
+             JOIN module_definitions md ON md.`key` = tm.module_key
+             WHERE tm.tenant_id = ? AND tm.is_enabled = 1
+             ORDER BY md.sort_order',
+            [$tenantId]
+        );
+
+        $allowedAll = in_array($role, ['platform_admin', 'super_admin', 'tenant_admin'], true);
+        $userModuleKeys = null;
+        if ($userId !== '' && !$allowedAll) {
+            $userMods = Database::query(
+                'SELECT module_key, is_enabled FROM user_modules WHERE user_id = ?',
+                [$userId]
+            );
+            if ($userMods) {
+                $userModuleKeys = [];
+                foreach ($userMods as $mod) {
+                    if ((int) ($mod['is_enabled'] ?? 0) === 1) {
+                        $userModuleKeys[(string) $mod['module_key']] = true;
+                    }
+                }
+            }
+        }
+
+        $result = [];
+        foreach ($rows as $row) {
+            $moduleKey = (string) $row['module_key'];
+            if ($userModuleKeys !== null && !isset($userModuleKeys[$moduleKey])) {
+                continue;
+            }
+
+            $sources = [];
+            if (!empty($row['sources'])) {
+                $decoded = is_string($row['sources']) ? json_decode($row['sources'], true) : $row['sources'];
+                if (is_array($decoded)) {
+                    $sources = $decoded;
+                }
+            }
+
+            $integrationReady = count($sources) === 0;
+            if (!$integrationReady) {
+                foreach ($sources as $source) {
+                    if (isset($connected[(string) $source])) {
+                        $integrationReady = true;
+                        break;
+                    }
+                }
+            }
+
+            $result[] = [
+                'moduleKey' => $moduleKey,
+                'label' => $row['label'] ?? $moduleKey,
+                'icon' => $row['icon'] ?? null,
+                'sources' => $sources,
+                'sortOrder' => (int) ($row['sort_order'] ?? 0),
+                'isEnabled' => (bool) ((int) ($row['is_enabled'] ?? 0)),
+                'isVisible' => (bool) ((int) ($row['is_visible'] ?? 1)),
+                'integrationReady' => $integrationReady,
+            ];
+        }
+
+        Response::success($result);
+    }
+
+    /** GET /client/dashboard/kpis */
+    public static function dashboardKpis(): void
+    {
+        $tenantId = self::requireTenantId();
+
+        $totalAssets = self::safeScalar(
+            'SELECT COUNT(*) AS c FROM assets WHERE tenant_id = ?',
+            [$tenantId],
+            'assets'
+        );
+
+        $unackAlerts = self::safeScalar(
+            'SELECT COUNT(*) AS c FROM alerts WHERE tenant_id = ? AND acknowledged = 0',
+            [$tenantId],
+            'alerts_unack'
+        );
+
+        $criticalAlerts = self::safeScalar(
+            "SELECT COUNT(*) AS c FROM alerts
+             WHERE tenant_id = ? AND acknowledged = 0
+               AND severity IN ('critical', 'emergency')",
+            [$tenantId],
+            'alerts_critical'
+        );
+
+        $totalDrivers = self::safeScalar(
+            'SELECT COUNT(*) AS c FROM drivers WHERE tenant_id = ? AND deleted_at IS NULL',
+            [$tenantId],
+            'drivers'
+        );
+
+        $activeDrivers = self::safeScalar(
+            "SELECT COUNT(*) AS c FROM drivers
+             WHERE tenant_id = ? AND deleted_at IS NULL AND status = 'driving'",
+            [$tenantId],
+            'drivers_active'
+        );
+
+        $fuelTransactions30d = self::safeScalar(
+            'SELECT COUNT(*) AS c FROM fuel_transactions
+             WHERE tenant_id = ?
+               AND timestamp >= UNIX_TIMESTAMP(DATE_SUB(NOW(), INTERVAL 30 DAY))',
+            [$tenantId],
+            'fuel_transactions_30d'
+        );
+
+        $statusCounts = ['moving' => 0, 'idle' => 0, 'stopped' => 0, 'offline' => 0];
+        try {
+            $statusRows = Database::query(
+                'SELECT COALESCE(latest.status, \'offline\') AS status, COUNT(*) AS c
+                 FROM assets a
+                 LEFT JOIN (
+                     SELECT s1.asset_id, s1.status
+                     FROM asset_status s1
+                     INNER JOIN (
+                         SELECT asset_id, MAX(recorded_at) AS max_recorded_at
+                         FROM asset_status
+                         GROUP BY asset_id
+                     ) s2 ON s2.asset_id = s1.asset_id AND s2.max_recorded_at = s1.recorded_at
+                 ) latest ON latest.asset_id = a.id
+                 WHERE a.tenant_id = ?
+                 GROUP BY COALESCE(latest.status, \'offline\')',
+                [$tenantId]
+            );
+            foreach ($statusRows as $row) {
+                $status = (string) ($row['status'] ?? 'offline');
+                if (array_key_exists($status, $statusCounts)) {
+                    $statusCounts[$status] = (int) ($row['c'] ?? 0);
+                } else {
+                    $statusCounts['offline'] += (int) ($row['c'] ?? 0);
+                }
+            }
+        } catch (Throwable $e) {
+            error_log('ClientController dashboardKpis status counts: ' . $e->getMessage());
+        }
+
+        $moving = $statusCounts['moving'];
+        $idle = $statusCounts['idle'];
+        $stopped = $statusCounts['stopped'];
+        $offline = $statusCounts['offline'];
+
+        Response::success([
+            'totalVehicles' => $totalAssets,
+            'moving' => $moving,
+            'idle' => $idle,
+            'stopped' => $stopped,
+            'offline' => $offline,
+            'activeVehicles' => $moving + $idle + $stopped,
+            'criticalAlerts' => $criticalAlerts,
+            'unacknowledgedAlerts' => $unackAlerts,
+            'totalDrivers' => $totalDrivers,
+            'activeDrivers' => $activeDrivers,
+            'fuelTransactions30d' => $fuelTransactions30d,
+            'liveFromWialon' => false,
+        ]);
+    }
+
+    /** GET /client/fleet/snapshot */
+    public static function fleetSnapshot(): void
+    {
+        $tenantId = self::requireTenantId();
+
+        $rows = Database::query(
+            'SELECT a.id AS asset_id, a.name, a.registration_plate,
+                    ast.status, ast.latitude, ast.longitude, ast.speed, ast.fuel_level,
+                    ast.recorded_at, am.source_type, am.external_id
+             FROM assets a
+             LEFT JOIN asset_mappings am ON am.asset_id = a.id
+             LEFT JOIN asset_status ast ON ast.asset_id = a.id
+               AND ast.recorded_at = (
+                   SELECT MAX(s2.recorded_at) FROM asset_status s2 WHERE s2.asset_id = a.id
+               )
+             WHERE a.tenant_id = ?
+             ORDER BY a.name',
+            [$tenantId]
+        );
+
+        $byAsset = [];
+        foreach ($rows as $row) {
+            $assetId = (string) $row['asset_id'];
+            if (!isset($byAsset[$assetId])) {
+                $byAsset[$assetId] = [
+                    'row' => $row,
+                    'sources' => [],
+                ];
+            }
+            if (!empty($row['source_type']) && !empty($row['external_id'])) {
+                $byAsset[$assetId]['sources'][] = [
+                    'type' => (string) $row['source_type'],
+                    'id' => (string) $row['external_id'],
+                ];
+            }
+        }
+
+        $units = [];
+        $byStatus = ['moving' => 0, 'idle' => 0, 'stopped' => 0, 'offline' => 0];
+        $byKind = [];
+        $byHwName = [];
+        $withPosition = 0;
+        $latestRecordedAt = null;
+
+        foreach ($byAsset as $assetId => $entry) {
+            $row = $entry['row'];
+            $status = (string) ($row['status'] ?? 'offline');
+            if (!array_key_exists($status, $byStatus)) {
+                $status = 'offline';
+            }
+            $byStatus[$status]++;
+
+            $kind = 'tracker';
+            $byKind[$kind] = ($byKind[$kind] ?? 0) + 1;
+            $hwLabel = 'Unknown';
+            $byHwName[$hwLabel] = ($byHwName[$hwLabel] ?? 0) + 1;
+
+            $lat = isset($row['latitude']) ? (float) $row['latitude'] : null;
+            $lng = isset($row['longitude']) ? (float) $row['longitude'] : null;
+            $hasPos = $lat !== null && $lng !== null && !($lat == 0.0 && $lng == 0.0);
+            if ($hasPos) {
+                $withPosition++;
+            }
+
+            $wialonId = null;
+            foreach ($entry['sources'] as $source) {
+                if ($source['type'] === 'wialon' && ctype_digit($source['id'])) {
+                    $wialonId = (int) $source['id'];
+                    break;
+                }
+            }
+
+            $recordedAt = $row['recorded_at'] ?? null;
+            if ($recordedAt !== null) {
+                $ts = strtotime((string) $recordedAt);
+                if ($ts !== false && ($latestRecordedAt === null || $ts > $latestRecordedAt)) {
+                    $latestRecordedAt = $ts;
+                }
+            }
+
+            $unit = [
+                'id' => $wialonId !== null ? (string) $wialonId : $assetId,
+                'wialonId' => $wialonId,
+                'name' => (string) ($row['name'] ?? ('Unit ' . $assetId)),
+                'plate' => $row['registration_plate'] ?? null,
+                'kind' => $kind,
+                'hwName' => $hwLabel,
+                'modules' => [],
+                'hardware' => null,
+                'status' => $status,
+                'fuelLevel' => isset($row['fuel_level']) ? (float) $row['fuel_level'] : null,
+            ];
+
+            if ($hasPos) {
+                $unit['position'] = [
+                    'lat' => $lat,
+                    'lng' => $lng,
+                    'speed' => isset($row['speed']) ? (float) $row['speed'] : 0,
+                    'time' => $recordedAt ? strtotime((string) $recordedAt) : time(),
+                ];
+            }
+
+            $units[] = $unit;
+        }
+
+        Response::success([
+            'live' => false,
+            'stale' => false,
+            'fetchedAt' => $latestRecordedAt
+                ? gmdate('c', $latestRecordedAt)
+                : gmdate('c'),
+            'units' => $units,
+            'counts' => [
+                'total' => count($units),
+                'moving' => $byStatus['moving'],
+                'idle' => $byStatus['idle'],
+                'stopped' => $byStatus['stopped'],
+                'offline' => $byStatus['offline'],
+                'withPosition' => $withPosition,
+                'byKind' => $byKind,
+                'byHwName' => $byHwName,
+            ],
+            'assetCount' => count($units),
+        ]);
+    }
+
+    /** GET /client/assets */
+    public static function assets(): void
+    {
+        $tenantId = self::requireTenantId();
+
+        $rows = Database::query(
+            'SELECT a.id, a.name, a.registration_plate, a.vin, a.make, a.model, a.year,
+                    am.source_type, am.external_id
+             FROM assets a
+             JOIN asset_mappings am ON am.asset_id = a.id
+             WHERE a.tenant_id = ?
+             ORDER BY a.name',
+            [$tenantId]
+        );
+
+        $byAsset = [];
+        foreach ($rows as $row) {
+            $assetId = (string) $row['id'];
+            if (!isset($byAsset[$assetId])) {
+                $byAsset[$assetId] = [
+                    'id' => $assetId,
+                    'name' => (string) ($row['name'] ?? $assetId),
+                    'registrationPlate' => $row['registration_plate'] ?? null,
+                    'vin' => $row['vin'] ?? null,
+                    'make' => $row['make'] ?? null,
+                    'model' => $row['model'] ?? null,
+                    'year' => isset($row['year']) ? (int) $row['year'] : null,
+                    'tenantId' => $tenantId,
+                    'sources' => [],
+                ];
+            }
+            $byAsset[$assetId]['sources'][] = [
+                'type' => (string) ($row['source_type'] ?? ''),
+                'id' => (string) ($row['external_id'] ?? ''),
+            ];
+        }
+
+        if (!$byAsset) {
+            $fallback = Database::query(
+                'SELECT id, name, registration_plate, vin, make, model, year
+                 FROM assets WHERE tenant_id = ? ORDER BY name',
+                [$tenantId]
+            );
+            foreach ($fallback as $row) {
+                $assetId = (string) $row['id'];
+                $byAsset[$assetId] = [
+                    'id' => $assetId,
+                    'name' => (string) ($row['name'] ?? $assetId),
+                    'registrationPlate' => $row['registration_plate'] ?? null,
+                    'vin' => $row['vin'] ?? null,
+                    'make' => $row['make'] ?? null,
+                    'model' => $row['model'] ?? null,
+                    'year' => isset($row['year']) ? (int) $row['year'] : null,
+                    'tenantId' => $tenantId,
+                    'sources' => [],
+                ];
+            }
+        }
+
+        Response::success(array_values($byAsset));
+    }
+
+    /** GET /client/alerts */
+    public static function alerts(): void
+    {
+        $tenantId = self::requireTenantId();
+        $limit = 100;
+        if (isset($_GET['limit']) && is_numeric($_GET['limit'])) {
+            $limit = max(1, min(500, (int) $_GET['limit']));
+        }
+
+        $params = [$tenantId];
+        $sql = 'SELECT * FROM alerts WHERE tenant_id = ?';
+
+        if (isset($_GET['acknowledged'])) {
+            $ack = $_GET['acknowledged'] === 'true' ? 1 : 0;
+            $sql .= ' AND acknowledged = ?';
+            $params[] = $ack;
+        }
+
+        $sql .= ' ORDER BY COALESCE(occurred_at, created_at) DESC LIMIT ?';
+        $params[] = $limit;
+
+        $rows = Database::query($sql, $params);
+        $alerts = [];
+        foreach ($rows as $row) {
+            $alerts[] = [
+                'id' => (string) ($row['id'] ?? ''),
+                'type' => (string) ($row['type'] ?? ''),
+                'severity' => (string) ($row['severity'] ?? 'info'),
+                'title' => (string) ($row['title'] ?? ''),
+                'description' => $row['description'] ?? null,
+                'latitude' => isset($row['latitude']) ? (float) $row['latitude'] : null,
+                'longitude' => isset($row['longitude']) ? (float) $row['longitude'] : null,
+                'timestamp' => $row['occurred_at'] ?? $row['created_at'] ?? null,
+                'videoUrl' => $row['video_url'] ?? null,
+                'sourceType' => $row['source_type'] ?? null,
+                'externalId' => $row['external_id'] ?? null,
+                'assetId' => $row['asset_id'] ?? null,
+                'acknowledged' => (bool) ((int) ($row['acknowledged'] ?? 0)),
+            ];
+        }
+
+        Response::success($alerts);
+    }
+
+    /** GET /client/preferences */
+    public static function preferencesGet(): void
+    {
+        $user = self::currentUser();
+        $userId = (string) ($user['id'] ?? '');
+        if ($userId === '') {
+            Response::error('Unauthorized', 401);
+            return;
+        }
+
+        self::requireTenantId();
+
+        try {
+            $rows = Database::query(
+                'SELECT * FROM user_preferences WHERE user_id = ? LIMIT 1',
+                [$userId]
+            );
+            if ($rows) {
+                Response::success(self::camelCase($rows[0]));
+                return;
+            }
+        } catch (Throwable $e) {
+            error_log('ClientController preferencesGet: ' . $e->getMessage());
+        }
+
+        Response::success([
+            'language' => 'en',
+            'timezone' => 'UTC',
+            'dateFormat' => 'YYYY-MM-DD',
+            'timeFormat' => '24h',
+            'unitSystem' => 'metric',
+            'emailNotifications' => true,
+            'inAppNotifications' => true,
+            'smsNotifications' => false,
+        ]);
+    }
+
+    /** PUT /client/preferences */
+    public static function preferencesPut(): void
+    {
+        $user = self::currentUser();
+        $userId = (string) ($user['id'] ?? '');
+        if ($userId === '') {
+            Response::error('Unauthorized', 401);
+            return;
+        }
+
+        self::requireTenantId();
+        $body = self::jsonInput();
+
+        $dashboardLayout = null;
+        if (array_key_exists('dashboardLayout', $body)) {
+            $dashboardLayout = $body['dashboardLayout'] !== null
+                ? json_encode($body['dashboardLayout'])
+                : null;
+        }
+
+        try {
+            Database::query(
+                'INSERT INTO user_preferences (
+                    user_id, language, timezone, date_format, time_format, unit_system,
+                    email_notifications, in_app_notifications, sms_notifications, dashboard_layout, updated_at
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                 ON DUPLICATE KEY UPDATE
+                    language = COALESCE(VALUES(language), language),
+                    timezone = COALESCE(VALUES(timezone), timezone),
+                    date_format = COALESCE(VALUES(date_format), date_format),
+                    time_format = COALESCE(VALUES(time_format), time_format),
+                    unit_system = COALESCE(VALUES(unit_system), unit_system),
+                    email_notifications = COALESCE(VALUES(email_notifications), email_notifications),
+                    in_app_notifications = COALESCE(VALUES(in_app_notifications), in_app_notifications),
+                    sms_notifications = COALESCE(VALUES(sms_notifications), sms_notifications),
+                    dashboard_layout = COALESCE(VALUES(dashboard_layout), dashboard_layout),
+                    updated_at = NOW()',
+                [
+                    $userId,
+                    $body['language'] ?? null,
+                    $body['timezone'] ?? null,
+                    $body['dateFormat'] ?? null,
+                    $body['timeFormat'] ?? null,
+                    $body['unitSystem'] ?? null,
+                    array_key_exists('emailNotifications', $body) ? (int) (bool) $body['emailNotifications'] : null,
+                    array_key_exists('inAppNotifications', $body) ? (int) (bool) $body['inAppNotifications'] : null,
+                    array_key_exists('smsNotifications', $body) ? (int) (bool) $body['smsNotifications'] : null,
+                    $dashboardLayout,
+                ]
+            );
+
+            $rows = Database::query(
+                'SELECT * FROM user_preferences WHERE user_id = ? LIMIT 1',
+                [$userId]
+            );
+            Response::success($rows ? self::camelCase($rows[0]) : null);
+        } catch (Throwable $e) {
+            error_log('ClientController preferencesPut: ' . $e->getMessage());
+            Response::success([
+                'language' => $body['language'] ?? 'en',
+                'timezone' => $body['timezone'] ?? 'UTC',
+                'dateFormat' => $body['dateFormat'] ?? 'YYYY-MM-DD',
+                'timeFormat' => $body['timeFormat'] ?? '24h',
+                'unitSystem' => $body['unitSystem'] ?? 'metric',
+                'emailNotifications' => $body['emailNotifications'] ?? true,
+                'inAppNotifications' => $body['inAppNotifications'] ?? true,
+                'smsNotifications' => $body['smsNotifications'] ?? false,
+            ]);
+        }
+    }
+}

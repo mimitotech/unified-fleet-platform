@@ -1,0 +1,21 @@
+RewriteEngine On
+RewriteBase /
+
+# Block secrets
+RewriteRule ^\.env - [F,L]
+RewriteRule ^lib/ - [F,L]
+RewriteRule ^config/ - [F,L]
+
+# Health (same contract as Node)
+RewriteRule ^health$ index.php?route=health [L,QSA]
+
+# API
+RewriteRule ^api/(.*)$ api/index.php [QSA,L]
+
+# Existing files (assets, uploads)
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# SPA-style front controller
+RewriteRule ^ index.php [QSA,L]

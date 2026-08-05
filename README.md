@@ -15,19 +15,21 @@ repos/mams/                 ← Git clone AND domain document root
   .env                      ← create on server (not in git)
 ```
 
-## Production (StackCP + GitHub)
+## Production (StackCP + GitHub) — PHP site (current)
 
 | Setting | Value |
 |---------|--------|
 | Domain | https://mams.mimitotracking.co.ug |
 | Git repo | https://github.com/mimitotech/unified-fleet-platform.git |
 | Clone path | `repos/mams` |
-| Document root | `repos/mams` |
-| Entry | `hostinger-start.mjs` |
-| Node | 22.x |
+| Document root | **`repos/mams/site`** |
+| Stack | PHP 8.1+ / HTML / CSS / JS (no Node build) |
 | Branch | `master` |
+| Database | same MySQL: `mamsdb-35303030746b` / `nsamba` |
 
-**Reconnect guide:** [`deploy/GITHUB_RECONNECT.md`](deploy/GITHUB_RECONNECT.md)
+**Deploy guide:** [`deploy/PHP_SITE_DEPLOY.md`](deploy/PHP_SITE_DEPLOY.md)
+
+The legacy Node app (`hostinger-start.mjs`, `backend/`, `frontend/`) remains in the repo as reference while modules finish porting to `site/`.
 
 ## Local development
 
