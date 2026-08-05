@@ -4,6 +4,7 @@ const MamsApi = (() => {
   const TENANT_KEY = 'ufp_tenant_slug';
   const ROLE_KEY = 'ufp_role';
   const COOKIE_TOKEN_KEY = 'ufp_token';
+  let redirectInFlight = false;
 
   function readCookie(name) {
     try {
@@ -63,6 +64,8 @@ const MamsApi = (() => {
   }
 
   function redirectLogin() {
+    if (redirectInFlight) return;
+    redirectInFlight = true;
     clearAuth();
     const next = encodeURIComponent(location.pathname + location.search);
     location.href = '/auth/login' + (next && next !== '%2Fauth%2Flogin' ? '?next=' + next : '');
