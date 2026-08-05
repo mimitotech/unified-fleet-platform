@@ -22,13 +22,18 @@ import { createUploadsMiddleware } from './middleware/uploadsServe.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function resolveFrontendDist(): string | null {
+  const fromEnv = process.env.FRONTEND_DIST?.trim();
   const candidates = [
-    process.env.FRONTEND_DIST,
-    path.resolve(process.cwd(), 'public'),
+    fromEnv && path.isAbsolute(fromEnv) ? fromEnv : null,
+    fromEnv ? path.resolve(process.cwd(), fromEnv) : null,
+    // When cwd is not the app root, resolve FRONTEND_DIST from backend/dist → repo root
+    fromEnv && !path.isAbsolute(fromEnv)
+      ? path.resolve(__dirname, '../..', fromEnv)
+      : null,
     path.resolve(process.cwd(), 'frontend/dist'),
-    path.resolve(process.cwd(), '../frontend/dist'),
-    path.resolve(__dirname, '../public'),
+    path.resolve(process.cwd(), 'public'),
     path.resolve(__dirname, '../../frontend/dist'),
+    path.resolve(__dirname, '../public'),
   ]
     .filter(Boolean)
     .map((dir) => path.resolve(dir as string));
