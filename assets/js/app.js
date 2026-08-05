@@ -89,43 +89,48 @@
 
   /* Modules available for the quick-access grid — mirrors sidebar order */
   const QUICK_ACCESS_MODULES = [
-    { key: 'monitoring', label: 'Monitoring', icon: '◎' },
-    { key: 'surveillance', label: 'Surveillance', icon: '📹' },
-    { key: 'drivers', label: 'Drivers', icon: '👤' },
-    { key: 'routes', label: 'Routes', icon: '🛣' },
-    { key: 'fuel', label: 'Fuel', icon: '⛽' },
-    { key: 'emissions', label: 'Emissions', icon: '🌿' },
-    { key: 'workshop', label: 'Workshop', icon: '🔧' },
-    { key: 'alerts', label: 'Alerts', icon: '🔔' },
-    { key: 'trailers', label: 'Trailers', icon: '🚛' },
-    { key: 'sensors', label: 'Sensors', icon: '📊' },
-    { key: 'geofencing', label: 'Geofencing', icon: '📍' },
-    { key: 'commands', label: 'Commands', icon: '⌘' },
+    { key: 'monitoring', label: 'Monitoring', desc: 'Live map & list', icon: '◎' },
+    { key: 'surveillance', label: 'Surveillance', desc: 'Video & cameras', icon: '📹' },
+    { key: 'drivers', label: 'Drivers', desc: 'Roster & scores', icon: '👤' },
+    { key: 'routes', label: 'Routes', desc: 'Trips & plans', icon: '🛣' },
+    { key: 'fuel', label: 'Fuel', desc: 'Fills & analysis', icon: '⛽' },
+    { key: 'emissions', label: 'Emissions', desc: 'Eco metrics', icon: '🌿' },
+    { key: 'workshop', label: 'Workshop', desc: 'Jobs & inspections', icon: '🔧' },
+    { key: 'alerts', label: 'Alerts', desc: 'Events & notify', icon: '🔔' },
+    { key: 'trailers', label: 'Trailers', desc: 'Assets & coupling', icon: '🚛' },
+    { key: 'sensors', label: 'Sensors', desc: 'Telemetry', icon: '📊' },
+    { key: 'geofencing', label: 'Geofencing', desc: 'Zones', icon: '📍' },
+    { key: 'commands', label: 'Commands', desc: 'Remote control', icon: '⌘' },
   ];
 
   function quickAccessGrid() {
-    return `<div class="card mt-2">
-      <div class="card-header"><h3>Quick access</h3></div>
-      <div class="quick-access-grid">
-        ${QUICK_ACCESS_MODULES.map((m) => `<a class="quick-access-tile" href="/app/${m.key}">
-          <div class="qa-icon">${m.icon}</div>
-          <div class="qa-label">${esc(m.label)}</div>
-        </a>`).join('')}
-      </div>
+    return `<div class="quick-access-grid">
+      ${QUICK_ACCESS_MODULES.map((m) => `<a class="quick-access-tile" href="/app/${m.key}">
+        <div class="qa-icon">${m.icon}</div>
+        <div class="qa-label">${esc(m.label)}</div>
+        <div class="qa-desc">${esc(m.desc)}</div>
+      </a>`).join('')}
     </div>`;
   }
 
   /* ── Module renderers ── */
   async function renderDashboard() {
-    const [kpis, snap, integrations] = await Promise.all([
+    const [kpis, snap, integrations, alerts] = await Promise.all([
       MamsApi.api('/client/dashboard/kpis'),
       MamsApi.api('/client/fleet/snapshot').catch(() => ({ units: [] })),
       MamsApi.api('/client/integrations/status').catch(() => []),
+      MamsApi.api('/client/alerts').catch(() => []),
     ]);
     const units = snap.units || [];
     const intList = Array.isArray(integrations) ? integrations : [];
+    const alertList = Array.isArray(alerts) ? alerts : alerts.alerts || [];
+    const openAlerts = alertList.filter((a) => !a.acknowledged).length;
     const online = intList.filter((i) => i.connected).length;
-    const rows = units.slice(0, 20).map((u) => `<tr>
+    const moving = kpis.moving ?? 0;
+    const total = kpis.totalVehicles ?? units.length;
+    const util = total ? Math.round((moving / total) * 100) : 0;
+
+    const rows = units.slice(0, 12).map((u) => `<tr>
       <td><strong>${esc(u.name)}</strong>${u.plate ? `<br><span class="muted">${esc(u.plate)}</span>` : ''}</td>
       <td>${statusBadge(u.status)}</td>
       <td>${u.position ? `${Number(u.position.speed || 0).toFixed(0)} km/h` : '—'}</td>
@@ -133,19 +138,38 @@
       <td class="muted">${u.position ? fmtDate(u.position.time * 1000) : '—'}</td>
     </tr>`).join('');
 
-    return `<div class="kpi-grid">
-      ${kpi('Online sources', intList.length ? `${online}/${intList.length}` : '—')}
-      ${kpi('Assets', kpis.totalVehicles ?? 0)}
-      ${kpi('Moving', kpis.moving ?? 0)}
-      ${kpi('Idle', kpis.idle ?? 0)}
-      ${kpi('Alerts', kpis.unacknowledgedAlerts ?? 0, kpis.criticalAlerts ? kpis.criticalAlerts + ' critical' : '')}
-      ${kpi('Drivers', kpis.totalDrivers ?? 0, (kpis.activeDrivers ?? 0) + ' active')}
-      ${kpi('Fuel tx (30d)', kpis.fuelTransactions30d ?? 0)}
+    return `
+    <div class="dash-meta">
+      <div><span class="muted">Fleet</span><strong>${total} assets</strong></div>
+      <div><span class="muted">Online</span><strong>${online}/${intList.length || '—'}</strong></div>
+      <div><span class="muted">Utilization</span><strong>${util}%</strong></div>
+      <div><span class="muted">Open alerts</span><strong>${openAlerts || (kpis.unacknowledgedAlerts ?? 0)}</strong></div>
     </div>
-    ${quickAccessGrid()}
+    <div class="metric-strip">
+      ${metricCard('Assets', total, 'Total fleet units')}
+      ${metricCard('Online', moving + (kpis.idle ?? 0), 'Moving + idle')}
+      ${metricCard('Moving', moving, 'In motion now')}
+      ${metricCard('Idle', kpis.idle ?? 0, 'Engine on, stopped')}
+      ${metricCard('Alerts', openAlerts || (kpis.unacknowledgedAlerts ?? 0), (kpis.criticalAlerts ?? 0) + ' critical')}
+      ${metricCard('Drivers', kpis.totalDrivers ?? 0, (kpis.activeDrivers ?? 0) + ' active')}
+      ${metricCard('Fuel tx', kpis.fuelTransactions30d ?? 0, 'Last 30 days')}
+      ${metricCard('Sources', intList.length ? `${online}/${intList.length}` : '—', 'Integrations linked')}
+    </div>
+    <div class="dash-section">
+      <div class="dash-section-label">Quick access · your modules</div>
+      ${quickAccessGrid()}
+    </div>
     <div class="card mt-2">
-      <div class="card-header"><h3>Fleet snapshot</h3><span class="muted">${units.length} units</span></div>
+      <div class="card-header"><h3>Live fleet snapshot</h3><span class="muted">${units.length} units</span></div>
       ${tableWrap(['Asset', 'Status', 'Speed', 'Fuel', 'Updated'], rows, 'No fleet units')}
+    </div>`;
+  }
+
+  function metricCard(label, value, sub) {
+    return `<div class="metric-card">
+      <div class="metric-label">${esc(label)}</div>
+      <div class="metric-value">${esc(value)}</div>
+      ${sub ? `<div class="metric-sub">${esc(sub)}</div>` : ''}
     </div>`;
   }
 

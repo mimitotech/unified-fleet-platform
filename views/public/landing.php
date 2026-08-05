@@ -1,3 +1,4 @@
+<div class="landing-page">
 <nav class="site-nav" id="site-nav">
   <div class="site-nav-inner">
     <a href="/" class="site-nav-brand">
@@ -172,6 +173,7 @@
     </div>
   </div>
 </footer>
+</div>
 <script>
   document.getElementById('site-nav-toggle')?.addEventListener('click', () => {
     const m = document.getElementById('site-nav-mobile');

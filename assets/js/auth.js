@@ -7,9 +7,13 @@
   const next = params.get('next');
 
   function showView(view) {
-    loginForm.hidden = view !== 'login';
-    forgotForm.hidden = view !== 'forgot';
-    resetForm.hidden = view !== 'reset';
+    const map = { login: loginForm, forgot: forgotForm, reset: resetForm };
+    Object.entries(map).forEach(([key, el]) => {
+      if (!el) return;
+      const on = key === view;
+      el.hidden = !on;
+      el.style.display = on ? '' : 'none';
+    });
     if (subtitle) {
       subtitle.textContent =
         view === 'login' ? 'Mimito Asset Management System'
@@ -17,6 +21,9 @@
             : 'Choose a new password';
     }
   }
+
+  // Ensure forgot/reset start hidden even if CSS races
+  showView('login');
 
   function showErr(el, msg) {
     if (!el) return;
@@ -115,6 +122,7 @@
   const dotsEl = document.getElementById('login-dots');
   let slideIdx = 0;
   let slides = [];
+  let slideTimer = null;
 
   const DEFAULT_SLIDES = [
     { id: 'default-1', src: '/assets/img/gps.jpg' },
@@ -123,9 +131,10 @@
   ];
 
   function renderSlides(list) {
+    if (slideTimer) { clearInterval(slideTimer); slideTimer = null; }
     slides = list.length ? list : DEFAULT_SLIDES;
     slidesEl.innerHTML = slides.map((s, i) =>
-      `<div class="login-slide${i === 0 ? ' is-active' : ''}"><img src="${s.src}" alt="" draggable="false" /></div>`
+      `<div class="login-slide${i === 0 ? ' is-active' : ''}"><img src="${s.src}" alt="" draggable="false" onerror="this.src='/assets/img/gp1.png'" /></div>`
     ).join('');
     if (slides.length > 1) {
       dotsEl.hidden = false;
@@ -133,7 +142,10 @@
         `<button type="button" class="${i === 0 ? 'is-active' : ''}" data-i="${i}" aria-label="Slide ${i + 1}"></button>`
       ).join('');
       dotsEl.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => goSlide(+b.dataset.i)));
-      setInterval(() => goSlide((slideIdx + 1) % slides.length), 6500);
+      slideTimer = setInterval(() => goSlide((slideIdx + 1) % slides.length), 6500);
+    } else {
+      dotsEl.hidden = true;
+      dotsEl.innerHTML = '';
     }
   }
 
@@ -145,7 +157,17 @@
 
   MamsApi.api('/public/login-slides').then((data) => {
     const rows = (data.slides || data || []).filter((s) => s.imageUrl || s.src);
+    // Prefer CMS slides when present; still fall back to brand defaults if empty
     renderSlides(rows.map((s) => ({ id: s.id, src: s.imageUrl || s.src })));
+    // If CMS images fail to paint, swap to defaults after a short check
+    setTimeout(() => {
+      const imgs = slidesEl.querySelectorAll('img');
+      let broken = 0;
+      imgs.forEach((img) => {
+        if (!img.complete || img.naturalWidth === 0) broken += 1;
+      });
+      if (broken === imgs.length && imgs.length) renderSlides([]);
+    }, 1200);
   }).catch(() => renderSlides([]));
 
   MamsApi.api('/public/login-trust-logos').then((data) => {
