@@ -1186,6 +1186,8 @@
 
   let currentUserRole = '';
   let currentTenantName = 'MAMS';
+  let alertsPollId = null;
+  let statusPollId = null;
 
   /** Sets static topbar/menu icons from MamsIcons — parity with React ICON_MAP. */
   function initTopbarIcons() {
@@ -1203,6 +1205,8 @@
 
   document.getElementById('logout-btn')?.addEventListener('click', () => {
     MamsApi.clearAuth();
+    if (alertsPollId) clearInterval(alertsPollId);
+    if (statusPollId) clearInterval(statusPollId);
     location.href = '/auth/login';
   });
 
@@ -1601,8 +1605,8 @@
       await initClientNav(isAdmin);
       refreshAlertsBell();
       refreshStatusPill();
-      setInterval(refreshAlertsBell, 60000);
-      setInterval(refreshStatusPill, 60000);
+      alertsPollId = setInterval(refreshAlertsBell, 60000);
+      statusPollId = setInterval(refreshStatusPill, 60000);
 
       await loadModule();
     } catch (e) {
