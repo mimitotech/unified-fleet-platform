@@ -435,29 +435,85 @@
 
     const logs = Array.isArray(audit) ? audit : audit.logs || [];
     const logList = logs.slice(0, 30);
+    const map = settings && typeof settings.map === 'object' ? settings.map : {};
+    const readCfg = (key, fallback) => {
+      const v = map?.[key];
+      return v && typeof v === 'object' ? v : fallback;
+    };
+    const general = readCfg('general', { platformName: 'MAMS — Mimito Asset Management System', defaultLanguage: 'en', defaultTimezone: 'UTC' });
+    const email = readCfg('email', { smtpHost: '', smtpPort: 587, fromEmail: '', fromName: '' });
+    const security = readCfg('security', { minPasswordLength: 8, sessionTimeoutMinutes: 30, requireSpecialChar: false });
+    const backup = readCfg('backup', { autoBackup: true, frequency: 'daily', retentionDays: 30 });
+    const webhooks = readCfg('webhooks', { alertsEvents: true, statusUpdates: true });
     return `<div class="kpi-grid">
       ${kpi('Status', health.overall || health.status || '—')}
       ${kpi('Database', dbOk ? 'Connected' : (health.database?.status || '—'))}
       ${kpi('API', health.api?.status || 'ok')}
       ${kpi('Settings', settingsList.length)}
     </div>
-    <div class="grid-2 mt-2">
-      <div class="card">
-        <div class="card-header"><h3>System settings</h3></div>
+    <div class="card mt-2">
+      <div class="card-header"><h3>System settings</h3></div>
+      <div class="toolbar" style="display:flex;gap:.5rem;flex-wrap:wrap">
+        <button type="button" class="btn btn-sm btn-ghost active" data-action="switch-system-tab" data-tab="general">General</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="switch-system-tab" data-tab="login">Login media</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="switch-system-tab" data-tab="email">Email</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="switch-system-tab" data-tab="webhooks">Webhooks</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="switch-system-tab" data-tab="backup">Backup</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="switch-system-tab" data-tab="security">Security</button>
+      </div>
+      <div id="system-tab-general" class="mt-1">
+        <div class="settings-grid" data-setting-form="general">
+          <label>Platform name<input class="input" data-setting-field="platformName" value="${esc(general.platformName || '')}" /></label>
+          <label>Default language<input class="input" data-setting-field="defaultLanguage" value="${esc(general.defaultLanguage || '')}" /></label>
+          <label>Default timezone<input class="input" data-setting-field="defaultTimezone" value="${esc(general.defaultTimezone || '')}" /></label>
+        </div>
+        <button type="button" class="btn btn-sm mt-1" data-action="save-system-setting" data-key="general">Save general</button>
+      </div>
+      <div id="system-tab-login" class="mt-1" hidden>
+        <p class="muted">Login media can be managed using the platform login slides and trust logos admin endpoints.</p>
         <div class="settings-grid">
-          ${settingsList.slice(0, 12).map((s) => {
-            const v = s.value;
-            const display = v != null && typeof v === 'object' ? JSON.stringify(v) : (v ?? '—');
-            return `<div><span class="muted">${esc(s.key || s.name)}</span><div><strong>${esc(display)}</strong></div></div>`;
-          }).join('') || '<p class="muted">No settings rows</p>'}
+          <div class="setting-item"><span class="muted">Slides endpoint</span><div><code>/api/public/login-slides</code></div></div>
+          <div class="setting-item"><span class="muted">Trust logos endpoint</span><div><code>/api/public/login-trust-logos</code></div></div>
         </div>
       </div>
-      <div class="card">
-        <div class="card-header"><h3>Recent audit</h3></div>
-        <div class="table-wrap"><table class="table"><thead><tr><th>Action</th><th>User</th><th>When</th></tr></thead><tbody>
-          ${logList.map((l) => `<tr><td>${esc(l.action)}</td><td>${esc(l.userEmail || l.user_email || '—')}</td><td class="muted">${fmtDate(l.createdAt || l.created_at)}</td></tr>`).join('') || '<tr><td colspan="3">No audit entries</td></tr>'}
-        </tbody></table></div>
+      <div id="system-tab-email" class="mt-1" hidden>
+        <div class="settings-grid" data-setting-form="email">
+          <label>SMTP host<input class="input" data-setting-field="smtpHost" value="${esc(email.smtpHost || '')}" /></label>
+          <label>SMTP port<input class="input" type="number" data-setting-field="smtpPort" value="${esc(email.smtpPort ?? 587)}" /></label>
+          <label>From email<input class="input" data-setting-field="fromEmail" value="${esc(email.fromEmail || '')}" /></label>
+          <label>From name<input class="input" data-setting-field="fromName" value="${esc(email.fromName || '')}" /></label>
+        </div>
+        <button type="button" class="btn btn-sm mt-1" data-action="save-system-setting" data-key="email">Save email</button>
       </div>
+      <div id="system-tab-webhooks" class="mt-1" hidden>
+        <div class="settings-grid" data-setting-form="webhooks">
+          <label><input type="checkbox" data-setting-field="alertsEvents" ${webhooks.alertsEvents !== false ? 'checked' : ''} /> Alerts events</label>
+          <label><input type="checkbox" data-setting-field="statusUpdates" ${webhooks.statusUpdates !== false ? 'checked' : ''} /> Status updates</label>
+        </div>
+        <button type="button" class="btn btn-sm mt-1" data-action="save-system-setting" data-key="webhooks">Save webhooks</button>
+      </div>
+      <div id="system-tab-backup" class="mt-1" hidden>
+        <div class="settings-grid" data-setting-form="backup">
+          <label><input type="checkbox" data-setting-field="autoBackup" ${backup.autoBackup !== false ? 'checked' : ''} /> Auto backup enabled</label>
+          <label>Frequency<input class="input" data-setting-field="frequency" value="${esc(backup.frequency || 'daily')}" /></label>
+          <label>Retention days<input class="input" type="number" data-setting-field="retentionDays" value="${esc(backup.retentionDays ?? 30)}" /></label>
+        </div>
+        <button type="button" class="btn btn-sm mt-1" data-action="save-system-setting" data-key="backup">Save backup</button>
+      </div>
+      <div id="system-tab-security" class="mt-1" hidden>
+        <div class="settings-grid" data-setting-form="security">
+          <label>Min password length<input class="input" type="number" data-setting-field="minPasswordLength" value="${esc(security.minPasswordLength ?? 8)}" /></label>
+          <label>Session timeout (minutes)<input class="input" type="number" data-setting-field="sessionTimeoutMinutes" value="${esc(security.sessionTimeoutMinutes ?? 30)}" /></label>
+          <label><input type="checkbox" data-setting-field="requireSpecialChar" ${security.requireSpecialChar ? 'checked' : ''} /> Require special characters</label>
+        </div>
+        <button type="button" class="btn btn-sm mt-1" data-action="save-system-setting" data-key="security">Save security</button>
+      </div>
+    </div>
+    <div class="card mt-2">
+      <div class="card-header"><h3>Recent audit</h3></div>
+      <div class="table-wrap"><table class="table"><thead><tr><th>Action</th><th>User</th><th>When</th></tr></thead><tbody>
+        ${logList.map((l) => `<tr><td>${esc(l.action)}</td><td>${esc(l.userEmail || l.user_email || '—')}</td><td class="muted">${fmtDate(l.createdAt || l.created_at)}</td></tr>`).join('') || '<tr><td colspan="3">No audit entries</td></tr>'}
+      </tbody></table></div>
     </div>`;
   }
 
@@ -480,16 +536,23 @@
         'Wialon', 'LocoNav', 'TrackSolid', 'Fuel cards', 'ERP',
       ]);
     }
-    const rows = list.map((i) => {
+    const cards = list.map((i) => {
       const enabled = i.isEnabledGlobally ?? i.enabled ?? (i.status === 'active');
-      return `<tr>
-        <td><strong>${esc(i.name || i.key || i.id)}</strong></td>
-        <td>${esc(i.category || i.type || '—')}</td>
-        <td>${statusBadge(enabled ? 'active' : 'inactive')}</td>
-        <td>${i.key ? `<button type="button" class="btn btn-sm btn-ghost" data-action="toggle-marketplace" data-key="${esc(i.key)}" data-enabled="${enabled ? '1' : '0'}">${enabled ? 'Disable' : 'Enable'}</button>` : '—'}</td>
-      </tr>`;
+      const builtIn = !!(i.isBuiltin || i.is_builtin);
+      return `<div class="card">
+        <div class="card-header">
+          <h3>${esc(i.name || i.key || i.id)}</h3>
+          <span class="badge ${builtIn ? 'badge-brand' : 'badge-inactive'}">${builtIn ? 'Built-in' : 'Plugin'}</span>
+        </div>
+        <p class="muted">${esc(i.description || 'Platform integration')}</p>
+        <div class="settings-grid mt-1">
+          <div><span class="muted">Category</span><div>${esc(i.category || i.type || '—')}</div></div>
+          <div><span class="muted">State</span><div>${enabled ? 'Enabled' : 'Available'}</div></div>
+        </div>
+        ${i.key ? `<button type="button" class="btn btn-sm btn-ghost mt-1" data-action="toggle-marketplace" data-key="${esc(i.key)}" data-enabled="${enabled ? '1' : '0'}">${enabled ? 'Disable globally' : 'Enable globally'}</button>` : ''}
+      </div>`;
     }).join('');
-    return `<div class="card">${tableWrap(['Integration', 'Category', 'Status', 'Actions'], rows, 'No marketplace items')}</div>`;
+    return `<div class="chart-grid chart-grid-3">${cards}</div>`;
   }
 
   async function hubIntegrationHtml(tenantId, sourceType) {
@@ -527,6 +590,11 @@
       <div style="margin-top:1.25rem;display:flex;flex-wrap:wrap;gap:0.5rem;justify-content:center">
         ${features.map((f) => `<span class="badge badge-brand">${esc(f)}</span>`).join('')}
       </div>
+    </div>
+    <div class="kpi-grid mt-1">
+      ${kpi('Clients', tenants.length)}
+      ${kpi('Source', SOURCE_LABELS[sourceType] || sourceType)}
+      ${kpi('Scope', tenants.length ? 'Per-tenant status' : 'No clients yet')}
     </div>
     <div class="card mt-2">
       <div class="card-header"><h3>Client integration status</h3></div>
@@ -618,9 +686,11 @@
 
   const content = document.getElementById('admin-content');
   if (!content) return;
+  let footerHealthPollId = null;
 
   document.getElementById('logout-btn')?.addEventListener('click', () => {
     MamsApi.clearAuth();
+    if (footerHealthPollId) clearInterval(footerHealthPollId);
     location.href = '/auth/login';
   });
 
@@ -841,6 +911,57 @@
         return;
       }
 
+      if (action === 'switch-system-tab') {
+        const tab = btn.dataset.tab || 'general';
+        content.querySelectorAll('[id^="system-tab-"]').forEach((el) => {
+          el.hidden = el.id !== `system-tab-${tab}`;
+        });
+        content.querySelectorAll('[data-action="switch-system-tab"]').forEach((el) => {
+          el.classList.toggle('active', el === btn);
+        });
+        return;
+      }
+
+      if (action === 'save-system-setting') {
+        const key = btn.dataset.key;
+        if (!key) return;
+        const form = content.querySelector(`[data-setting-form="${key}"]`);
+        if (!form) return;
+
+        const payload = {};
+        form.querySelectorAll('[data-setting-field]').forEach((el) => {
+          const field = el.dataset.settingField;
+          if (!field) return;
+          if (el.type === 'checkbox') {
+            payload[field] = !!el.checked;
+            return;
+          }
+          if (el.type === 'number') {
+            payload[field] = el.value === '' ? null : Number(el.value);
+            return;
+          }
+          payload[field] = el.value;
+        });
+
+        btn.disabled = true;
+        const prevText = btn.textContent;
+        btn.textContent = 'Saving…';
+        try {
+          await MamsApi.api(`/admin/system/settings/${encodeURIComponent(key)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ value: payload }),
+          });
+          btn.textContent = 'Saved';
+          setTimeout(() => { btn.textContent = prevText; }, 1000);
+        } catch (ex) {
+          alert(ex.message || 'Failed to save setting');
+          btn.textContent = prevText;
+        } finally {
+          btn.disabled = false;
+        }
+        return;
+      }
+
       return;
     }
 
@@ -946,7 +1067,7 @@
       buildNav(user.role);
 
       refreshFooterHealth();
-      setInterval(refreshFooterHealth, 60000);
+      footerHealthPollId = setInterval(refreshFooterHealth, 60000);
 
       await loadModule();
     } catch (e) {
