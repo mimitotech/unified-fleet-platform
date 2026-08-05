@@ -774,6 +774,152 @@ class AdminController
         }
     }
 
+    /** POST /admin/system-users */
+    public static function systemUsersCreate(): void
+    {
+        $actor = self::currentUser();
+        if (($actor['role'] ?? '') !== 'super_admin') {
+            Response::error('Super admin required', 403);
+            return;
+        }
+
+        $body = Auth::jsonBody();
+        $email = strtolower(trim((string) ($body['email'] ?? '')));
+        $password = (string) ($body['password'] ?? '');
+        $fullName = trim((string) ($body['fullName'] ?? ''));
+        $role = (($body['role'] ?? '') === 'super_admin') ? 'super_admin' : 'platform_admin';
+
+        if ($email === '' || $password === '') {
+            Response::error('email and password required', 400);
+            return;
+        }
+        if (strlen($password) < 8) {
+            Response::error('Password must be at least 8 characters', 400);
+            return;
+        }
+
+        $id = self::uuid();
+        try {
+            Database::execute(
+                'INSERT INTO users (id, tenant_id, email, password_hash, full_name, role, is_active, created_at, updated_at)
+                 VALUES (?, NULL, ?, ?, ?, ?, 1, NOW(), NOW())',
+                [$id, $email, password_hash($password, PASSWORD_BCRYPT), $fullName !== '' ? $fullName : $email, $role]
+            );
+            Response::success([
+                'id' => $id,
+                'email' => $email,
+                'fullName' => $fullName !== '' ? $fullName : $email,
+                'role' => $role,
+                'isActive' => true,
+            ], 201);
+        } catch (Throwable $e) {
+            error_log('AdminController systemUsersCreate: ' . $e->getMessage());
+            Response::error('Failed to create system user (email may already exist)', 500);
+        }
+    }
+
+    /** PATCH /admin/system-users/:id */
+    public static function systemUsersPatch(?string $id = null): void
+    {
+        $actor = self::currentUser();
+        if (($actor['role'] ?? '') !== 'super_admin') {
+            Response::error('Super admin required', 403);
+            return;
+        }
+        $userId = $id ?? '';
+        if ($userId === '') {
+            Response::error('User id required', 400);
+            return;
+        }
+
+        $body = Auth::jsonBody();
+        $fields = [];
+        $params = [];
+        if (array_key_exists('isActive', $body)) {
+            $fields[] = 'is_active = ?';
+            $params[] = (bool) $body['isActive'] ? 1 : 0;
+        }
+        if (array_key_exists('fullName', $body)) {
+            $fields[] = 'full_name = ?';
+            $params[] = (string) $body['fullName'];
+        }
+        if (isset($body['role']) && in_array($body['role'], ['super_admin', 'platform_admin'], true)) {
+            $fields[] = 'role = ?';
+            $params[] = (string) $body['role'];
+        }
+        if (!$fields) {
+            Response::error('No fields to update', 400);
+            return;
+        }
+        $params[] = $userId;
+
+        try {
+            $updated = Database::execute(
+                "UPDATE users SET " . implode(', ', $fields) . ", updated_at = NOW()
+                 WHERE id = ? AND tenant_id IS NULL AND role IN ('super_admin', 'platform_admin')",
+                $params
+            );
+            if ($updated === 0) {
+                Response::error('System user not found', 404);
+                return;
+            }
+            $rows = Database::query(
+                'SELECT id, email, full_name, role, is_active FROM users WHERE id = ? LIMIT 1',
+                [$userId]
+            );
+            $row = $rows[0] ?? [];
+            Response::success([
+                'id' => $row['id'] ?? $userId,
+                'email' => $row['email'] ?? null,
+                'fullName' => $row['full_name'] ?? null,
+                'role' => $row['role'] ?? null,
+                'isActive' => (bool) ((int) ($row['is_active'] ?? 0)),
+            ]);
+        } catch (Throwable $e) {
+            error_log('AdminController systemUsersPatch: ' . $e->getMessage());
+            Response::error('Failed to update system user', 500);
+        }
+    }
+
+    /** POST /admin/system-users/:id/reset-password */
+    public static function systemUsersResetPassword(?string $id = null): void
+    {
+        $actor = self::currentUser();
+        if (($actor['role'] ?? '') !== 'super_admin') {
+            Response::error('Super admin required', 403);
+            return;
+        }
+        $userId = $id ?? '';
+        if ($userId === '') {
+            Response::error('User id required', 400);
+            return;
+        }
+        $body = Auth::jsonBody();
+        $password = trim((string) ($body['password'] ?? ''));
+        if ($password === '') {
+            $password = bin2hex(random_bytes(8));
+        }
+        if (strlen($password) < 8) {
+            Response::error('Password must be at least 8 characters', 400);
+            return;
+        }
+        try {
+            $updated = Database::execute(
+                "UPDATE users SET password_hash = ?, updated_at = NOW()
+                 WHERE id = ? AND tenant_id IS NULL AND role IN ('super_admin', 'platform_admin')",
+                [password_hash($password, PASSWORD_BCRYPT), $userId]
+            );
+            if ($updated === 0) {
+                Response::error('System user not found', 404);
+                return;
+            }
+            Response::success(['reset' => true, 'temporaryPassword' => $password]);
+        } catch (Throwable $e) {
+            error_log('AdminController systemUsersResetPassword: ' . $e->getMessage());
+            Response::error('Failed to reset password', 500);
+        }
+    }
+
     /** GET /admin/tenants/:id/modules */
     public static function tenantModules(?string $id = null): void
     {
@@ -1453,11 +1599,12 @@ class AdminController
         }
     }
 
-    /** POST /admin/centers/wialon/mothers/:id/test — marks verified when token decrypts (full probe later) */
+    /** POST /admin/centers/wialon/mothers/:id/test */
     public static function wialonMothersTest(?string $id = null): void
     {
         self::currentUser();
         require_once __DIR__ . '/../../lib/Crypto.php';
+        require_once __DIR__ . '/../../lib/WialonHierarchy.php';
         $motherId = $id ?? '';
         if ($motherId === '') {
             Response::error('Mother id required', 400);
@@ -1482,20 +1629,26 @@ class AdminController
                 Response::error('Mother account token is missing', 400);
                 return;
             }
+            $baseUrl = $rows[0]['base_url'] ?? ($creds['baseUrl'] ?? null);
+            $probe = WialonHierarchy::probe($token, is_string($baseUrl) ? $baseUrl : null);
+
+            $meta = json_encode([
+                'baseUrl' => $baseUrl ?: 'https://hst-api.wialon.com/wialon/ajax.html',
+                'counts' => $probe['counts'] ?? [],
+                'accountTier' => $probe['accountTier'] ?? null,
+                'probedAt' => gmdate('c'),
+            ]);
 
             Database::execute(
                 'UPDATE wialon_mother_accounts
-                 SET connection_verified_at = NOW(), last_error = NULL, updated_at = NOW()
+                 SET connection_verified_at = NOW(), last_error = NULL, account_tier = ?, session_meta = ?, updated_at = NOW()
                  WHERE id = ?',
-                [$motherId]
+                [$probe['accountTier'] ?? null, $meta, $motherId]
             );
 
             Response::success([
                 'connected' => true,
-                'probe' => [
-                    'counts' => ['accounts' => 0, 'units' => 0, 'users' => 0],
-                    'note' => 'Token stored and decryptable. Live Wialon hierarchy probe can be enabled with outbound API access.',
-                ],
+                'probe' => $probe,
             ]);
         } catch (Throwable $e) {
             try {
@@ -1506,6 +1659,159 @@ class AdminController
             } catch (Throwable $ignored) {
             }
             error_log('AdminController wialonMothersTest: ' . $e->getMessage());
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /** @return array{token:string,baseUrl:?string} */
+    private static function loadMotherCreds(string $motherId): array
+    {
+        require_once __DIR__ . '/../../lib/Crypto.php';
+        $rows = Database::query(
+            'SELECT credentials_encrypted, base_url, is_active FROM wialon_mother_accounts WHERE id = ? LIMIT 1',
+            [$motherId]
+        );
+        if (!$rows) {
+            throw new RuntimeException('Mother account not found');
+        }
+        if (!(int) ($rows[0]['is_active'] ?? 0)) {
+            throw new RuntimeException('Mother account is inactive');
+        }
+        $creds = Crypto::decrypt((string) ($rows[0]['credentials_encrypted'] ?? ''));
+        $token = trim((string) ($creds['token'] ?? ''));
+        if ($token === '') {
+            throw new RuntimeException('Mother account token is missing');
+        }
+        $baseUrl = $rows[0]['base_url'] ?? ($creds['baseUrl'] ?? null);
+        return [
+            'token' => $token,
+            'baseUrl' => is_string($baseUrl) && $baseUrl !== '' ? $baseUrl : null,
+        ];
+    }
+
+    /** GET /admin/centers/wialon/hierarchy?motherId= */
+    public static function wialonHierarchy(): void
+    {
+        self::currentUser();
+        require_once __DIR__ . '/../../lib/WialonHierarchy.php';
+
+        $motherId = trim((string) ($_GET['motherId'] ?? ''));
+        try {
+            if ($motherId === '') {
+                $defaults = Database::query(
+                    'SELECT id FROM wialon_mother_accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1'
+                );
+                $motherId = (string) ($defaults[0]['id'] ?? '');
+            }
+            if ($motherId === '') {
+                Response::error('No Wialon mother account configured', 400);
+                return;
+            }
+
+            $creds = self::loadMotherCreds($motherId);
+            $probe = WialonHierarchy::probe($creds['token'], $creds['baseUrl']);
+
+            // Attach assigned tenant info when present
+            $assignments = [];
+            try {
+                $rows = Database::query(
+                    "SELECT ds.wialon_resource_id, t.id AS tenant_id, t.name AS tenant_name, t.slug AS tenant_slug
+                     FROM data_sources ds
+                     JOIN tenants t ON t.id = ds.tenant_id
+                     WHERE ds.source_type = 'wialon' AND ds.wialon_mother_account_id = ?
+                       AND ds.wialon_resource_id IS NOT NULL",
+                    [$motherId]
+                );
+                foreach ($rows as $row) {
+                    $rid = (string) ((int) ($row['wialon_resource_id'] ?? 0));
+                    if ($rid !== '0') {
+                        $assignments[$rid] = [
+                            'id' => $row['tenant_id'],
+                            'name' => $row['tenant_name'],
+                            'slug' => $row['tenant_slug'],
+                        ];
+                    }
+                }
+            } catch (Throwable $e) {
+                $assignments = [];
+            }
+
+            $accounts = [];
+            foreach ($probe['accounts'] ?? [] as $acct) {
+                $aid = (string) ($acct['id'] ?? '');
+                $acct['assignedTenant'] = $assignments[$aid] ?? null;
+                $accounts[] = $acct;
+            }
+            $probe['accounts'] = $accounts;
+            $probe['motherAccountId'] = $motherId;
+
+            Response::success($probe);
+        } catch (Throwable $e) {
+            error_log('AdminController wialonHierarchy: ' . $e->getMessage());
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /** GET /admin/centers/wialon/accounts/:accountId?motherId= */
+    public static function wialonAccount(?string $accountId = null): void
+    {
+        self::currentUser();
+        require_once __DIR__ . '/../../lib/WialonHierarchy.php';
+        $aid = $accountId ?? '';
+        if ($aid === '') {
+            Response::error('Account id required', 400);
+            return;
+        }
+        $motherId = trim((string) ($_GET['motherId'] ?? ''));
+        try {
+            if ($motherId === '') {
+                $defaults = Database::query(
+                    'SELECT id FROM wialon_mother_accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1'
+                );
+                $motherId = (string) ($defaults[0]['id'] ?? '');
+            }
+            if ($motherId === '') {
+                Response::error('No Wialon mother account configured', 400);
+                return;
+            }
+            $creds = self::loadMotherCreds($motherId);
+            $units = WialonHierarchy::unitsForAccount($creds['token'], $aid, $creds['baseUrl']);
+            $sample = array_slice($units, 0, 100);
+
+            $assigned = null;
+            try {
+                $rows = Database::query(
+                    "SELECT t.id, t.name, t.slug
+                     FROM data_sources ds
+                     JOIN tenants t ON t.id = ds.tenant_id
+                     WHERE ds.source_type = 'wialon' AND ds.wialon_resource_id = ?
+                     LIMIT 1",
+                    [(int) $aid]
+                );
+                if ($rows) {
+                    $assigned = [
+                        'id' => $rows[0]['id'],
+                        'name' => $rows[0]['name'],
+                        'slug' => $rows[0]['slug'],
+                    ];
+                }
+            } catch (Throwable $e) {
+                $assigned = null;
+            }
+
+            Response::success([
+                'accountId' => $aid,
+                'accountName' => null,
+                'motherAccountId' => $motherId,
+                'unitCount' => count($units),
+                'userCount' => 0,
+                'units' => $units,
+                'users' => [],
+                'sampleUnits' => $sample,
+                'assignedTenant' => $assigned,
+            ]);
+        } catch (Throwable $e) {
+            error_log('AdminController wialonAccount: ' . $e->getMessage());
             Response::error($e->getMessage(), 500);
         }
     }

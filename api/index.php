@@ -217,6 +217,15 @@ try {
     if ($apiPath === '/admin/system-users' && $method === 'GET') {
         AdminController::systemUsers();
     }
+    if ($apiPath === '/admin/system-users' && $method === 'POST') {
+        AdminController::systemUsersCreate();
+    }
+    if (route_match('/admin/system-users/:id', $apiPath, $p) && $method === 'PATCH') {
+        AdminController::systemUsersPatch($p['id']);
+    }
+    if (route_match('/admin/system-users/:id/reset-password', $apiPath, $p) && $method === 'POST') {
+        AdminController::systemUsersResetPassword($p['id']);
+    }
     if ($apiPath === '/admin/tenants' && $method === 'GET') {
         AdminController::tenants();
     }
@@ -298,6 +307,16 @@ try {
     }
     if (route_match('/admin/centers/wialon/mothers/:id/test', $apiPath, $p) && $method === 'POST') {
         AdminController::wialonMothersTest($p['id']);
+    }
+    if ($apiPath === '/admin/centers/wialon/hierarchy' && $method === 'GET') {
+        AdminController::wialonHierarchy();
+    }
+    if (route_match('/admin/centers/wialon/mothers/:id/hierarchy', $apiPath, $p) && $method === 'GET') {
+        $_GET['motherId'] = $p['id'];
+        AdminController::wialonHierarchy();
+    }
+    if (route_match('/admin/centers/wialon/accounts/:accountId', $apiPath, $p) && $method === 'GET') {
+        AdminController::wialonAccount($p['accountId']);
     }
     if (route_match('/admin/centers/:source', $apiPath, $p) && $method === 'GET') {
         AdminController::integrationCenter($p['source']);

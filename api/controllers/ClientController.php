@@ -388,6 +388,7 @@ class ClientController
 
             $unit = [
                 'id' => $wialonId !== null ? (string) $wialonId : $assetId,
+                'assetId' => $assetId,
                 'wialonId' => $wialonId,
                 'name' => (string) ($row['name'] ?? ('Unit ' . $assetId)),
                 'plate' => $row['registration_plate'] ?? null,
@@ -397,6 +398,7 @@ class ClientController
                 'hardware' => null,
                 'status' => $status,
                 'fuelLevel' => isset($row['fuel_level']) ? (float) $row['fuel_level'] : null,
+                'mileage' => 0,
             ];
 
             if ($hasPos) {
@@ -409,6 +411,30 @@ class ClientController
             }
 
             $units[] = $unit;
+        }
+
+        // Aggregate trip mileage per asset (parity with live Wialon odometer when trips exist)
+        try {
+            $mileageRows = Database::query(
+                'SELECT asset_id, COALESCE(SUM(mileage), 0) AS mileage
+                 FROM trip_summaries
+                 WHERE tenant_id = ? AND asset_id IS NOT NULL
+                 GROUP BY asset_id',
+                [$tenantId]
+            );
+            $byMileage = [];
+            foreach ($mileageRows as $mr) {
+                $byMileage[(string) $mr['asset_id']] = (float) ($mr['mileage'] ?? 0);
+            }
+            foreach ($units as &$u) {
+                $aid = (string) ($u['assetId'] ?? '');
+                if ($aid !== '' && isset($byMileage[$aid])) {
+                    $u['mileage'] = $byMileage[$aid];
+                }
+            }
+            unset($u);
+        } catch (Throwable $e) {
+            error_log('ClientController fleetSnapshot mileage: ' . $e->getMessage());
         }
 
         Response::success([

@@ -272,12 +272,20 @@
         'dash-chart-fleet-status',
         `${(counts.moving ?? moving)} moving · ${(counts.idle ?? idle)} idle`
       ));
-      chartCards.push(chartCardHtml('Mileage', 'Live odometer total · not period-filtered', 'dash-widget-mileage', 'No data yet (preview)'));
-      chartCards.push(chartCardHtml('Top units by mileage', 'Live odometer leaders · not period-filtered', 'dash-widget-top-mileage', 'No data yet (preview)'));
+      chartCards.push(chartCardHtml('Mileage', 'Trip odometer total · from trip summaries', 'dash-widget-mileage',
+        (() => {
+          const totalKm = units.reduce((s, u) => s + (Number(u.mileage) || 0), 0);
+          return totalKm > 0 ? `${Math.round(totalKm).toLocaleString()} km total` : 'No trip mileage yet';
+        })()));
+      chartCards.push(chartCardHtml('Top units by mileage', 'Trip odometer leaders', 'dash-widget-top-mileage',
+        (() => {
+          const leaders = [...units].filter((u) => Number(u.mileage) > 0).sort((a, b) => Number(b.mileage) - Number(a.mileage));
+          return leaders[0] ? `${leaders[0].name} · ${Math.round(Number(leaders[0].mileage)).toLocaleString()} km` : 'No trip mileage yet';
+        })()));
       chartCards.push(chartCardHtml('Fleet utilization', 'Moving + idle share · not period-filtered', 'dash-widget-fleet-utilization', `${util}% utilization`));
       chartCards.push(chartCardHtml('Geofences', 'Zones & boundaries', 'dash-widget-geofences', `${geofences.length} zones configured`));
-      chartCards.push(chartCardHtml('Device battery', 'Battery health snapshot', 'dash-widget-device-battery', 'No data yet (preview)'));
-      chartCards.push(chartCardHtml('Voltage level', 'Voltage distribution', 'dash-widget-voltage-level', 'No data yet (preview)'));
+      chartCards.push(chartCardHtml('Device battery', 'Battery health snapshot', 'dash-widget-device-battery', 'Requires live sensor params'));
+      chartCards.push(chartCardHtml('Voltage level', 'Voltage distribution', 'dash-widget-voltage-level', 'Requires live sensor params'));
     }
 
     // Alerts widget board (structure parity with legacy React dashboard)
@@ -287,7 +295,8 @@
       chartCards.push(chartCardHtml('Alert severity', 'Critical · warning · info', 'dash-chart-alert-severity', `${criticalAlerts} critical · ${warningAlerts} warning · ${infoAlerts} info`));
       chartCards.push(chartCardHtml('Alert types', 'By alert type', 'dash-widget-alerts-types', 'Top types breakdown'));
       chartCards.push(chartCardHtml('Notifications', 'Latest notifications (preview)', 'dash-widget-notifications', `${alertList.length} latest alerts`));
-      chartCards.push(chartCardHtml('Speedings', 'Speeding events (preview)', 'dash-widget-speedings', 'No data yet (preview)'));
+      const speedingCount = alertList.filter((a) => /speed/i.test(String(a.type || '') + String(a.title || ''))).length;
+      chartCards.push(chartCardHtml('Speedings', 'Speeding events from alerts', 'dash-widget-speedings', speedingCount ? `${speedingCount} speeding alerts` : 'No speeding alerts'));
     }
 
     // Fuel / Ops charts (what we already have data for)
@@ -501,13 +510,41 @@
       }
     }
 
-    // No-data placeholders (endpoints not fully wired yet)
-    [
-      'dash-widget-mileage',
-      'dash-widget-top-mileage',
-      'dash-widget-device-battery',
-      'dash-widget-voltage-level',
-    ].forEach((id) => drawNoDataDoughnut(id, 'No data'));
+    // Mileage from trip summaries on fleet units
+    if (document.getElementById('dash-widget-mileage') || document.getElementById('dash-widget-top-mileage')) {
+      const leaders = [...(units || [])]
+        .filter((u) => Number(u.mileage) > 0)
+        .sort((a, b) => Number(b.mileage) - Number(a.mileage));
+      const totalKm = leaders.reduce((s, u) => s + Number(u.mileage), 0);
+      if (document.getElementById('dash-widget-mileage')) {
+        if (totalKm > 0) {
+          const top5 = leaders.slice(0, 5);
+          const rest = Math.max(0, totalKm - top5.reduce((s, u) => s + Number(u.mileage), 0));
+          const labels = top5.map((u) => u.name || u.plate || 'Unit');
+          const values = top5.map((u) => Math.round(Number(u.mileage)));
+          const colors = [p.primary, p.accent, p.info, p.warn, p.muted];
+          if (rest > 0) { labels.push('Other'); values.push(Math.round(rest)); colors.push(p.muted); }
+          MamsCharts.doughnut('dash-widget-mileage', labels, values, colors);
+        } else {
+          drawNoDataDoughnut('dash-widget-mileage', 'No mileage');
+        }
+      }
+      if (document.getElementById('dash-widget-top-mileage')) {
+        if (leaders.length) {
+          const top = leaders.slice(0, 8);
+          MamsCharts.bar(
+            'dash-widget-top-mileage',
+            top.map((u) => u.name || u.plate || 'Unit'),
+            [{ label: 'km', data: top.map((u) => Math.round(Number(u.mileage))), backgroundColor: p.primary }],
+          );
+        } else {
+          drawNoDataDoughnut('dash-widget-top-mileage', 'No mileage');
+        }
+      }
+    }
+
+    // Battery / voltage need live Wialon sensor params — keep honest empty state
+    ['dash-widget-device-battery', 'dash-widget-voltage-level'].forEach((id) => drawNoDataDoughnut(id, 'No sensor data'));
 
     if (document.getElementById('dash-widget-geofences')) {
       const count = Array.isArray(geofences) ? geofences.length : 0;
@@ -604,9 +641,46 @@
       }
     }
 
-    // Notifications + speedings placeholders (no dedicated endpoints yet)
-    drawNoDataDoughnut('dash-widget-notifications', 'Notifications');
-    drawNoDataDoughnut('dash-widget-speedings', 'No data');
+    // Notifications + speedings from alert list
+    if (document.getElementById('dash-widget-notifications')) {
+      const latest = (alertList || []).slice(0, 6);
+      if (latest.length) {
+        const buckets = {};
+        latest.forEach((a) => {
+          const sev = String(a.severity || 'info').toLowerCase();
+          buckets[sev] = (buckets[sev] || 0) + 1;
+        });
+        const entries = Object.entries(buckets);
+        const palette = { critical: p.danger, emergency: p.danger, warning: p.warn, info: p.info };
+        MamsCharts.doughnut(
+          'dash-widget-notifications',
+          entries.map(([k]) => k),
+          entries.map(([, v]) => v),
+          entries.map(([k]) => palette[k] || p.muted),
+        );
+      } else {
+        drawNoDataDoughnut('dash-widget-notifications', 'No alerts');
+      }
+    }
+
+    if (document.getElementById('dash-widget-speedings')) {
+      const speeding = (alertList || []).filter((a) => /speed/i.test(String(a.type || '') + String(a.title || '')));
+      if (speeding.length) {
+        const byUnit = {};
+        speeding.forEach((a) => {
+          const name = a.assetName || a.unitName || a.title || 'Unit';
+          byUnit[name] = (byUnit[name] || 0) + 1;
+        });
+        const top = Object.entries(byUnit).sort((a, b) => b[1] - a[1]).slice(0, 6);
+        MamsCharts.bar(
+          'dash-widget-speedings',
+          top.map(([k]) => k),
+          [{ label: 'Events', data: top.map(([, v]) => v), backgroundColor: p.warn }],
+        );
+      } else {
+        drawNoDataDoughnut('dash-widget-speedings', 'No speedings');
+      }
+    }
 
     if (document.getElementById('dash-chart-fuel-trend')) {
       const rows = (trend || []).slice(-8);

@@ -357,6 +357,11 @@
         <td class="muted">${fmtDate(i.lastSyncAt)}</td>
       </tr>`).join('');
 
+      const modToggles = modList.map((m) => `<label class="module-toggle">
+        <input type="checkbox" data-module-key="${esc(m.moduleKey || m.key)}" ${m.isEnabled ? 'checked' : ''} />
+        <span>${esc(m.label || m.moduleKey || m.key)}</span>
+      </label>`).join('');
+
       panel.innerHTML = `
         <div class="modal-header">
           <h3>${esc(tenant.name)}</h3>
@@ -370,10 +375,14 @@
           <div><span class="muted">Vehicles used</span><div>${tenant.usage?.vehiclesUsed ?? '—'}${tenant.maxVehicles ? ' / ' + tenant.maxVehicles : ''}</div></div>
           <div><span class="muted">Users used</span><div>${tenant.usage?.usersUsed ?? '—'}${tenant.maxUsers ? ' / ' + tenant.maxUsers : ''}</div></div>
         </div>
-        <h4 style="margin:1.25rem 0 0.5rem;color:var(--brand-dark)">Modules</h4>
-        <div style="display:flex;flex-wrap:wrap;gap:0.4rem">
-          ${modList.map((m) => `<span class="badge ${m.isEnabled ? 'badge-success' : 'badge-inactive'}">${esc(m.label)}</span>`).join('') || '<span class="muted">No modules configured</span>'}
+        <div class="actions" style="margin-top:1rem;gap:0.5rem;display:flex;flex-wrap:wrap">
+          <button type="button" class="btn btn-sm" data-action="tenant-toggle-status" data-id="${esc(id)}" data-status="${esc(tenant.status === 'active' ? 'inactive' : 'active')}">${tenant.status === 'active' ? 'Suspend client' : 'Activate client'}</button>
         </div>
+        <h4 style="margin:1.25rem 0 0.5rem;color:var(--brand-dark)">Modules</h4>
+        <div id="tenant-modules-form" data-tenant-id="${esc(id)}" style="display:flex;flex-wrap:wrap;gap:0.6rem 1rem">
+          ${modToggles || '<span class="muted">No modules configured</span>'}
+        </div>
+        ${modList.length ? `<button type="button" class="btn btn-sm mt-1" data-action="tenant-save-modules" data-id="${esc(id)}">Save modules</button>` : ''}
         <h4 style="margin:1.25rem 0 0.5rem;color:var(--brand-dark)">Integrations</h4>
         ${intList.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Source</th><th>Status</th><th>Last sync</th></tr></thead><tbody>${intRows}</tbody></table></div>` : '<p class="muted">No integrations configured</p>'}
       `;
@@ -410,10 +419,31 @@
       <td>${esc(u.email || '—')}</td>
       <td>${roleBadge(u.role)}</td>
       <td>${statusBadge(u.isActive === false ? 'inactive' : 'active')}</td>
+      <td>${esc(u.assignedTenantCount ?? 0)}</td>
       <td class="muted">${fmtDate(u.lastLoginAt || u.last_login_at)}</td>
+      <td class="actions">
+        <button type="button" class="btn btn-sm btn-ghost" data-action="toggle-system-user" data-id="${esc(u.id)}" data-active="${u.isActive !== false ? '1' : '0'}">${u.isActive !== false ? 'Deactivate' : 'Activate'}</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="reset-system-user-pw" data-id="${esc(u.id)}">Reset password</button>
+      </td>
     </tr>`).join('');
     return `<div class="card-header" style="margin-bottom:1rem"><h3 style="margin:0;color:var(--brand)">System users</h3><span class="muted">${list.length} admins</span></div>
-    ${tableWrap(['Name', 'Email', 'Role', 'Status', 'Last login'], rows, 'No system users')}`;
+    <div class="card mb-2">
+      <div class="card-header"><h3>Add platform admin</h3></div>
+      <form id="system-user-form" class="form-grid">
+        <label><span>Full name</span><input class="input" name="fullName" /></label>
+        <label><span>Email</span><input class="input" type="email" name="email" required /></label>
+        <label><span>Password</span><input class="input" type="password" name="password" required minlength="8" autocomplete="new-password" /></label>
+        <label><span>Role</span>
+          <select class="input" name="role">
+            <option value="platform_admin">Platform admin</option>
+            <option value="super_admin">Super admin</option>
+          </select>
+        </label>
+        <div class="form-grid-action"><button type="submit" class="btn">Create</button></div>
+        <p id="system-user-error" class="error" hidden></p>
+      </form>
+    </div>
+    ${tableWrap(['Name', 'Email', 'Role', 'Status', 'Clients', 'Last login', 'Actions'], rows, 'No system users')}`;
   }
 
   async function renderSystem() {
@@ -619,13 +649,16 @@
     const status = await MamsApi.api('/admin/centers/wialon').catch(() => ({ motherAccounts: [] }));
     const mothers = status.motherAccounts || [];
     const connected = mothers.filter((m) => m.connected).length;
-    const rows = mothers.map((m) => `<tr>
+    const activeMotherId = mothers[0]?.id || '';
+
+    const rows = mothers.map((m) => `<tr class="${m.id === activeMotherId ? 'row-selected' : ''}">
       <td><strong>${esc(m.name)}</strong></td>
       <td>${m.connected ? '<span class="badge badge-success">Connected</span>' : '<span class="badge badge-inactive">Idle</span>'}</td>
       <td>${esc(m.accountTier || '—')}</td>
       <td>${esc(m.linkedTenantCount ?? 0)}</td>
       <td class="muted">${fmtDate(m.verifiedAt)}</td>
       <td class="actions">
+        <button type="button" class="btn btn-sm btn-ghost" data-action="wialon-mother-select" data-id="${esc(m.id)}">Tree</button>
         <button type="button" class="btn btn-sm btn-ghost" data-action="wialon-mother-test" data-id="${esc(m.id)}">Test</button>
         <button type="button" class="btn btn-sm btn-ghost" data-action="wialon-mother-delete" data-id="${esc(m.id)}">Delete</button>
       </td>
@@ -650,8 +683,110 @@
     <div class="card mt-2">
       <div class="card-header"><h3>Saved mother accounts</h3><span class="muted">${mothers.length}</span></div>
       ${tableWrap(['Name', 'Status', 'Tier', 'Linked', 'Verified', 'Actions'], rows, 'No mother accounts yet')}
-      <p class="muted mt-1">Clients pick a mother account, then link any admin/sub-account in that Wialon tree from the client Integrations tab.</p>
+      <p class="muted mt-1">Pick Tree to probe the live Wialon hierarchy for that mother. Clients link a sub-account from Integrations.</p>
+    </div>
+    <div class="card mt-2" id="wialon-hierarchy-card" data-mother-id="${esc(activeMotherId)}">
+      <div class="card-header">
+        <h3>Account tree</h3>
+        <div class="actions">
+          <select class="input" id="wialon-mother-picker" style="max-width:220px">
+            ${mothers.map((m) => `<option value="${esc(m.id)}" ${m.id === activeMotherId ? 'selected' : ''}>${esc(m.name)}</option>`).join('') || '<option value="">No mothers</option>'}
+          </select>
+          <button type="button" class="btn btn-sm btn-ghost" data-action="wialon-hierarchy-refresh">Refresh</button>
+        </div>
+      </div>
+      <div id="wialon-hierarchy-root">${activeMotherId ? loader() : '<p class="muted">Add a mother account to browse the Wialon tree.</p>'}</div>
+    </div>
+    <div class="card mt-2" id="wialon-account-detail" hidden>
+      <div class="card-header"><h3 id="wialon-account-title">Account</h3>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="wialon-account-close">Close</button>
+      </div>
+      <div id="wialon-account-body"></div>
     </div>`;
+  }
+
+  const WIALON_TIER = {
+    mother: 'Mother account',
+    dealer: 'Dealer',
+    admin: 'Client admin',
+    user: 'End user',
+  };
+
+  async function loadWialonHierarchy(motherId) {
+    const root = document.getElementById('wialon-hierarchy-root');
+    const card = document.getElementById('wialon-hierarchy-card');
+    if (!root) return;
+    if (!motherId) {
+      root.innerHTML = '<p class="muted">Select a mother account.</p>';
+      return;
+    }
+    if (card) card.dataset.motherId = motherId;
+    root.innerHTML = loader();
+    try {
+      const probe = await MamsApi.api(`/admin/centers/wialon/hierarchy?motherId=${encodeURIComponent(motherId)}`);
+      const counts = probe.counts || {};
+      const accounts = probe.accounts || [];
+      const sessionNm = probe.sessionUser?.nm || '—';
+      const tier = WIALON_TIER[probe.accountTier] || probe.accountTier || '—';
+
+      const accountRows = accounts.map((a) => {
+        const depth = a.parentAccountId ? 1 : 0;
+        const assigned = a.assignedTenant
+          ? `<span class="badge badge-success">${esc(a.assignedTenant.name)}</span>`
+          : '<span class="muted">—</span>';
+        return `<tr>
+          <td style="padding-left:${0.75 + depth * 1.25}rem"><strong>${esc(a.name)}</strong><div class="muted">${esc(a.id)}</div></td>
+          <td>${esc(a.unitCount ?? 0)}</td>
+          <td>${esc(a.userCount ?? 0)}</td>
+          <td>${assigned}</td>
+          <td class="actions">
+            <button type="button" class="btn btn-sm btn-ghost" data-action="wialon-account-open" data-id="${esc(a.id)}" data-name="${esc(a.name)}">Units</button>
+          </td>
+        </tr>`;
+      }).join('');
+
+      root.innerHTML = `
+        <div class="kpi-grid" style="margin-bottom:1rem">
+          ${kpi('Session', sessionNm)}
+          ${kpi('Tier', tier)}
+          ${kpi('Units', counts.units ?? 0)}
+          ${kpi('Accounts', counts.accounts ?? 0)}
+          ${kpi('Users', counts.users ?? 0)}
+          ${kpi('Dealer', probe.dealerRights ? 'Yes' : 'No')}
+        </div>
+        ${tableWrap(['Account', 'Units', 'Users', 'Linked client', ''], accountRows, 'No accounts returned from Wialon')}`;
+    } catch (ex) {
+      root.innerHTML = `<div class="banner banner-error">${esc(ex.message || 'Failed to load hierarchy')}</div>`;
+    }
+  }
+
+  async function openWialonAccount(accountId, accountName) {
+    const card = document.getElementById('wialon-account-detail');
+    const body = document.getElementById('wialon-account-body');
+    const title = document.getElementById('wialon-account-title');
+    const motherId = document.getElementById('wialon-hierarchy-card')?.dataset?.motherId || '';
+    if (!card || !body) return;
+    card.hidden = false;
+    if (title) title.textContent = accountName || `Account ${accountId}`;
+    body.innerHTML = loader();
+    try {
+      const detail = await MamsApi.api(
+        `/admin/centers/wialon/accounts/${encodeURIComponent(accountId)}?motherId=${encodeURIComponent(motherId)}`
+      );
+      const units = detail.sampleUnits || detail.units || [];
+      const unitRows = units.slice(0, 50).map((u) => `<tr>
+        <td><strong>${esc(u.nm || u.name || u.id)}</strong></td>
+        <td class="muted">${esc(u.id)}</td>
+      </tr>`).join('');
+      body.innerHTML = `
+        <div class="settings-grid" style="margin-bottom:1rem">
+          <div><span class="muted">Units</span><div><strong>${esc(detail.unitCount ?? units.length)}</strong></div></div>
+          <div><span class="muted">Linked client</span><div>${detail.assignedTenant ? esc(detail.assignedTenant.name) : '—'}</div></div>
+        </div>
+        ${tableWrap(['Unit', 'ID'], unitRows, 'No units in this account')}`;
+    } catch (ex) {
+      body.innerHTML = `<div class="banner banner-error">${esc(ex.message || 'Failed to load account')}</div>`;
+    }
   }
 
   async function renderLoconav() {
@@ -960,6 +1095,12 @@
       // Prefetch login media so the Login media tab is ready
       loadLoginMediaPanels();
     }
+
+    if (mod === 'wialon') {
+      const motherId = document.getElementById('wialon-mother-picker')?.value
+        || document.getElementById('wialon-hierarchy-card')?.dataset?.motherId;
+      if (motherId) loadWialonHierarchy(motherId);
+    }
   }
 
   content.addEventListener('click', async (e) => {
@@ -1174,11 +1315,107 @@
         btn.disabled = true;
         try {
           const res = await MamsApi.api(`/admin/centers/wialon/mothers/${encodeURIComponent(btn.dataset.id)}/test`, { method: 'POST', body: '{}' });
-          alert(res.connected ? 'Connection OK — token verified.' : 'Test completed.');
+          const counts = res.probe?.counts || {};
+          alert(res.connected
+            ? `Connection OK — ${counts.accounts ?? 0} accounts, ${counts.units ?? 0} units, ${counts.users ?? 0} users.`
+            : 'Test completed.');
           await loadModule();
         } catch (ex) {
           alert(ex.message || 'Test failed');
           btn.disabled = false;
+        }
+        return;
+      }
+
+      if (action === 'wialon-mother-select') {
+        const picker = document.getElementById('wialon-mother-picker');
+        if (picker) picker.value = btn.dataset.id;
+        await loadWialonHierarchy(btn.dataset.id);
+        return;
+      }
+
+      if (action === 'wialon-hierarchy-refresh') {
+        const motherId = document.getElementById('wialon-mother-picker')?.value
+          || document.getElementById('wialon-hierarchy-card')?.dataset?.motherId;
+        await loadWialonHierarchy(motherId);
+        return;
+      }
+
+      if (action === 'wialon-account-open') {
+        await openWialonAccount(btn.dataset.id, btn.dataset.name);
+        return;
+      }
+
+      if (action === 'wialon-account-close') {
+        const card = document.getElementById('wialon-account-detail');
+        if (card) card.hidden = true;
+        return;
+      }
+
+      if (action === 'tenant-save-modules') {
+        const form = document.getElementById('tenant-modules-form');
+        if (!form) return;
+        const modules = [...form.querySelectorAll('[data-module-key]')].map((el) => ({
+          moduleKey: el.dataset.moduleKey,
+          enabled: !!el.checked,
+        }));
+        btn.disabled = true;
+        try {
+          await MamsApi.api(`/admin/tenants/${encodeURIComponent(btn.dataset.id)}/modules`, {
+            method: 'PUT',
+            body: JSON.stringify({ modules }),
+          });
+          alert('Modules saved');
+          await openTenantDetail(btn.dataset.id);
+        } catch (ex) {
+          alert(ex.message || 'Failed to save modules');
+          btn.disabled = false;
+        }
+        return;
+      }
+
+      if (action === 'tenant-toggle-status') {
+        btn.disabled = true;
+        try {
+          await MamsApi.api(`/admin/tenants/${encodeURIComponent(btn.dataset.id)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status: btn.dataset.status }),
+          });
+          await openTenantDetail(btn.dataset.id);
+          await reloadTenants(document.getElementById('tenant-search')?.value || '');
+        } catch (ex) {
+          alert(ex.message || 'Failed to update status');
+          btn.disabled = false;
+        }
+        return;
+      }
+
+      if (action === 'toggle-system-user') {
+        btn.disabled = true;
+        try {
+          await MamsApi.api(`/admin/system-users/${encodeURIComponent(btn.dataset.id)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ isActive: btn.dataset.active !== '1' }),
+          });
+          await loadModule();
+        } catch (ex) {
+          alert(ex.message || 'Failed to update user');
+          btn.disabled = false;
+        }
+        return;
+      }
+
+      if (action === 'reset-system-user-pw') {
+        const pw = prompt('New temporary password (leave blank to auto-generate):');
+        if (pw === null) return;
+        try {
+          const res = await MamsApi.api(`/admin/system-users/${encodeURIComponent(btn.dataset.id)}/reset-password`, {
+            method: 'POST',
+            body: JSON.stringify(pw ? { password: pw } : {}),
+          });
+          alert(`Password reset. Temporary password: ${res.temporaryPassword || '(set)'}`);
+        } catch (ex) {
+          alert(ex.message || 'Reset failed');
         }
         return;
       }
@@ -1265,6 +1502,10 @@
       if (!root) return;
       root.innerHTML = loader();
       root.innerHTML = await hubIntegrationHtml(e.target.value, e.target.dataset.source);
+      return;
+    }
+    if (e.target.id === 'wialon-mother-picker') {
+      await loadWialonHierarchy(e.target.value);
     }
   });
 
@@ -1312,6 +1553,29 @@
         await loadModule();
       } catch (ex) {
         if (errEl) { errEl.textContent = ex.message || 'Failed to save mother account'; errEl.hidden = false; }
+      }
+      return;
+    }
+
+    if (form.id === 'system-user-form') {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const errEl = document.getElementById('system-user-error');
+      if (errEl) errEl.hidden = true;
+      try {
+        await MamsApi.api('/admin/system-users', {
+          method: 'POST',
+          body: JSON.stringify({
+            fullName: fd.get('fullName') || undefined,
+            email: fd.get('email'),
+            password: fd.get('password'),
+            role: fd.get('role') || 'platform_admin',
+          }),
+        });
+        form.reset();
+        await loadModule();
+      } catch (ex) {
+        if (errEl) { errEl.textContent = ex.message || 'Failed to create system user'; errEl.hidden = false; }
       }
       return;
     }
