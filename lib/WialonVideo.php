@@ -483,4 +483,254 @@ final class WialonVideo
         }
         return array_values(array_filter($cameras, static fn(array $c): bool => !empty($c['active'])));
     }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public static function listVideoFiles(string $tenantId, int $unitId, ?int $fromMs = null, ?int $toMs = null): array
+    {
+        $from = $fromMs ?? ((int) (microtime(true) * 1000) - 30 * 24 * 3600 * 1000);
+        $to = $toMs ?? (int) (microtime(true) * 1000);
+        $creds = TenantWialon::loadCreds($tenantId);
+        $client = new WialonClient($creds['baseUrl']);
+        $files = [];
+        try {
+            $client->login($creds['token'], $creds['operateAs']);
+            foreach ([2, 1] as $storageType) {
+                try {
+                    $listing = $client->call('file/list', [
+                        'itemId' => $unitId,
+                        'storageType' => $storageType,
+                        'path' => '',
+                        'mask' => '*.mp4,*.avi,*.mov,*.mkv,*.webm,video*,*video*',
+                        'recursive' => true,
+                        'fullPath' => true,
+                    ]);
+                    // Wialon may return list at top or wrapped
+                    $roots = array_is_list($listing) ? $listing : (isset($listing[0]) ? $listing : []);
+                    if (!$roots && is_array($listing)) {
+                        // Sometimes associative with numeric keys
+                        $roots = array_values(array_filter($listing, 'is_array'));
+                    }
+                    foreach ($roots as $root) {
+                        if (!is_array($root)) {
+                            continue;
+                        }
+                        self::walkFileTree(
+                            is_array($root['c'] ?? null) ? $root['c'] : [],
+                            (string) ($root['n'] ?? ''),
+                            $storageType,
+                            $from,
+                            $to,
+                            $files
+                        );
+                    }
+                } catch (Throwable $e) {
+                }
+            }
+
+            try {
+                $client->call('messages/load_interval', [
+                    'itemId' => $unitId,
+                    'timeFrom' => (int) floor($from / 1000),
+                    'timeTo' => (int) floor($to / 1000),
+                    'flags' => 1,
+                    'flagsMask' => 0,
+                    'loadCount' => 500,
+                ]);
+                $msgs = $client->call('messages/get_messages', ['indexFrom' => 0, 'indexTo' => 499]);
+                foreach ($msgs['messages'] ?? [] as $m) {
+                    if (!is_array($m)) {
+                        continue;
+                    }
+                    $p = is_array($m['p'] ?? null) ? $m['p'] : [];
+                    $hasVideo = (($m['tp'] ?? '') === 'video')
+                        || (bool) array_filter(array_keys($p), static fn($k) => (bool) preg_match('/video|file|media|photo/i', (string) $k));
+                    if (!$hasVideo) {
+                        continue;
+                    }
+                    $t = (int) ($m['t'] ?? 0);
+                    $occurredAt = $t > 0 ? gmdate('c', $t) : null;
+                    if ($occurredAt && !self::inDateRangeMs($occurredAt, $from, $to)) {
+                        continue;
+                    }
+                    $eventType = trim((string) ($p['event'] ?? $p['type'] ?? $p['name'] ?? ''));
+                    $files[] = [
+                        'id' => 'msg-' . ($m['id'] ?? $t),
+                        'name' => $eventType !== ''
+                            ? ($eventType . ' · ' . ($t ? gmdate('Y-m-d H:i', $t) : ''))
+                            : ('Video message ' . ($t ? gmdate('Y-m-d H:i', $t) : '')),
+                        'occurredAt' => $occurredAt,
+                        'path' => '',
+                        'source' => 'message',
+                        'messageId' => isset($m['id']) ? (int) $m['id'] : null,
+                        'tag' => $eventType !== '' ? $eventType : 'message',
+                        'channel' => isset($p['channel']) ? (int) $p['channel'] : (isset($p['cam']) ? (int) $p['cam'] : null),
+                        'eventType' => $eventType !== '' ? $eventType : null,
+                    ];
+                }
+            } catch (Throwable $e) {
+            } finally {
+                try {
+                    $client->call('messages/unload', []);
+                } catch (Throwable $e) {
+                }
+            }
+        } finally {
+            $client->logout();
+        }
+
+        usort($files, static function (array $a, array $b): int {
+            $at = !empty($a['occurredAt']) ? strtotime((string) $a['occurredAt']) : 0;
+            $bt = !empty($b['occurredAt']) ? strtotime((string) $b['occurredAt']) : 0;
+            return $bt <=> $at;
+        });
+        return $files;
+    }
+
+    /**
+     * @return array{data:string,contentType:string,fileName:string}
+     */
+    public static function readStorageFile(string $tenantId, int $unitId, int $storageType, string $path): array
+    {
+        $creds = TenantWialon::loadCreds($tenantId);
+        $client = new WialonClient($creds['baseUrl']);
+        try {
+            $client->login($creds['token'], $creds['operateAs']);
+            $res = $client->call('file/read', [
+                'itemId' => $unitId,
+                'storageType' => $storageType,
+                'path' => $path,
+                'contentType' => 2,
+            ]);
+            $content = (string) ($res['content'] ?? '');
+            if ($content === '') {
+                throw new RuntimeException('Wialon returned empty file content');
+            }
+            $bin = base64_decode($content, true);
+            if ($bin === false) {
+                throw new RuntimeException('Invalid base64 file content');
+            }
+            $fileName = basename(str_replace('\\', '/', $path)) ?: 'video';
+            return [
+                'data' => $bin,
+                'contentType' => self::mimeFromPath($path),
+                'fileName' => $fileName,
+            ];
+        } finally {
+            $client->logout();
+        }
+    }
+
+    /**
+     * @return array{data:string,contentType:string,fileName:string}
+     */
+    public static function readMessageVideoFile(string $tenantId, int $unitId, int $messageId): array
+    {
+        $creds = TenantWialon::loadCreds($tenantId);
+        $client = new WialonClient($creds['baseUrl']);
+        try {
+            $client->login($creds['token'], $creds['operateAs']);
+            $res = $client->call('messages/get_message_file', [
+                'itemId' => $unitId,
+                'msgId' => $messageId,
+                'contentType' => 2,
+            ]);
+            $content = (string) ($res['content'] ?? '');
+            if ($content === '') {
+                throw new RuntimeException('Wialon returned no message video content');
+            }
+            $bin = base64_decode($content, true);
+            if ($bin === false) {
+                throw new RuntimeException('Invalid base64 message content');
+            }
+            $fileName = (string) ($res['name'] ?? ('message-' . $messageId . '.mp4'));
+            return [
+                'data' => $bin,
+                'contentType' => self::mimeFromPath($fileName),
+                'fileName' => $fileName,
+            ];
+        } finally {
+            $client->logout();
+        }
+    }
+
+    public static function mimeFromPath(string $path): string
+    {
+        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        return match ($ext) {
+            'mp4' => 'video/mp4',
+            'webm' => 'video/webm',
+            'mov' => 'video/quicktime',
+            'avi' => 'video/x-msvideo',
+            'mkv' => 'video/x-matroska',
+            default => 'application/octet-stream',
+        };
+    }
+
+    /**
+     * @param array<int, mixed> $nodes
+     * @param array<int, array<string, mixed>> $files
+     */
+    private static function walkFileTree(array $nodes, string $prefix, int $storageType, int $fromMs, int $toMs, array &$files): void
+    {
+        foreach ($nodes as $node) {
+            if (!is_array($node) || empty($node['n'])) {
+                continue;
+            }
+            $path = $prefix !== '' ? ($prefix . '/' . $node['n']) : (string) $node['n'];
+            if (isset($node['c']) && is_array($node['c'])) {
+                self::walkFileTree($node['c'], $path, $storageType, $fromMs, $toMs, $files);
+                continue;
+            }
+            if (!isset($node['s'])) {
+                continue;
+            }
+            $occurredAt = self::parseOccurredAtFromName($path) ?? self::parseOccurredAtFromName((string) $node['n']);
+            if ($occurredAt && !self::inDateRangeMs($occurredAt, $fromMs, $toMs)) {
+                continue;
+            }
+            $files[] = [
+                'id' => 'file-' . $storageType . '-' . $path,
+                'name' => (string) $node['n'],
+                'sizeBytes' => isset($node['s']) ? (int) $node['s'] : null,
+                'path' => $path,
+                'storageType' => $storageType,
+                'source' => 'storage',
+                'tag' => 'storage',
+                'occurredAt' => $occurredAt,
+            ];
+        }
+    }
+
+    private static function parseOccurredAtFromName(string $name): ?string
+    {
+        $base = basename(str_replace('\\', '/', $name));
+        if (preg_match('/\b(1[0-9]{9,12})\b/', $base, $m)) {
+            $n = (int) $m[1];
+            if ($n > 1_000_000_000_000) {
+                return gmdate('c', (int) floor($n / 1000));
+            }
+            if ($n > 1_000_000_000) {
+                return gmdate('c', $n);
+            }
+        }
+        if (preg_match('/(20\d{2})[-_]?(\d{2})[-_]?(\d{2})[-_T]?(\d{2})[-_:]?(\d{2})[-_:]?(\d{2})/', $base, $iso)) {
+            $ts = gmmktime((int) $iso[4], (int) $iso[5], (int) $iso[6], (int) $iso[2], (int) $iso[3], (int) $iso[1]);
+            if ($ts !== false) {
+                return gmdate('c', $ts);
+            }
+        }
+        return null;
+    }
+
+    private static function inDateRangeMs(string $iso, int $fromMs, int $toMs): bool
+    {
+        $t = strtotime($iso);
+        if ($t === false) {
+            return true;
+        }
+        $ms = $t * 1000;
+        return $ms >= $fromMs && $ms <= $toMs;
+    }
 }

@@ -157,6 +157,12 @@ try {
     if ($apiPath === '/client/wialon/fuel/unit-report' && $method === 'POST') {
         ClientController::wialonFuelUnitReport();
     }
+    if ($apiPath === '/client/wialon/fuel/harvest' && $method === 'POST') {
+        ClientController::wialonFuelHarvest();
+    }
+    if ($apiPath === '/client/wialon/fuel/level-series' && $method === 'GET') {
+        ClientController::wialonFuelLevelSeries();
+    }
     if ($apiPath === '/client/wialon/commands' && $method === 'POST') {
         ClientController::wialonCommandSend();
     }
@@ -174,6 +180,15 @@ try {
     }
     if (route_match('/client/surveillance/proxy/segment/:streamToken/:segToken', $apiPath, $p) && $method === 'GET') {
         ClientController::surveillanceProxySegment($p['streamToken'], $p['segToken']);
+    }
+    if (route_match('/client/surveillance/units/:id/files/stream', $apiPath, $p) && $method === 'GET') {
+        ClientController::surveillanceFileStream($p['id']);
+    }
+    if (route_match('/client/surveillance/units/:id/files', $apiPath, $p) && $method === 'GET') {
+        ClientController::surveillanceUnitFiles($p['id']);
+    }
+    if (route_match('/client/surveillance/units/:id/messages/:mid/file', $apiPath, $p) && $method === 'GET') {
+        ClientController::surveillanceMessageFile($p['id'], $p['mid']);
     }
     if (route_match('/client/surveillance/units/:id', $apiPath, $p) && $method === 'GET') {
         ClientController::surveillanceUnitDetail($p['id']);

@@ -954,7 +954,7 @@
     const drains = txs.filter((t) => Number(t.fuelUsed || t.fuel_used) > 0 && !(Number(t.filled) > 0));
     const assetFilter = tab === 'generators' ? 'generator' : tab === 'machinery' ? 'machinery' : tab === 'vehicles' ? 'vehicle' : null;
     const filteredAssets = assetFilter ? assets.filter((a) => a.assetType === assetFilter) : assets;
-    const shown = tab === 'fills' ? fills : tab === 'drains' ? drains : (tab === 'live' || assetFilter || tab === 'assets' || tab === 'intel' || tab === 'events') ? [] : txs;
+    const shown = tab === 'fills' ? fills : tab === 'drains' ? drains : (tab === 'live' || assetFilter || tab === 'assets' || tab === 'intel' || tab === 'events' || tab === 'series') ? [] : txs;
 
     const rows = shown.slice(0, 100).map((t) => `<tr>
       <td>${fmtDate(t.timestamp ? t.timestamp * 1000 : t.date)}</td>
@@ -1027,8 +1027,26 @@
       <a class="tab ${tab === 'machinery' ? 'active' : ''}" href="/app/fuel?fuelTab=machinery">Machinery (${summary.machinery ?? 0})</a>
       <a class="tab ${tab === 'intel' ? 'active' : ''}" href="/app/fuel?fuelTab=intel">Intelligence (${intelAssets.length})</a>
       <a class="tab ${tab === 'events' ? 'active' : ''}" href="/app/fuel?fuelTab=events">Events (${events.length})</a>
+      <a class="tab ${tab === 'series' ? 'active' : ''}" href="/app/fuel?fuelTab=series">Level series</a>
     </div>
-    ${tab === 'intel' ? `<div class="card mt-2">
+    <div class="actions mt-1">
+      <button type="button" class="btn btn-sm" data-action="fuel-harvest">Harvest fleet fuel (≤20 units)</button>
+    </div>
+    ${tab === 'series' ? `<div class="card mt-2">
+      <div class="card-header"><h3>Fuel level series</h3><span class="muted">Pick a live unit</span></div>
+      <div class="form-grid">
+        <label><span>Unit</span><select class="select" id="fuel-series-unit">
+          ${liveUnits.slice(0, 200).map((u) => `<option value="${esc(u.unitId || u.wialonId || u.id)}">${esc(u.name || u.unitName)}</option>`).join('') || '<option value="">No units</option>'}
+        </select></label>
+        <label><span>Range</span><select class="select" id="fuel-series-range">
+          <option value="86400">Last 24h</option>
+          <option value="259200">Last 3 days</option>
+          <option value="604800" selected>Last 7 days</option>
+        </select></label>
+        <div class="form-grid-action"><button type="button" class="btn" data-action="load-fuel-series">Load series</button></div>
+      </div>
+      <div id="fuel-series-root" class="mt-1">${emptyState('📈', 'No series loaded', 'Choose a unit and load the level series.')}</div>
+    </div>` : tab === 'intel' ? `<div class="card mt-2">
       <div class="card-header"><h3>Fuel intelligence</h3><span class="muted">${esc((intel && intel.from) || '')} → ${esc((intel && intel.to) || '')}</span></div>
       ${tableWrap(['Asset', 'Type', 'Filled', 'Consumed', 'Theft', 'Mileage', 'L/100km', 'Score'], intelRows, 'No intelligence data — sync fuel transactions or pull a unit report')}
       ${(intel && intel.daily && intel.daily.length) ? '<div class="chart-box mt-1" style="height:180px"><canvas id="fuel-intel-daily"></canvas></div>' : ''}
@@ -2143,24 +2161,167 @@
       return;
     }
 
+    if (action === 'fuel-harvest') {
+      const msg = document.getElementById('fuel-report-msg');
+      btn.disabled = true;
+      if (msg) msg.innerHTML = `<div class="banner banner-info">Harvesting fuel reports for up to 20 units — this can take a few minutes…</div>`;
+      try {
+        const data = await MamsApi.api('/client/wialon/fuel/harvest', {
+          method: 'POST',
+          body: JSON.stringify({
+            from: Math.floor(Date.now() / 1000) - 86400 * 7,
+            to: Math.floor(Date.now() / 1000),
+            persist: true,
+            cap: 20,
+          }),
+        });
+        if (msg) {
+          msg.innerHTML = `<div class="banner banner-success">Harvest done · ${esc(data.ok)}/${esc(data.attempted)} ok · inserted ${esc(data.inserted)} · failed ${esc(data.failed)}</div>`;
+        }
+      } catch (ex) {
+        if (msg) msg.innerHTML = `<div class="banner banner-error">${esc(ex.message || 'Harvest failed')}</div>`;
+      } finally {
+        btn.disabled = false;
+      }
+      return;
+    }
+
+    if (action === 'load-fuel-series') {
+      const unitEl = document.getElementById('fuel-series-unit');
+      const rangeEl = document.getElementById('fuel-series-range');
+      const root = document.getElementById('fuel-series-root');
+      if (!unitEl || !root) return;
+      const unitId = unitEl.value;
+      if (!unitId) return;
+      const secs = Number(rangeEl?.value || 604800);
+      const to = Math.floor(Date.now() / 1000);
+      const from = to - (Number.isFinite(secs) ? secs : 604800);
+      btn.disabled = true;
+      root.innerHTML = typeof loader === 'function' ? loader() : 'Loading…';
+      try {
+        const data = await MamsApi.api(`/client/wialon/fuel/level-series?unitId=${encodeURIComponent(unitId)}&from=${from}&to=${to}`);
+        const points = data.points || [];
+        const eventRows = points.filter((p) => p.event === 'refill' || p.event === 'drain').slice(-40).map((p) => `<tr>
+          <td>${fmtDate(p.t * 1000)}</td>
+          <td><span class="badge ${p.event === 'refill' ? 'badge-success' : 'badge-danger'}">${esc(p.event)}</span></td>
+          <td>${esc(p.processed ?? p.liters)} L</td>
+          <td>${esc(p.delta)} L</td>
+        </tr>`).join('');
+        root.innerHTML = `<div class="kpi-grid">
+          ${kpi('Points', data.pointCount ?? points.length)}
+          ${kpi('Refills', data.fillCount ?? 0)}
+          ${kpi('Drains', data.drainCount ?? 0)}
+          ${kpi('Unit', data.unitName || unitId)}
+        </div>
+        <div class="chart-box mt-1" style="height:220px"><canvas id="fuel-level-series-chart"></canvas></div>
+        <div class="mt-1">${tableWrap(['When', 'Event', 'Level', 'Delta'], eventRows, 'No refill/drain markers in range')}</div>`;
+        if (points.length && typeof MamsCharts?.line === 'function') {
+          const step = Math.max(1, Math.ceil(points.length / 120));
+          const sampled = points.filter((_, i) => i % step === 0 || points[i].event !== 'level');
+          MamsCharts.line(
+            'fuel-level-series-chart',
+            sampled.map((p) => fmtDate(p.t * 1000)),
+            [{ label: 'Fuel (L)', data: sampled.map((p) => Number(p.processed ?? p.liters) || 0) }],
+          );
+        } else if (points.length && typeof MamsCharts?.composed === 'function') {
+          const step = Math.max(1, Math.ceil(points.length / 120));
+          const sampled = points.filter((_, i) => i % step === 0);
+          const p = MamsCharts.palette();
+          MamsCharts.composed(
+            'fuel-level-series-chart',
+            sampled.map((pt) => ''),
+            { label: 'Fuel (L)', data: sampled.map((pt) => Number(pt.processed ?? pt.liters) || 0) },
+            { label: '', data: [] },
+            { bar: p.primary, line: p.accent },
+          );
+        }
+      } catch (ex) {
+        root.innerHTML = `<div class="banner banner-error">${esc(ex.message || 'Level series failed')}</div>`;
+      } finally {
+        btn.disabled = false;
+      }
+      return;
+    }
+
     if (action === 'open-surveillance-unit') {
       const root = document.getElementById('surveillance-player-root');
       if (!root) return;
       root.innerHTML = `<div class="card-header"><h3>${esc(btn.dataset.name || id)}</h3></div>${typeof loader === 'function' ? loader() : 'Loading…'}`;
       try {
-        const detail = await MamsApi.api(`/client/surveillance/units/${encodeURIComponent(id)}`);
+        const [detail, filesRes] = await Promise.all([
+          MamsApi.api(`/client/surveillance/units/${encodeURIComponent(id)}`),
+          MamsApi.api(`/client/surveillance/units/${encodeURIComponent(id)}/files`).catch(() => ({ files: [] })),
+        ]);
         const cams = detail.cameras || detail.allCameras || [];
+        const files = filesRes.files || [];
         const camBtns = cams.map((c) =>
           `<button type="button" class="btn btn-sm" data-action="start-live-stream" data-unit="${esc(detail.id || id)}" data-channel="${esc(c.channel)}" data-name="${esc(detail.name || '')}">Go Live · ${esc(c.name || ('Cam ' + c.channel))}</button>`
         ).join(' ');
-        root.innerHTML = `<div class="card-header"><h3>${esc(detail.name || id)}</h3><span class="muted">${cams.length} cameras</span></div>
+        const fileRows = files.slice(0, 40).map((f) => {
+          const playAttrs = f.source === 'message' && f.messageId
+            ? `data-action="play-video-file" data-unit="${esc(detail.id || id)}" data-mid="${esc(f.messageId)}" data-source="message"`
+            : f.path
+              ? `data-action="play-video-file" data-unit="${esc(detail.id || id)}" data-path="${esc(f.path)}" data-storage="${esc(f.storageType || 2)}" data-source="storage"`
+              : '';
+          return `<tr>
+            <td><strong>${esc(f.name)}</strong><div class="muted">${esc(f.source || '')}</div></td>
+            <td class="muted">${f.occurredAt ? fmtDate(f.occurredAt) : '—'}</td>
+            <td>${f.sizeBytes ? esc(Math.round(f.sizeBytes / 1024)) + ' KB' : '—'}</td>
+            <td>${playAttrs ? `<button type="button" class="btn btn-sm" ${playAttrs}>Play</button>` : '—'}</td>
+          </tr>`;
+        }).join('');
+        root.innerHTML = `<div class="card-header"><h3>${esc(detail.name || id)}</h3><span class="muted">${cams.length} cameras · ${files.length} files</span></div>
           <div class="actions" style="flex-wrap:wrap;gap:6px">${camBtns || '<span class="muted">No cameras</span>'}</div>
           <div id="surveillance-video-wrap" class="mt-1">
             <video id="surveillance-video" controls playsinline style="width:100%;max-height:360px;background:#111;border-radius:8px"></video>
-            <p id="surveillance-stream-msg" class="muted mt-1">Pick a camera to start live playback.</p>
+            <p id="surveillance-stream-msg" class="muted mt-1">Pick a camera for live, or a file below for archive playback.</p>
+          </div>
+          <div class="mt-1">
+            <div class="card-header"><h3>Archive files</h3></div>
+            ${tableWrap(['File', 'When', 'Size', ''], fileRows, 'No archived clips in the last 30 days')}
           </div>`;
       } catch (ex) {
         root.innerHTML = `<div class="banner banner-error">${esc(ex.message || 'Unit detail failed')}</div>`;
+      }
+      return;
+    }
+
+    if (action === 'play-video-file') {
+      const video = document.getElementById('surveillance-video');
+      const msg = document.getElementById('surveillance-stream-msg');
+      const unitId = btn.dataset.unit;
+      if (!video || !unitId) return;
+      let url = '';
+      if (btn.dataset.source === 'message' && btn.dataset.mid) {
+        url = `/api/client/surveillance/units/${encodeURIComponent(unitId)}/messages/${encodeURIComponent(btn.dataset.mid)}/file`;
+      } else if (btn.dataset.path) {
+        url = `/api/client/surveillance/units/${encodeURIComponent(unitId)}/files/stream?path=${encodeURIComponent(btn.dataset.path)}&storageType=${encodeURIComponent(btn.dataset.storage || '2')}`;
+      }
+      if (!url) return;
+      btn.disabled = true;
+      if (msg) msg.textContent = 'Loading archive clip…';
+      try {
+        // Fetch with auth then blob URL (video tag alone may miss Authorization)
+        const token = localStorage.getItem('ufp_token') || '';
+        const res = await fetch(url, {
+          credentials: 'same-origin',
+          headers: token ? { Authorization: 'Bearer ' + token } : {},
+        });
+        if (!res.ok) throw new Error('Failed to load clip (' + res.status + ')');
+        const blob = await res.blob();
+        if (video._objectUrl) URL.revokeObjectURL(video._objectUrl);
+        video._objectUrl = URL.createObjectURL(blob);
+        if (video._hls) {
+          try { video._hls.destroy(); } catch (_) {}
+          video._hls = null;
+        }
+        video.src = video._objectUrl;
+        await video.play().catch(() => {});
+        if (msg) msg.textContent = 'Playing archive clip';
+      } catch (ex) {
+        if (msg) msg.textContent = ex.message || 'Clip playback failed';
+      } finally {
+        btn.disabled = false;
       }
       return;
     }
