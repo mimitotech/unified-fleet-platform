@@ -80,7 +80,21 @@ const MamsApi = (() => {
 
     if (res.status === 401) {
       const isAuthCheck = path === '/auth/me' || path === '/auth/login';
-      if (!isAuthCheck) redirectLogin();
+      if (!isAuthCheck) {
+        // Some admin/client endpoints can transiently return 401 while the session is still valid.
+        // Verify via /auth/me first; only redirect if the session is truly gone/invalid.
+        try {
+          const meRes = await fetch('/api/auth/me', { method: 'GET' });
+          if (meRes.ok) {
+            const err = new Error('Request unauthorized (session verified)');
+            err.status = 401;
+            throw err;
+          }
+        } catch (_) {
+          // fall through to redirectLogin below
+        }
+        redirectLogin();
+      }
       const err = new Error('Session expired');
       err.status = 401;
       throw err;
