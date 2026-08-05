@@ -7,6 +7,7 @@ final class WialonClient
     private string $baseUrl;
     private ?string $sid = null;
     private ?array $user = null;
+    private ?string $videoServiceUrl = null;
 
     public function __construct(?string $baseUrl = null)
     {
@@ -18,6 +19,11 @@ final class WialonClient
     public function sid(): ?string
     {
         return $this->sid;
+    }
+
+    public function videoServiceUrl(): ?string
+    {
+        return $this->videoServiceUrl;
     }
 
     /** @return array<string, mixed>|null */
@@ -68,6 +74,8 @@ final class WialonClient
         }
         $this->sid = $eid;
         $this->user = is_array($data['user'] ?? null) ? $data['user'] : [];
+        $vsu = (string) ($data['video_service_url'] ?? $data['video_service_base_url'] ?? '');
+        $this->videoServiceUrl = $vsu !== '' ? $vsu : null;
 
         try {
             $this->call('core/set_session_property', [
@@ -93,6 +101,7 @@ final class WialonClient
         }
         $this->sid = null;
         $this->user = null;
+        $this->videoServiceUrl = null;
     }
 
     private function httpGet(string $url): string

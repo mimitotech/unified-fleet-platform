@@ -884,13 +884,62 @@
     document.head.appendChild(script);
   }
 
+  function loadHls(cb) {
+    if (typeof Hls !== 'undefined') { cb(); return; }
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js';
+    script.onload = cb;
+    script.onerror = () => cb();
+    document.head.appendChild(script);
+  }
+
+  function attachHlsPlayer(videoEl, url) {
+    return new Promise((resolve, reject) => {
+      if (!videoEl || !url) {
+        reject(new Error('Missing video element or URL'));
+        return;
+      }
+      if (videoEl._hls) {
+        try { videoEl._hls.destroy(); } catch (_) {}
+        videoEl._hls = null;
+      }
+      if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+        videoEl.src = url;
+        videoEl.play().catch(() => {});
+        resolve();
+        return;
+      }
+      loadHls(() => {
+        if (typeof Hls === 'undefined' || !Hls.isSupported()) {
+          videoEl.src = url;
+          videoEl.play().catch(() => {});
+          resolve();
+          return;
+        }
+        const hls = new Hls({ enableWorker: true });
+        videoEl._hls = hls;
+        hls.loadSource(url);
+        hls.attachMedia(videoEl);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          videoEl.play().catch(() => {});
+          resolve();
+        });
+        hls.on(Hls.Events.ERROR, (_e, data) => {
+          if (data?.fatal) reject(new Error(data.type || 'HLS error'));
+        });
+      });
+    });
+  }
+
   async function renderFuel() {
-    const [data, monthly, liveFuel, overview, assetsRes] = await Promise.all([
+    const [data, monthly, liveFuel, overview, assetsRes, intel, eventsRes] = await Promise.all([
       MamsApi.api('/client/fuel/transactions').catch(() => ({ transactions: [], kpis: {} })),
       MamsApi.api('/client/fuel/monthly-trend').catch(() => []),
       MamsApi.api('/client/wialon/fuel/live').catch(() => ({ units: [], live: false })),
       MamsApi.api('/client/wialon/fuel/overview').catch(() => ({})),
       MamsApi.api('/client/wialon/fuel/assets').catch(() => ({ assets: [], summary: {} })),
+      MamsApi.api('/client/wialon/fuel/intelligence').catch(() => null),
+      MamsApi.api('/client/wialon/fuel/events?limit=40').catch(() => ({ events: [] })),
     ]);
     const txs = data.transactions || (Array.isArray(data) ? data : []);
     const kpis = data.kpis || {};
@@ -898,13 +947,14 @@
     const liveUnits = liveFuel.units || [];
     const assets = assetsRes.assets || [];
     const summary = assetsRes.summary || overview.assets || {};
+    const events = eventsRes.events || [];
     const params = new URLSearchParams(location.search);
     const tab = (params.get('fuelTab') || 'all').toLowerCase();
     const fills = txs.filter((t) => Number(t.filled) > 0);
     const drains = txs.filter((t) => Number(t.fuelUsed || t.fuel_used) > 0 && !(Number(t.filled) > 0));
     const assetFilter = tab === 'generators' ? 'generator' : tab === 'machinery' ? 'machinery' : tab === 'vehicles' ? 'vehicle' : null;
     const filteredAssets = assetFilter ? assets.filter((a) => a.assetType === assetFilter) : assets;
-    const shown = tab === 'fills' ? fills : tab === 'drains' ? drains : (tab === 'live' || assetFilter || tab === 'assets') ? [] : txs;
+    const shown = tab === 'fills' ? fills : tab === 'drains' ? drains : (tab === 'live' || assetFilter || tab === 'assets' || tab === 'intel' || tab === 'events') ? [] : txs;
 
     const rows = shown.slice(0, 100).map((t) => `<tr>
       <td>${fmtDate(t.timestamp ? t.timestamp * 1000 : t.date)}</td>
@@ -923,6 +973,7 @@
       <td>${u.fuelLiters != null ? esc(u.fuelLiters) + ' L' : '—'}</td>
       <td class="muted">${u.mileage != null ? esc(Math.round(Number(u.mileage))).toLocaleString() + ' km' : '—'}</td>
       <td>${u.battery != null ? esc(Math.round(u.battery)) + '%' : '—'}</td>
+      <td><button type="button" class="btn btn-sm btn-ghost" data-action="fuel-unit-report" data-unit="${esc(u.unitId || u.wialonId || u.id)}" data-name="${esc(u.name || u.unitName || '')}">Pull report</button></td>
     </tr>`).join('');
 
     const trendRows = trend.slice(-8).map((m) => `<tr>
@@ -931,19 +982,40 @@
       <td>${esc(m.consumed)} L</td>
     </tr>`).join('');
 
+    const intelAssets = (intel && intel.assets) || [];
+    const intelRows = intelAssets.slice(0, 80).map((a) => `<tr>
+      <td><strong>${esc(a.unitName)}</strong></td>
+      <td><span class="badge badge-info">${esc(a.assetCategory)}</span></td>
+      <td>${esc(a.filled)} L</td>
+      <td>${esc(a.consumed)} L</td>
+      <td>${esc(a.theft)} L</td>
+      <td>${esc(a.mileage)} km</td>
+      <td>${esc(a.avgConsumption)}</td>
+      <td>${esc(a.efficiencyScore)}</td>
+    </tr>`).join('');
+
+    const eventRows = events.slice(0, 40).map((ev) => `<tr>
+      <td>${fmtDate(ev.timestamp ? ev.timestamp * 1000 : null)}</td>
+      <td><strong>${esc(ev.unitName)}</strong></td>
+      <td><span class="badge ${ev.type === 'fill' ? 'badge-success' : 'badge-danger'}">${esc(ev.type)}</span></td>
+      <td>${esc(ev.volume)} L</td>
+      <td class="muted">${esc(ev.location || '—')}</td>
+    </tr>`).join('');
+
     const showLiveTable = tab === 'live' || tab === 'assets' || !!assetFilter;
+    const totals = (intel && intel.totals) || {};
     const banner = liveFuel.live || assetsRes.live
-      ? `<div class="banner banner-success">Live Wialon fuel · ${summary.withFuel ?? liveUnits.length} with readings · ${summary.vehicles ?? 0} vehicles / ${summary.generators ?? 0} gens / ${summary.machinery ?? 0} machinery</div>`
+      ? `<div class="banner banner-success">Live Wialon fuel · ${summary.withFuel ?? liveUnits.length} with readings · intel from ${esc((intel && intel.source) || 'db')}</div>`
       : (txs.length > 0
         ? `<div class="banner banner-info">Showing fuel events for ${esc(data.from || overview.from || '')} – ${esc(data.to || overview.to || '')}.</div>`
         : integrationBanner('Wialon fuel reports'));
 
     return `${banner}
     <div class="kpi-grid">
-      ${kpi('Filled', (overview.totalFilled ?? kpis.totalFilled ?? 0) + ' L')}
-      ${kpi('Consumed', (overview.totalConsumed ?? kpis.totalConsumed ?? 0) + ' L')}
-      ${kpi('Avg L/100km', overview.avgConsumptionL100km ?? kpis.avgConsumptionL100km ?? 0)}
-      ${kpi('Live with fuel', summary.withFuel ?? liveUnits.length)}
+      ${kpi('Filled', (totals.filled ?? overview.totalFilled ?? kpis.totalFilled ?? 0) + ' L')}
+      ${kpi('Consumed', (totals.consumed ?? overview.totalConsumed ?? kpis.totalConsumed ?? 0) + ' L')}
+      ${kpi('Theft', (totals.theft ?? 0) + ' L')}
+      ${kpi('Avg L/100km', totals.avgConsumption ?? overview.avgConsumptionL100km ?? kpis.avgConsumptionL100km ?? 0)}
     </div>
     <div class="tab-bar mt-2">
       <a class="tab ${tab === 'all' ? 'active' : ''}" href="/app/fuel?fuelTab=all">All (${txs.length})</a>
@@ -953,10 +1025,19 @@
       <a class="tab ${tab === 'vehicles' ? 'active' : ''}" href="/app/fuel?fuelTab=vehicles">Vehicles (${summary.vehicles ?? 0})</a>
       <a class="tab ${tab === 'generators' ? 'active' : ''}" href="/app/fuel?fuelTab=generators">Generators (${summary.generators ?? 0})</a>
       <a class="tab ${tab === 'machinery' ? 'active' : ''}" href="/app/fuel?fuelTab=machinery">Machinery (${summary.machinery ?? 0})</a>
+      <a class="tab ${tab === 'intel' ? 'active' : ''}" href="/app/fuel?fuelTab=intel">Intelligence (${intelAssets.length})</a>
+      <a class="tab ${tab === 'events' ? 'active' : ''}" href="/app/fuel?fuelTab=events">Events (${events.length})</a>
     </div>
-    ${showLiveTable ? `<div class="card mt-2">
+    ${tab === 'intel' ? `<div class="card mt-2">
+      <div class="card-header"><h3>Fuel intelligence</h3><span class="muted">${esc((intel && intel.from) || '')} → ${esc((intel && intel.to) || '')}</span></div>
+      ${tableWrap(['Asset', 'Type', 'Filled', 'Consumed', 'Theft', 'Mileage', 'L/100km', 'Score'], intelRows, 'No intelligence data — sync fuel transactions or pull a unit report')}
+      ${(intel && intel.daily && intel.daily.length) ? '<div class="chart-box mt-1" style="height:180px"><canvas id="fuel-intel-daily"></canvas></div>' : ''}
+    </div>` : tab === 'events' ? `<div class="card mt-2">
+      <div class="card-header"><h3>Fill / theft events</h3></div>
+      ${tableWrap(['When', 'Asset', 'Type', 'Volume', 'Location'], eventRows, 'No fill/theft events')}
+    </div>` : showLiveTable ? `<div class="card mt-2">
       <div class="card-header"><h3>${tab === 'live' ? 'Live fuel / battery' : esc(tab) + ' assets'}</h3><span class="badge ${liveFuel.live || assetsRes.live ? 'badge-success' : 'badge-inactive'}">${liveFuel.live || assetsRes.live ? 'Live' : 'Offline'}</span></div>
-      ${tableWrap(['Asset', 'Type', 'Status', 'Fuel %', 'Liters', 'Mileage', 'Battery'], liveRows, 'No live fuel levels (link + verify Wialon)')}
+      ${tableWrap(['Asset', 'Type', 'Status', 'Fuel %', 'Liters', 'Mileage', 'Battery', 'Report'], liveRows, 'No live fuel levels (link + verify Wialon)')}
     </div>` : `<div class="grid-main-side mt-2">
       <div class="card">
         <div class="card-header"><h3>Fuel events</h3></div>
@@ -967,7 +1048,8 @@
         ${tableWrap(['Month', 'Filled', 'Consumed'], trendRows, 'No trend data yet')}
         ${trend.some((r) => Number(r.filled) > 0 || Number(r.consumed) > 0) ? '<div class="chart-box mt-1" style="height:180px"><canvas id="fuel-page-trend"></canvas></div>' : ''}
       </div>
-    </div>`}`;
+    </div>`}
+    <div id="fuel-report-msg" class="mt-1"></div>`;
   }
 
   async function renderWorkshop() {
@@ -1324,29 +1406,39 @@
   async function renderSurveillance() {
     const data = await MamsApi.api('/client/surveillance/units').catch(() => ({ units: [], streaming: false }));
     const list = data.units || [];
-    const rows = list.map((u) => `<tr>
+    const rows = list.map((u) => {
+      const id = u.wialonId || u.id;
+      const cams = (u.cameras || []).length || u.cameraCount || 0;
+      return `<tr class="row-clickable" data-action="open-surveillance-unit" data-id="${esc(id)}" data-name="${esc(u.name)}">
       <td><strong>${esc(u.name)}</strong>${u.plate ? `<div class="muted">${esc(u.plate)}</div>` : ''}</td>
-      <td>${u.status ? statusBadge(u.status) : '—'}</td>
-      <td class="muted">${esc(u.hwName || '—')}</td>
-      <td>${u.position ? `${Number(u.position.lat).toFixed(4)}, ${Number(u.position.lng).toFixed(4)}` : '—'}</td>
-      <td><span class="badge ${u.streamAvailable ? 'badge-success' : 'badge-inactive'}">${u.streamAvailable ? 'Stream ready' : 'Discovery only'}</span></td>
-    </tr>`).join('');
+      <td>${u.status ? statusBadge(u.status) : (u.connected ? statusBadge('moving') : '—')}</td>
+      <td class="muted">${esc(u.hwType || u.hwName || '—')}</td>
+      <td>${cams} cam${cams === 1 ? '' : 's'}</td>
+      <td><span class="badge ${u.streamAvailable !== false ? 'badge-success' : 'badge-inactive'}">${u.streamAvailable !== false ? 'Ready' : 'N/A'}</span></td>
+    </tr>`;
+    }).join('');
 
     return `<div class="integration-panel mt-1">
       <h3>Surveillance & video</h3>
-      <p>${esc(data.message || 'Video-capable units discovered from live fleet heuristics. HLS live/playback is the next port.')}</p>
+      <p>${esc(data.message || 'Select a unit to inspect cameras and start live HLS playback.')}</p>
       <p class="mt-1"><span class="badge badge-brand">Wialon Video</span>
-        <span class="badge ${data.live ? 'badge-success' : 'badge-inactive'}">${data.live ? 'Live discovery' : 'DB fallback'}</span>
-        <span class="badge badge-info">${data.streaming ? 'Streaming on' : 'Streaming soon'}</span>
+        <span class="badge ${data.live ? 'badge-success' : 'badge-inactive'}">${data.live ? 'Live discovery' : 'Offline'}</span>
+        <span class="badge ${data.streaming ? 'badge-success' : 'badge-info'}">${data.streaming ? 'HLS proxy on' : 'Discovery only'}</span>
       </p>
     </div>
     <div class="kpi-grid mt-2">
       ${kpi('Video units', data.count ?? list.length)}
-      ${kpi('Source', data.live ? 'Live Wialon' : 'Assets DB')}
+      ${kpi('Source', data.live ? 'Live Wialon' : 'Fallback')}
     </div>
-    <div class="card mt-2">
-      <div class="card-header"><h3>Camera-capable units</h3><span class="muted">${list.length}</span></div>
-      ${tableWrap(['Unit', 'Status', 'Hardware', 'Position', 'Stream'], rows, 'No camera-capable units detected')}
+    <div class="grid-main-side mt-2">
+      <div class="card">
+        <div class="card-header"><h3>Camera-capable units</h3><span class="muted">${list.length}</span></div>
+        ${tableWrap(['Unit', 'Status', 'Hardware', 'Cameras', 'Stream'], rows, 'No camera-capable units detected')}
+      </div>
+      <div class="card" id="surveillance-player-root">
+        <div class="card-header"><h3>Live player</h3></div>
+        ${emptyState('📹', 'No camera selected', 'Click a unit to load cameras and Go Live.')}
+      </div>
     </div>`;
   }
 
@@ -1793,6 +1885,20 @@
         );
       }
     }
+    if (mod === 'fuel' && document.getElementById('fuel-intel-daily')) {
+      const intel = await MamsApi.api('/client/wialon/fuel/intelligence').catch(() => null);
+      const daily = ((intel && intel.daily) || []).slice(-14);
+      if (daily.length && typeof MamsCharts?.composed === 'function') {
+        const p = MamsCharts.palette();
+        MamsCharts.composed(
+          'fuel-intel-daily',
+          daily.map((r) => String(r.date || '')),
+          { label: 'Filled (L)', data: daily.map((r) => Number(r.filled) || 0) },
+          { label: 'Consumed (L)', data: daily.map((r) => Number(r.consumed) || 0) },
+          { bar: p.primary, line: p.accent },
+        );
+      }
+    }
   }
 
   content.addEventListener('click', async (e) => {
@@ -2006,6 +2112,80 @@
         resultEl.innerHTML = `<div class="card-header"><h3>${esc(reportId)}</h3><span class="muted">${units.length} units · ${snap.live ? 'Live' : 'Cached'}</span></div>${tableWrap(cols, body, 'No units')}`;
       } catch (ex) {
         resultEl.innerHTML = `<div class="banner banner-error">${esc(ex.message || 'Live report failed')}</div>`;
+      }
+      return;
+    }
+
+    if (action === 'fuel-unit-report') {
+      const unitId = btn.dataset.unit;
+      if (!unitId) return;
+      const msg = document.getElementById('fuel-report-msg');
+      btn.disabled = true;
+      if (msg) msg.innerHTML = `<div class="banner banner-info">Pulling Wialon fuel report for ${esc(btn.dataset.name || unitId)}…</div>`;
+      try {
+        const data = await MamsApi.api('/client/wialon/fuel/unit-report', {
+          method: 'POST',
+          body: JSON.stringify({
+            unitId: Number(unitId),
+            from: Math.floor(Date.now() / 1000) - 86400 * 7,
+            to: Math.floor(Date.now() / 1000),
+            persist: true,
+          }),
+        });
+        if (msg) {
+          msg.innerHTML = `<div class="banner banner-success">Parsed ${esc(data.count || 0)} rows · inserted ${esc(data.inserted || 0)} · template ${esc(data.templateId)}</div>`;
+        }
+      } catch (ex) {
+        if (msg) msg.innerHTML = `<div class="banner banner-error">${esc(ex.message || 'Unit report failed')}</div>`;
+      } finally {
+        btn.disabled = false;
+      }
+      return;
+    }
+
+    if (action === 'open-surveillance-unit') {
+      const root = document.getElementById('surveillance-player-root');
+      if (!root) return;
+      root.innerHTML = `<div class="card-header"><h3>${esc(btn.dataset.name || id)}</h3></div>${typeof loader === 'function' ? loader() : 'Loading…'}`;
+      try {
+        const detail = await MamsApi.api(`/client/surveillance/units/${encodeURIComponent(id)}`);
+        const cams = detail.cameras || detail.allCameras || [];
+        const camBtns = cams.map((c) =>
+          `<button type="button" class="btn btn-sm" data-action="start-live-stream" data-unit="${esc(detail.id || id)}" data-channel="${esc(c.channel)}" data-name="${esc(detail.name || '')}">Go Live · ${esc(c.name || ('Cam ' + c.channel))}</button>`
+        ).join(' ');
+        root.innerHTML = `<div class="card-header"><h3>${esc(detail.name || id)}</h3><span class="muted">${cams.length} cameras</span></div>
+          <div class="actions" style="flex-wrap:wrap;gap:6px">${camBtns || '<span class="muted">No cameras</span>'}</div>
+          <div id="surveillance-video-wrap" class="mt-1">
+            <video id="surveillance-video" controls playsinline style="width:100%;max-height:360px;background:#111;border-radius:8px"></video>
+            <p id="surveillance-stream-msg" class="muted mt-1">Pick a camera to start live playback.</p>
+          </div>`;
+      } catch (ex) {
+        root.innerHTML = `<div class="banner banner-error">${esc(ex.message || 'Unit detail failed')}</div>`;
+      }
+      return;
+    }
+
+    if (action === 'start-live-stream') {
+      const unitId = btn.dataset.unit;
+      const channel = btn.dataset.channel || '1';
+      const msg = document.getElementById('surveillance-stream-msg');
+      const video = document.getElementById('surveillance-video');
+      if (!unitId || !video) return;
+      btn.disabled = true;
+      if (msg) msg.textContent = 'Starting live stream…';
+      try {
+        const data = await MamsApi.api(
+          `/client/surveillance/units/${encodeURIComponent(unitId)}/cameras/${encodeURIComponent(channel)}/live/start`,
+          { method: 'POST', body: '{}' }
+        );
+        const url = data.playbackUrl;
+        if (!url) throw new Error('No playback URL returned');
+        if (msg) msg.textContent = `${data.streamType || 'stream'} · channel ${data.channel}`;
+        await attachHlsPlayer(video, url);
+      } catch (ex) {
+        if (msg) msg.textContent = ex.message || 'Failed to start live stream';
+      } finally {
+        btn.disabled = false;
       }
       return;
     }

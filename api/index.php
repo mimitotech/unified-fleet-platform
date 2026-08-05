@@ -145,11 +145,38 @@ try {
     if ($apiPath === '/client/wialon/fuel/overview' && $method === 'GET') {
         ClientController::wialonFuelOverview();
     }
+    if ($apiPath === '/client/wialon/fuel/intelligence' && $method === 'GET') {
+        ClientController::wialonFuelIntelligence();
+    }
+    if ($apiPath === '/client/wialon/fuel/events' && $method === 'GET') {
+        ClientController::wialonFuelEvents();
+    }
+    if ($apiPath === '/client/wialon/fuel/trend' && $method === 'GET') {
+        ClientController::wialonFuelTrend();
+    }
+    if ($apiPath === '/client/wialon/fuel/unit-report' && $method === 'POST') {
+        ClientController::wialonFuelUnitReport();
+    }
     if ($apiPath === '/client/wialon/commands' && $method === 'POST') {
         ClientController::wialonCommandSend();
     }
     if ($apiPath === '/client/surveillance/units' && $method === 'GET') {
         ClientController::surveillanceUnits();
+    }
+    if (route_match('/client/surveillance/units/:id/cameras/:ch/live/start', $apiPath, $p) && $method === 'POST') {
+        ClientController::surveillanceLiveStart($p['id'], $p['ch']);
+    }
+    if (route_match('/client/surveillance/units/:id/cameras/:ch/live/playlist.m3u8', $apiPath, $p) && $method === 'GET') {
+        ClientController::surveillanceLivePlaylist($p['id'], $p['ch']);
+    }
+    if (route_match('/client/surveillance/units/:id/cameras/:ch/live/stream', $apiPath, $p) && $method === 'GET') {
+        ClientController::surveillanceLiveStream($p['id'], $p['ch']);
+    }
+    if (route_match('/client/surveillance/proxy/segment/:streamToken/:segToken', $apiPath, $p) && $method === 'GET') {
+        ClientController::surveillanceProxySegment($p['streamToken'], $p['segToken']);
+    }
+    if (route_match('/client/surveillance/units/:id', $apiPath, $p) && $method === 'GET') {
+        ClientController::surveillanceUnitDetail($p['id']);
     }
     if ($apiPath === '/client/preferences' && $method === 'GET') {
         ClientController::preferencesGet();
