@@ -106,6 +106,15 @@ try {
     if (route_match('/client/wialon/units/:id', $apiPath, $p) && $method === 'GET') {
         ClientController::wialonUnitDetail($p['id']);
     }
+    if ($apiPath === '/client/wialon/routes' && $method === 'GET') {
+        ClientController::wialonRoutes();
+    }
+    if ($apiPath === '/client/wialon/notifications' && $method === 'GET') {
+        ClientController::wialonNotifications();
+    }
+    if ($apiPath === '/client/wialon/reports/templates' && $method === 'GET') {
+        ClientController::wialonReportTemplates();
+    }
     if ($apiPath === '/client/preferences' && $method === 'GET') {
         ClientController::preferencesGet();
     }

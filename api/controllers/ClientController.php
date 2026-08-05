@@ -769,6 +769,48 @@ class ClientController
         Response::success($live);
     }
 
+    /** GET /client/wialon/routes */
+    public static function wialonRoutes(): void
+    {
+        $tenantId = self::requireTenantId();
+        require_once __DIR__ . '/../../lib/WialonLive.php';
+        try {
+            $routes = WialonLive::listRoutes($tenantId);
+            Response::success(['routes' => $routes, 'count' => count($routes)]);
+        } catch (Throwable $e) {
+            error_log('ClientController wialonRoutes: ' . $e->getMessage());
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /** GET /client/wialon/notifications */
+    public static function wialonNotifications(): void
+    {
+        $tenantId = self::requireTenantId();
+        require_once __DIR__ . '/../../lib/WialonLive.php';
+        try {
+            $notifications = WialonLive::listNotifications($tenantId);
+            Response::success(['notifications' => $notifications, 'count' => count($notifications)]);
+        } catch (Throwable $e) {
+            error_log('ClientController wialonNotifications: ' . $e->getMessage());
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /** GET /client/wialon/reports/templates */
+    public static function wialonReportTemplates(): void
+    {
+        $tenantId = self::requireTenantId();
+        require_once __DIR__ . '/../../lib/WialonLive.php';
+        try {
+            $templates = WialonLive::listReportTemplates($tenantId);
+            Response::success(['templates' => $templates, 'count' => count($templates)]);
+        } catch (Throwable $e) {
+            error_log('ClientController wialonReportTemplates: ' . $e->getMessage());
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
     /** GET /client/integrations/status */
     public static function integrationsStatus(): void
     {

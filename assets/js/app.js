@@ -1000,8 +1000,12 @@
   }
 
   async function renderAlerts() {
-    const alerts = await MamsApi.api('/client/alerts');
+    const [alerts, wialonNf] = await Promise.all([
+      MamsApi.api('/client/alerts'),
+      MamsApi.api('/client/wialon/notifications').catch(() => ({ notifications: [] })),
+    ]);
     const list = Array.isArray(alerts) ? alerts : alerts.alerts || [];
+    const nfList = wialonNf.notifications || [];
     const params = new URLSearchParams(location.search);
     const sev = (params.get('sev') || 'all').toLowerCase();
     const filtered = sev === 'all' ? list : list.filter((a) => {
@@ -1020,13 +1024,21 @@
       <td>${a.acknowledged ? '—' : `<button class="btn btn-sm" data-action="ack-alert" data-id="${esc(a.id)}">Acknowledge</button>`}</td>
     </tr>`).join('');
 
+    const nfRows = nfList.slice(0, 80).map((n) => `<tr>
+      <td><strong>${esc(n.name)}</strong><div class="muted">${esc(n.resourceName || '')}</div></td>
+      <td>${n.active ? '<span class="badge badge-success">Active</span>' : '<span class="badge badge-inactive">Off</span>'}</td>
+      <td>${esc(n.controlType || '—')}</td>
+      <td>${esc(n.unitCount ?? '—')}</td>
+      <td>${esc(n.triggers ?? '—')}</td>
+    </tr>`).join('');
+
     const open = list.filter((a) => !a.acknowledged).length;
     const critical = list.filter((a) => ['critical', 'emergency'].includes(String(a.severity || '').toLowerCase())).length;
     return `<div class="kpi-grid">
       ${kpi('Total', list.length)}
       ${kpi('Open', open)}
       ${kpi('Critical', critical)}
-      ${kpi('Acknowledged', list.length - open)}
+      ${kpi('Wialon rules', nfList.length)}
     </div>
     <div class="tab-bar mt-2">
       <a class="tab ${sev === 'all' ? 'active' : ''}" href="/app/alerts?sev=all">All</a>
@@ -1040,6 +1052,10 @@
         ${openIds.length ? `<button type="button" class="btn btn-sm" data-action="ack-alerts-bulk" data-ids="${esc(openIds.slice(0, 50).join(','))}">Ack open (${Math.min(openIds.length, 50)})</button>` : ''}
       </div>
       ${tableWrap(['Severity', 'Type', 'Message', 'Status', 'When', 'Actions'], rows, 'No alerts')}
+    </div>
+    <div class="card mt-2">
+      <div class="card-header"><h3>Wialon notification rules</h3><span class="muted">${nfList.length}</span></div>
+      ${tableWrap(['Rule', 'Status', 'Control', 'Units', 'Triggers'], nfRows, 'No Wialon notification rules (link + verify Wialon)')}
     </div>`;
   }
 
@@ -1086,12 +1102,14 @@
   }
 
   async function renderRoutes() {
-    const [routes, stats, trips] = await Promise.all([
+    const [routes, stats, trips, wialonRoutes] = await Promise.all([
       MamsApi.api('/client/routes').catch(() => []),
       MamsApi.api('/client/routes/stats').catch(() => ({})),
       MamsApi.api('/client/routes/trips').catch(() => []),
+      MamsApi.api('/client/wialon/routes').catch(() => ({ routes: [] })),
     ]);
     const list = Array.isArray(routes) ? routes : routes.items || [];
+    const liveRoutes = wialonRoutes.routes || [];
     const rows = list.map((r) => `<tr>
       <td><strong>${esc(r.name || r.id)}</strong></td>
       <td>${esc(r.assetName || '—')}</td>
@@ -1099,6 +1117,12 @@
       <td>${statusBadge(r.status || 'scheduled')}</td>
       <td class="muted">${fmtDate(r.startTime)}</td>
       <td>${r.distance != null ? esc(r.distance) + ' km' : '—'}</td>
+    </tr>`).join('');
+
+    const liveRows = liveRoutes.slice(0, 80).map((r) => `<tr>
+      <td><strong>${esc(r.name || r.id)}</strong></td>
+      <td class="muted">${esc(r.id)}</td>
+      <td class="muted">${esc(r.accountId ?? '—')}</td>
     </tr>`).join('');
 
     const tripList = Array.isArray(trips) ? trips : [];
@@ -1113,11 +1137,15 @@
       ${kpi('Total routes', stats.total ?? list.length)}
       ${kpi('Scheduled', stats.scheduled ?? 0)}
       ${kpi('In progress', stats.inProgress ?? 0)}
-      ${kpi('Completed', stats.completed ?? 0)}
+      ${kpi('Wialon live', liveRoutes.length)}
     </div>
     <div class="card mt-2">
-      <div class="card-header"><h3>Routes</h3></div>
+      <div class="card-header"><h3>Planned routes</h3></div>
       ${tableWrap(['Route', 'Asset', 'Driver', 'Status', 'Start', 'Distance'], rows, 'No routes configured')}
+    </div>
+    <div class="card mt-2">
+      <div class="card-header"><h3>Wialon routes</h3><span class="muted">${liveRoutes.length}</span></div>
+      ${tableWrap(['Name', 'ID', 'Account'], liveRows, 'No live Wialon routes')}
     </div>
     <div class="card mt-2">
       <div class="card-header"><h3>Recent trips</h3></div>
@@ -1317,9 +1345,19 @@
   }
 
   async function renderReports() {
-    const types = await MamsApi.api('/client/reports/types').catch(() => []);
+    const [types, templates] = await Promise.all([
+      MamsApi.api('/client/reports/types').catch(() => []),
+      MamsApi.api('/client/wialon/reports/templates').catch(() => ({ templates: [] })),
+    ]);
     const list = Array.isArray(types) ? types : [];
+    const tplList = templates.templates || [];
     const options = list.map((t) => `<option value="${esc(t.id)}">${esc(t.label)}</option>`).join('');
+    const tplRows = tplList.slice(0, 100).map((t) => `<tr>
+      <td><strong>${esc(t.name)}</strong></td>
+      <td class="muted">${esc(t.resourceName || '')}</td>
+      <td class="muted">${esc(t.type || '—')}</td>
+      <td class="muted">${esc(t.id)}</td>
+    </tr>`).join('');
 
     return `<div class="card">
       <div class="card-header"><h3>Generate report</h3></div>
@@ -1330,6 +1368,10 @@
     </div>
     <div class="card mt-2" id="report-result">
       ${emptyState('📄', 'No report loaded', 'Choose a report type above and click Load report.')}
+    </div>
+    <div class="card mt-2">
+      <div class="card-header"><h3>Wialon report templates</h3><span class="muted">${tplList.length}</span></div>
+      ${tableWrap(['Template', 'Resource', 'Type', 'ID'], tplRows, 'No Wialon templates (link + verify Wialon)')}
     </div>`;
   }
 
