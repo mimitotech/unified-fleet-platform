@@ -3,8 +3,44 @@ const MamsApi = (() => {
   const TOKEN_KEY = 'ufp_token';
   const TENANT_KEY = 'ufp_tenant_slug';
   const ROLE_KEY = 'ufp_role';
+  const COOKIE_TOKEN_KEY = 'ufp_token';
 
-  function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
+  function readCookie(name) {
+    try {
+      const m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&') + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : '';
+    } catch {
+      return '';
+    }
+  }
+
+  function setCookie(name, value, maxAgeSeconds) {
+    try {
+      const secure = location.protocol === 'https:';
+      const parts = [
+        name + '=' + encodeURIComponent(value || ''),
+        'Path=/',
+        'SameSite=Lax',
+        'Max-Age=' + Math.floor(maxAgeSeconds || 0),
+      ];
+      if (secure) parts.push('Secure');
+      document.cookie = parts.join('; ');
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function deleteCookie(name) {
+    try {
+      document.cookie = name + '=; Path=/; Max-Age=0; SameSite=Lax';
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function getToken() {
+    return localStorage.getItem(TOKEN_KEY) || readCookie(COOKIE_TOKEN_KEY) || '';
+  }
   function getTenantSlug() { return localStorage.getItem(TENANT_KEY) || ''; }
   function getRole() { return localStorage.getItem(ROLE_KEY) || ''; }
 
@@ -12,11 +48,14 @@ const MamsApi = (() => {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(TENANT_KEY);
     localStorage.removeItem(ROLE_KEY);
+    deleteCookie(COOKIE_TOKEN_KEY);
   }
 
   function setAuth({ token, tenantSlug, role }) {
     if (token) localStorage.setItem(TOKEN_KEY, token);
     else localStorage.removeItem(TOKEN_KEY);
+    if (token) setCookie(COOKIE_TOKEN_KEY, token, 604800); // ~7 days
+    else deleteCookie(COOKIE_TOKEN_KEY);
     if (tenantSlug) localStorage.setItem(TENANT_KEY, tenantSlug);
     else localStorage.removeItem(TENANT_KEY);
     if (role) localStorage.setItem(ROLE_KEY, role);

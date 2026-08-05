@@ -87,16 +87,33 @@ final class UploadServe
     private static function serveTenantFile(string $publicUrl, string $relativePath): void
     {
         try {
+            $fileName = pathinfo($relativePath, PATHINFO_BASENAME);
             $rows = Database::query(
-                'SELECT content, mime_type, file_path FROM tenant_files WHERE public_url = ? LIMIT 1',
-                [$publicUrl]
+                'SELECT content, mime_type, file_path, public_url
+                 FROM tenant_files
+                 WHERE public_url = ?
+                    OR file_path LIKE ?
+                    OR file_path LIKE ?
+                 ORDER BY (public_url = ?) DESC, created_at DESC
+                 LIMIT 1',
+                [
+                    $publicUrl,
+                    '%/' . $fileName,
+                    '%\\\\' . $fileName,
+                    $publicUrl,
+                ]
             );
         } catch (Throwable $e) {
             self::notFound();
         }
 
         $row = $rows[0] ?? null;
-        if (!$row || empty($row['content'])) {
+        if (
+            !$row
+            || !isset($row['content'])
+            || !is_string($row['content'])
+            || strlen($row['content']) === 0
+        ) {
             self::notFound();
         }
 
