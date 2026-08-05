@@ -1,37 +1,99 @@
-<section class="hero">
-  <div class="hero-left">
-    <div class="brand-row">
-      <img src="/assets/img/mams-logo.png" alt="MAMS" onerror="this.src='/assets/img/mams-logo.svg'" />
-      <strong>MAMS</strong>
-    </div>
-    <h2 style="font-size:clamp(1.75rem,3vw,2.25rem);max-width:18ch">Mimito Asset Management System</h2>
-    <p class="hero-tagline">Unified fleet tracking, fuel intelligence, workshop management and telematics — powered by your live data on Apache + PHP.</p>
-    <ul style="margin:0;padding-left:1.25rem;opacity:0.85;font-size:0.9375rem;line-height:1.8">
-      <li>Real-time fleet monitoring & alerts</li>
-      <li>Fuel, workshop & driver modules</li>
-      <li>Wialon, LocoNav & multi-source integrations</li>
-    </ul>
+<div class="login-page">
+  <div class="login-split">
+    <section class="login-media" id="login-media" aria-label="Feature slides">
+      <div class="login-slides" id="login-slides">
+        <div class="login-slide is-active">
+          <img src="/assets/img/gps.jpg" alt="" draggable="false" onerror="this.src='/assets/img/gp1.png'" />
+        </div>
+      </div>
+      <div class="login-dots" id="login-dots" hidden></div>
+    </section>
+
+    <div class="login-divider" aria-hidden="true"></div>
+
+    <aside class="login-form-col">
+      <div class="login-fleet-backdrop" aria-hidden="true">
+        <div class="login-fleet-backdrop__base"></div>
+        <div class="login-fleet-backdrop__grid"></div>
+        <div class="login-fleet-backdrop__scan"></div>
+        <div class="login-fleet-backdrop__radar"><div class="login-fleet-backdrop__radar-sweep"></div></div>
+        <svg class="login-fleet-backdrop__svg" viewBox="0 0 400 640" preserveAspectRatio="xMidYMid slice">
+          <path class="login-fleet-backdrop__route-b" d="M40 520 C90 480, 70 400, 130 360 S220 300, 200 240 S140 160, 210 120 S320 90, 360 40" />
+          <path class="login-fleet-backdrop__route-a" d="M20 580 C80 540, 110 470, 160 430 S250 390, 280 320 S260 240, 310 190 S370 140, 390 80" />
+          <path class="login-fleet-backdrop__route-b" d="M60 80 C120 140, 90 200, 150 250 S260 280, 240 360 S180 430, 230 490 S320 540, 350 600" />
+        </svg>
+        <div class="login-fleet-backdrop__pin" style="left:18%;top:22%"><span class="login-fleet-backdrop__pin-ring"></span><span class="login-fleet-backdrop__pin-core"></span></div>
+        <div class="login-fleet-backdrop__pin" style="left:72%;top:38%;animation-delay:.6s"><span class="login-fleet-backdrop__pin-ring" style="animation-delay:.6s"></span><span class="login-fleet-backdrop__pin-core" style="animation-delay:.6s"></span></div>
+        <div class="login-fleet-backdrop__pin" style="left:42%;top:68%;animation-delay:1.2s"><span class="login-fleet-backdrop__pin-ring" style="animation-delay:1.2s"></span><span class="login-fleet-backdrop__pin-core" style="animation-delay:1.2s"></span></div>
+        <div class="login-fleet-backdrop__orbit"></div>
+      </div>
+
+      <div class="login-form-wrap">
+        <div class="login-card-panel">
+          <div class="login-card-head">
+            <img src="/assets/img/mams-logo.png" alt="MAMS" onerror="this.src='/assets/img/mams-logo.svg'" />
+            <h1>MAMS</h1>
+            <p id="login-subtitle">Mimito Asset Management System</p>
+          </div>
+
+          <div class="login-card-body">
+            <form id="login-form" class="login-fields" data-view="login">
+              <label>
+                <span>Email</span>
+                <input class="input" type="email" name="email" required autocomplete="username" placeholder="you@company.com" autofocus />
+              </label>
+              <label>
+                <div class="label-row">
+                  <span>Password</span>
+                  <button type="button" class="link-btn" id="forgot-open">Forgot password?</button>
+                </div>
+                <input class="input" type="password" name="password" required autocomplete="current-password" placeholder="Your password" />
+              </label>
+              <p id="login-error" class="error" hidden></p>
+              <button class="btn login-submit" type="submit">Sign In</button>
+              <div class="or-sep"><span>or</span></div>
+              <a class="btn-wialon" href="https://hosting.wialon.com" target="_blank" rel="noopener noreferrer">Open Wialon Hosting</a>
+            </form>
+
+            <form id="forgot-form" class="login-fields" hidden>
+              <p class="muted small">Enter the email on your account. If it exists, you can set a new password.</p>
+              <label>
+                <span>Email</span>
+                <input class="input" type="email" name="email" required autocomplete="username" placeholder="you@company.com" />
+              </label>
+              <p id="forgot-error" class="error" hidden></p>
+              <button class="btn login-submit" type="submit">Continue</button>
+              <button type="button" class="link-btn center" id="forgot-back">← Back to sign in</button>
+            </form>
+
+            <form id="reset-form" class="login-fields" hidden>
+              <p class="muted small">Resetting for <strong id="reset-email-label"></strong></p>
+              <input type="hidden" name="token" id="reset-token" />
+              <label>
+                <span>New password</span>
+                <input class="input" type="password" name="newPassword" required minlength="8" autocomplete="new-password" placeholder="At least 8 characters" />
+              </label>
+              <label>
+                <span>Confirm password</span>
+                <input class="input" type="password" name="confirmPassword" required minlength="8" autocomplete="new-password" placeholder="Confirm new password" />
+              </label>
+              <p id="reset-error" class="error" hidden></p>
+              <button class="btn login-submit" type="submit">Save new password</button>
+              <button type="button" class="link-btn center" id="reset-back">← Back to sign in</button>
+            </form>
+
+            <div class="login-legal">
+              <a href="/terms-of-use">Terms of Use</a>
+              <span>·</span>
+              <a href="/privacy-policy">Privacy Policy</a>
+            </div>
+          </div>
+        </div>
+
+        <div class="trust-marquee" id="trust-logos" hidden></div>
+      </div>
+    </aside>
   </div>
-  <div class="hero-right">
-    <div class="login-card card">
-      <h1>Sign in</h1>
-      <p class="muted">Use your MAMS account credentials</p>
-      <form id="login-form" class="form-stack">
-        <label>
-          <span class="muted">Email address</span>
-          <input class="input" type="email" name="email" required autocomplete="username" placeholder="you@company.com" />
-        </label>
-        <label>
-          <span class="muted">Password</span>
-          <input class="input" type="password" name="password" required autocomplete="current-password" placeholder="••••••••" />
-        </label>
-        <p id="login-error" class="error" hidden></p>
-        <button class="btn" type="submit" style="width:100%">Sign in</button>
-      </form>
-      <p class="muted" style="margin-top:1rem;font-size:0.85rem;text-align:center"><a href="/">← Back to home</a></p>
-      <div class="trust-logos" id="trust-logos" hidden></div>
-    </div>
-  </div>
-</section>
+</div>
 <script src="/assets/js/api.js"></script>
 <script src="/assets/js/auth.js"></script>

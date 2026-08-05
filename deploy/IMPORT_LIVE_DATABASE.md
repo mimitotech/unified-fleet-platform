@@ -44,9 +44,11 @@ DB_NAME=mamsdb-35303030746b
 - Live fleet data already synced into MySQL (alerts, assets, fuel, etc.)  
 - Wialon credentials stay in `data_sources.credentials_encrypted` (same `ENCRYPTION_KEY` as before must be in `.env` or they won’t decrypt for live sync)
 
-## Important
+## Login fix after import
 
-- This **replaces** whatever is currently in `mamsdb-35303030746b`.
-- Do **not** import into a different database name without editing the `USE \`...\`` line at the top of the prepared dump.
-- Keep `ENCRYPTION_KEY` / `JWT_SECRET` consistent with the environment that encrypted Wialon creds originally.
-- After import, PHP modules read this MySQL data immediately; live Wialon refresh still needs the HTTP sync port (legacy) if positions go stale.
+Live Hostinger passwords use **bcrypt `$2b$`** (Node bcryptjs). PHP now normalizes those on login.
+
+If login still fails after deploying the auth fix:
+
+1. Run `deploy/imports/01_reset_admin_password.sql` in phpMyAdmin (sets `admin@mimitotracking.co.ug` / `saidah@mimitotracking.co.ug` to **`MamsAdmin@@123`**)
+2. Sign in, then change the password immediately under Account settings

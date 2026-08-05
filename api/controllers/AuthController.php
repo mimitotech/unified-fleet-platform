@@ -18,7 +18,7 @@ final class AuthController
         }
 
         $hash = (string) ($user['password_hash'] ?? '');
-        if (!password_verify($password, $hash) && !self::bcryptJsCompat($password, $hash)) {
+        if (!self::verifyPassword($password, $hash)) {
             self::audit($user['id'], $user['email'], $user['tenant_id'] ?? null, 'auth.login_failed', ['reason' => 'wrong_password']);
             Response::error('Invalid credentials', 401);
         }
@@ -88,7 +88,7 @@ final class AuthController
         }
         $rows = Database::query('SELECT password_hash FROM users WHERE id = ?', [$u['id']]);
         $hash = (string) ($rows[0]['password_hash'] ?? '');
-        if (!password_verify($current, $hash) && !self::bcryptJsCompat($current, $hash)) {
+        if (!self::verifyPassword($current, $hash)) {
             Response::error('Current password is incorrect', 401);
         }
         $newHash = password_hash($next, PASSWORD_BCRYPT);
@@ -151,18 +151,31 @@ final class AuthController
         Response::success(['ok' => true]);
     }
 
-    /** bcryptjs $2a$ hashes work with PHP password_verify in most cases; keep alias hook. */
-    private static function bcryptJsCompat(string $password, string $hash): bool
+    /**
+     * Node bcryptjs stores $2a$ / $2b$ hashes. PHP password_verify reliably accepts $2y$/$2a$;
+     * normalize $2b$ → $2y$ (and try sibling prefixes) so Hostinger/live dumps authenticate.
+     */
+    private static function verifyPassword(string $password, string $hash): bool
     {
-        if ($hash === '') {
+        if ($password === '' || $hash === '') {
             return false;
         }
-        $alt = str_replace('$2y$', '$2a$', $hash);
-        if ($alt !== $hash && password_verify($password, $alt)) {
+        if (password_verify($password, $hash)) {
             return true;
         }
-        $alt2 = str_replace('$2a$', '$2y$', $hash);
-        return $alt2 !== $hash && password_verify($password, $alt2);
+        $variants = array_unique([
+            $hash,
+            preg_replace('/^\$2b\$/', '$2y$', $hash) ?: $hash,
+            preg_replace('/^\$2b\$/', '$2a$', $hash) ?: $hash,
+            preg_replace('/^\$2a\$/', '$2y$', $hash) ?: $hash,
+            preg_replace('/^\$2y\$/', '$2a$', $hash) ?: $hash,
+        ]);
+        foreach ($variants as $candidate) {
+            if (is_string($candidate) && $candidate !== '' && @password_verify($password, $candidate)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static function audit(?string $userId, string $email, ?string $tenantId, string $action, array $details = []): void
