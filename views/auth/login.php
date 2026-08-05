@@ -89,10 +89,15 @@
             </div>
           </div>
         </div>
-
-        <div class="trust-marquee" id="trust-logos" hidden></div>
       </div>
     </aside>
+  </div>
+
+  <div class="login-trust-strip" id="trust-logos" hidden>
+    <p class="login-trust-label">Trusted by</p>
+    <div class="login-trust-marquee-wrap">
+      <div class="login-trust-marquee-track" id="trust-logos-track"></div>
+    </div>
   </div>
 </div>
 <script src="/assets/js/api.js"></script>

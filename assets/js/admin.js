@@ -462,12 +462,44 @@
     });
   }
 
-  function setUserChip(user) {
-    const chip = document.getElementById('user-chip');
-    if (!chip) return;
-    const initials = (user.fullName || user.email || '?').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
-    chip.innerHTML = `<div class="user-chip"><div class="user-avatar">${esc(initials)}</div><span>${esc(user.fullName || user.email)}</span></div>`;
+  function initials(user) {
+    return (user.fullName || user.email || '?').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
   }
+
+  function setUserChip(user) {
+    const trigger = document.getElementById('user-menu-trigger');
+    if (trigger) {
+      trigger.innerHTML = `<span class="user-avatar">${esc(initials(user))}</span><span class="user-chip-name">${esc(user.fullName || user.email)}</span>`;
+    }
+    const info = document.getElementById('user-dropdown-info');
+    if (info) {
+      info.innerHTML = `<div class="n">${esc(user.fullName || '')}</div><div class="e">${esc(user.email || '')}</div><div class="t">${esc(ROLE_LABELS[user.role] || user.role || '')}</div>`;
+    }
+  }
+
+  const ROLE_LABELS = {
+    super_admin: 'Super Admin',
+    platform_admin: 'Platform Admin',
+  };
+
+  function setupDropdown(triggerId, panelId) {
+    const trigger = document.getElementById(triggerId);
+    const panel = document.getElementById(panelId);
+    if (!trigger || !panel) return;
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const willOpen = panel.hidden;
+      document.querySelectorAll('.dropdown-panel').forEach((p) => { p.hidden = true; });
+      panel.hidden = !willOpen;
+    });
+    panel.addEventListener('click', (e) => e.stopPropagation());
+  }
+
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.dropdown-panel').forEach((p) => { p.hidden = true; });
+  });
+
+  setupDropdown('user-menu-trigger', 'user-dropdown');
 
   let currentUserRole = '';
 
@@ -678,6 +710,10 @@
 
       currentUserRole = user.role;
       setUserChip(user);
+
+      if (user.role !== 'super_admin') {
+        document.getElementById('nav-system-users')?.remove();
+      }
 
       await loadModule();
     } catch (e) {

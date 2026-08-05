@@ -69,7 +69,7 @@
 
   /* ── Route config ── */
   const ROUTES = {
-    dashboard: { title: 'Dashboard', subtitle: 'Fleet overview & KPIs', icon: '◉' },
+    dashboard: { title: 'Dashboard', subtitle: 'Live operational picture across your enabled modules', icon: '◉' },
     monitoring: { title: 'Monitoring', subtitle: 'Live fleet map & list', icon: '◎' },
     fuel: { title: 'Fuel', subtitle: 'Transactions & analytics', icon: '⛽' },
     workshop: { title: 'Workshop', subtitle: 'Maintenance & inspections', icon: '🔧' },
@@ -87,13 +87,44 @@
     settings: { title: 'Settings', subtitle: 'Preferences & account', icon: '⚙' },
   };
 
+  /* Modules available for the quick-access grid — mirrors sidebar order */
+  const QUICK_ACCESS_MODULES = [
+    { key: 'monitoring', label: 'Monitoring', icon: '◎' },
+    { key: 'surveillance', label: 'Surveillance', icon: '📹' },
+    { key: 'drivers', label: 'Drivers', icon: '👤' },
+    { key: 'routes', label: 'Routes', icon: '🛣' },
+    { key: 'fuel', label: 'Fuel', icon: '⛽' },
+    { key: 'emissions', label: 'Emissions', icon: '🌿' },
+    { key: 'workshop', label: 'Workshop', icon: '🔧' },
+    { key: 'alerts', label: 'Alerts', icon: '🔔' },
+    { key: 'trailers', label: 'Trailers', icon: '🚛' },
+    { key: 'sensors', label: 'Sensors', icon: '📊' },
+    { key: 'geofencing', label: 'Geofencing', icon: '📍' },
+    { key: 'commands', label: 'Commands', icon: '⌘' },
+  ];
+
+  function quickAccessGrid() {
+    return `<div class="card mt-2">
+      <div class="card-header"><h3>Quick access</h3></div>
+      <div class="quick-access-grid">
+        ${QUICK_ACCESS_MODULES.map((m) => `<a class="quick-access-tile" href="/app/${m.key}">
+          <div class="qa-icon">${m.icon}</div>
+          <div class="qa-label">${esc(m.label)}</div>
+        </a>`).join('')}
+      </div>
+    </div>`;
+  }
+
   /* ── Module renderers ── */
   async function renderDashboard() {
-    const [kpis, snap] = await Promise.all([
+    const [kpis, snap, integrations] = await Promise.all([
       MamsApi.api('/client/dashboard/kpis'),
       MamsApi.api('/client/fleet/snapshot').catch(() => ({ units: [] })),
+      MamsApi.api('/client/integrations/status').catch(() => []),
     ]);
     const units = snap.units || [];
+    const intList = Array.isArray(integrations) ? integrations : [];
+    const online = intList.filter((i) => i.connected).length;
     const rows = units.slice(0, 20).map((u) => `<tr>
       <td><strong>${esc(u.name)}</strong>${u.plate ? `<br><span class="muted">${esc(u.plate)}</span>` : ''}</td>
       <td>${statusBadge(u.status)}</td>
@@ -103,14 +134,15 @@
     </tr>`).join('');
 
     return `<div class="kpi-grid">
-      ${kpi('Total assets', kpis.totalVehicles ?? 0)}
+      ${kpi('Online sources', intList.length ? `${online}/${intList.length}` : '—')}
+      ${kpi('Assets', kpis.totalVehicles ?? 0)}
       ${kpi('Moving', kpis.moving ?? 0)}
       ${kpi('Idle', kpis.idle ?? 0)}
-      ${kpi('Offline', kpis.offline ?? 0)}
-      ${kpi('Open alerts', kpis.unacknowledgedAlerts ?? 0, kpis.criticalAlerts ? kpis.criticalAlerts + ' critical' : '')}
+      ${kpi('Alerts', kpis.unacknowledgedAlerts ?? 0, kpis.criticalAlerts ? kpis.criticalAlerts + ' critical' : '')}
       ${kpi('Drivers', kpis.totalDrivers ?? 0, (kpis.activeDrivers ?? 0) + ' active')}
       ${kpi('Fuel tx (30d)', kpis.fuelTransactions30d ?? 0)}
     </div>
+    ${quickAccessGrid()}
     <div class="card mt-2">
       <div class="card-header"><h3>Fleet snapshot</h3><span class="muted">${units.length} units</span></div>
       ${tableWrap(['Asset', 'Status', 'Speed', 'Fuel', 'Updated'], rows, 'No fleet units')}
@@ -568,6 +600,13 @@
     <div class="card mt-2">
       <div class="card-header"><h3>Integrations</h3></div>
       ${tableWrap(['Source', 'Status', 'Last sync', 'Error'], intRows, 'No integrations configured for this tenant')}
+    </div>
+    <div class="card mt-2">
+      <div class="card-header"><h3>More</h3></div>
+      <div class="stack">
+        <a class="btn btn-ghost" href="/app/reports">📄 Reports — generate & export fleet data →</a>
+        <a class="btn btn-ghost" href="/app/users">👥 Users — manage tenant user accounts →</a>
+      </div>
     </div>`;
   }
 
@@ -694,11 +733,74 @@
     });
   }
 
-  function setUserChip(user) {
-    const chip = document.getElementById('user-chip');
-    if (!chip) return;
-    const initials = (user.fullName || user.email || '?').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
-    chip.innerHTML = `<div class="user-chip"><div class="user-avatar">${esc(initials)}</div><span>${esc(user.fullName || user.email)}</span></div>`;
+  function initials(user) {
+    return (user.fullName || user.email || '?').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+  }
+
+  function setUserChip(user, tenantName) {
+    const trigger = document.getElementById('user-menu-trigger');
+    if (trigger) {
+      trigger.innerHTML = `<span class="user-avatar">${esc(initials(user))}</span><span class="user-chip-name">${esc(user.fullName || user.email)}</span>`;
+    }
+    const info = document.getElementById('user-dropdown-info');
+    if (info) {
+      info.innerHTML = `<div class="n">${esc(user.fullName || '')}</div><div class="e">${esc(user.email || '')}</div>${tenantName ? `<div class="t">${esc(tenantName)}</div>` : ''}`;
+    }
+  }
+
+  function setupDropdown(triggerId, panelId) {
+    const trigger = document.getElementById(triggerId);
+    const panel = document.getElementById(panelId);
+    if (!trigger || !panel) return;
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const willOpen = panel.hidden;
+      document.querySelectorAll('.dropdown-panel').forEach((p) => { p.hidden = true; });
+      panel.hidden = !willOpen;
+    });
+    panel.addEventListener('click', (e) => e.stopPropagation());
+  }
+
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.dropdown-panel').forEach((p) => { p.hidden = true; });
+  });
+
+  async function refreshAlertsBell() {
+    try {
+      const alerts = await MamsApi.api('/client/alerts');
+      const list = Array.isArray(alerts) ? alerts : alerts.alerts || [];
+      const open = list.filter((a) => !a.acknowledged);
+      const badge = document.getElementById('bell-badge');
+      if (badge) {
+        if (open.length > 0) { badge.hidden = false; badge.textContent = open.length > 99 ? '99+' : String(open.length); }
+        else badge.hidden = true;
+      }
+      const body = document.getElementById('alerts-dropdown-body');
+      if (body) {
+        body.innerHTML = open.length === 0
+          ? '<p class="empty">No new alerts. Live events appear here as they happen.</p>'
+          : open.slice(0, 8).map((a) => `<div class="dropdown-alert">
+              <div class="t">${esc(a.title)}</div>
+              ${a.description ? `<div class="d">${esc(a.description)}</div>` : ''}
+              <button type="button" class="btn btn-sm ack-btn" data-action="ack-alert" data-id="${esc(a.id)}">Acknowledge</button>
+            </div>`).join('');
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  async function refreshStatusPill() {
+    try {
+      const integrations = await MamsApi.api('/client/integrations/status');
+      const list = Array.isArray(integrations) ? integrations : [];
+      const pill = document.getElementById('status-pill');
+      const text = document.getElementById('status-pill-text');
+      if (!pill || !text || !list.length) { if (pill) pill.hidden = true; return; }
+      const allConnected = list.every((i) => i.connected);
+      const anyConnected = list.some((i) => i.connected);
+      pill.hidden = false;
+      pill.className = 'status-pill' + (allConnected ? ' is-live' : anyConnected ? ' is-partial' : '');
+      text.textContent = allConnected ? 'Live' : anyConnected ? 'Partial' : 'Offline';
+    } catch (_) { /* ignore */ }
   }
 
   /* ── Post-render module hook + event delegation ── */
@@ -886,6 +988,36 @@
     }
   });
 
+  document.getElementById('refresh-btn')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      await Promise.all([loadModule(), refreshAlertsBell(), refreshStatusPill()]);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById('alerts-dropdown')?.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-action="ack-alert"]');
+    if (!btn) return;
+    const id = btn.dataset.id;
+    btn.disabled = true;
+    btn.textContent = 'Acknowledging…';
+    try {
+      await MamsApi.api(`/client/alerts/${encodeURIComponent(id)}/acknowledge`, { method: 'POST' });
+      await refreshAlertsBell();
+      if (getModule() === 'alerts') await loadModule();
+    } catch (ex) {
+      alert(ex.message || 'Failed to acknowledge alert');
+      btn.disabled = false;
+      btn.textContent = 'Acknowledge';
+    }
+  });
+
+  setupDropdown('alerts-bell', 'alerts-dropdown');
+  setupDropdown('user-menu-trigger', 'user-dropdown');
+
   async function boot() {
     if (!MamsApi.getToken()) {
       location.href = '/auth/login';
@@ -906,17 +1038,28 @@
         return;
       }
 
-      setUserChip(user);
-
+      let tenantName = 'MAMS';
       try {
         const tenant = await MamsApi.api('/client/tenant');
-        const el = document.getElementById('tenant-name');
-        if (el && tenant?.name) el.textContent = tenant.name;
+        if (tenant?.name) tenantName = tenant.name;
+        const nameEl = document.getElementById('tenant-name');
+        if (nameEl && tenant?.name) nameEl.textContent = tenant.name;
+        const slugEl = document.getElementById('tenant-slug');
+        if (slugEl && tenant?.slug) slugEl.textContent = tenant.slug;
+        const topbarName = document.getElementById('topbar-tenant-name');
+        if (topbarName && tenant?.name) topbarName.textContent = tenant.name;
+        document.title = tenant?.name ? `${tenant.name} — MAMS` : 'MAMS';
         if (tenant?.logoUrl) {
           const logo = document.getElementById('tenant-logo');
           if (logo) { logo.src = tenant.logoUrl; logo.hidden = false; }
         }
       } catch (_) {}
+
+      setUserChip(user, tenantName);
+      refreshAlertsBell();
+      refreshStatusPill();
+      setInterval(refreshAlertsBell, 60000);
+      setInterval(refreshStatusPill, 60000);
 
       await loadModule();
     } catch (e) {

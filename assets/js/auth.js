@@ -116,8 +116,14 @@
   let slideIdx = 0;
   let slides = [];
 
+  const DEFAULT_SLIDES = [
+    { id: 'default-1', src: '/assets/img/gps.jpg' },
+    { id: 'default-2', src: '/assets/img/gp.png' },
+    { id: 'default-3', src: '/assets/img/gp1.png' },
+  ];
+
   function renderSlides(list) {
-    slides = list.length ? list : [{ id: 'd1', src: '/assets/img/gps.jpg' }, { id: 'd2', src: '/assets/img/gp1.png' }];
+    slides = list.length ? list : DEFAULT_SLIDES;
     slidesEl.innerHTML = slides.map((s, i) =>
       `<div class="login-slide${i === 0 ? ' is-active' : ''}"><img src="${s.src}" alt="" draggable="false" /></div>`
     ).join('');
@@ -146,9 +152,15 @@
     const list = (data.logos || data || []).filter((l) => l.imageUrl || l.logoUrl);
     if (!list.length) return;
     const wrap = document.getElementById('trust-logos');
-    if (!wrap) return;
-    const imgs = list.map((l) => `<img src="${l.imageUrl || l.logoUrl}" alt="${l.name || ''}" loading="lazy" />`).join('');
-    wrap.innerHTML = `<div class="trust-track">${imgs}${imgs}</div>`;
+    const track = document.getElementById('trust-logos-track');
+    if (!wrap || !track) return;
+    const base = list.length < 4 ? [...list, ...list, ...list] : list;
+    const marqueeLogos = [...base, ...base];
+    track.innerHTML = marqueeLogos.map((l) => {
+      const name = l.name || '';
+      const src = l.imageUrl || l.logoUrl;
+      return `<div class="login-trust-logo" title="${name.replace(/"/g, '&quot;')}"><img src="${src}" alt="${name}" loading="lazy" draggable="false" /></div>`;
+    }).join('');
     wrap.hidden = false;
   }).catch(() => {});
 })();
