@@ -47,7 +47,13 @@
                   <span>Password</span>
                   <button type="button" class="link-btn" id="forgot-open">Forgot password?</button>
                 </div>
-                <input class="input" type="password" name="password" required autocomplete="current-password" placeholder="Your password" />
+                <div class="password-field">
+                  <input class="input" type="password" name="password" required autocomplete="current-password" placeholder="Your password" />
+                  <button type="button" class="password-toggle" aria-label="Show password" data-target="password">
+                    <svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                    <svg class="icon-eye-off" hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
+                  </button>
+                </div>
               </label>
               <p id="login-error" class="error" hidden></p>
               <button class="btn login-submit" type="submit">Sign In</button>
@@ -71,11 +77,23 @@
               <input type="hidden" name="token" id="reset-token" />
               <label>
                 <span>New password</span>
-                <input class="input" type="password" name="newPassword" required minlength="8" autocomplete="new-password" placeholder="At least 8 characters" />
+                <div class="password-field">
+                  <input class="input" type="password" name="newPassword" required minlength="8" autocomplete="new-password" placeholder="At least 8 characters" />
+                  <button type="button" class="password-toggle" aria-label="Show password">
+                    <svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                    <svg class="icon-eye-off" hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
+                  </button>
+                </div>
               </label>
               <label>
                 <span>Confirm password</span>
-                <input class="input" type="password" name="confirmPassword" required minlength="8" autocomplete="new-password" placeholder="Confirm new password" />
+                <div class="password-field">
+                  <input class="input" type="password" name="confirmPassword" required minlength="8" autocomplete="new-password" placeholder="Confirm new password" />
+                  <button type="button" class="password-toggle" aria-label="Show password">
+                    <svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                    <svg class="icon-eye-off" hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
+                  </button>
+                </div>
               </label>
               <p id="reset-error" class="error" hidden></p>
               <button class="btn login-submit" type="submit">Save new password</button>
@@ -100,5 +118,5 @@
     </div>
   </div>
 </div>
-<script src="/assets/js/api.js?v=20260805d"></script>
-<script src="/assets/js/auth.js?v=20260805d"></script>
+<script src="/assets/js/api.js?v=20260805e"></script>
+<script src="/assets/js/auth.js?v=20260805e"></script>

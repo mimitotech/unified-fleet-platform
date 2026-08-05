@@ -16,8 +16,11 @@ const MamsApi = (() => {
 
   function setAuth({ token, tenantSlug, role }) {
     if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
     if (tenantSlug) localStorage.setItem(TENANT_KEY, tenantSlug);
+    else localStorage.removeItem(TENANT_KEY);
     if (role) localStorage.setItem(ROLE_KEY, role);
+    else localStorage.removeItem(ROLE_KEY);
   }
 
   function redirectLogin() {
@@ -37,7 +40,8 @@ const MamsApi = (() => {
     const json = await res.json().catch(() => ({}));
 
     if (res.status === 401) {
-      redirectLogin();
+      const isAuthCheck = path === '/auth/me' || path === '/auth/login';
+      if (!isAuthCheck) redirectLogin();
       const err = new Error('Session expired');
       err.status = 401;
       throw err;

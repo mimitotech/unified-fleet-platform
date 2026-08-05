@@ -1,6 +1,10 @@
 RewriteEngine On
 RewriteBase /
 
+# Pass Authorization header to PHP (Apache/CGI often strips it)
+RewriteCond %{HTTP:Authorization} .
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
 # Block secrets & non-public trees
 RewriteRule ^\.env - [F,L]
 RewriteRule ^lib/ - [F,L]
@@ -16,6 +20,9 @@ RewriteRule ^health$ index.php?route=health [L,QSA]
 
 # API
 RewriteRule ^api/(.*)$ api/index.php [QSA,L]
+
+# Uploads — disk or PHP BLOB fallback when file missing
+RewriteRule ^uploads/(.+)$ index.php?route=uploads&upload_path=$1 [L,QSA]
 
 # Static files
 RewriteCond %{REQUEST_FILENAME} -f [OR]

@@ -2,7 +2,7 @@
 /** Minimal HS256 JWT (no Composer). */
 final class Jwt
 {
-    public static function encode(array $payload, int $ttlSeconds = 86400): string
+    public static function encode(array $payload, int $ttlSeconds = 604800): string
     {
         $header = ['typ' => 'JWT', 'alg' => 'HS256'];
         $now = time();

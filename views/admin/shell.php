@@ -49,5 +49,5 @@
     </div>
   </div>
 </div>
-<script src="/assets/js/api.js?v=20260805d"></script>
-<script src="/assets/js/admin.js?v=20260805d"></script>
+<script src="/assets/js/api.js?v=20260805e"></script>
+<script src="/assets/js/admin.js?v=20260805e"></script>

@@ -16,6 +16,10 @@ final class Auth
     public static function bearerToken(): ?string
     {
         $header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+        if ($header === '') {
+            $env = getenv('HTTP_AUTHORIZATION') ?: getenv('REDIRECT_HTTP_AUTHORIZATION');
+            $header = is_string($env) ? $env : '';
+        }
         if (preg_match('/Bearer\s+(\S+)/i', $header, $m)) {
             return $m[1];
         }

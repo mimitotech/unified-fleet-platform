@@ -6,12 +6,20 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/bootstrap.php';
+require_once SITE_ROOT . '/lib/LegalDocuments.php';
 
 $route = $_GET['route'] ?? '';
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 $path = '/' . trim($path, '/');
 if ($path === '/') {
     $path = '/';
+}
+
+if ($route === 'uploads' || str_starts_with($path, '/uploads/')) {
+    $rel = $_GET['upload_path'] ?? ltrim(substr($path, strlen('/uploads/')), '/');
+    require_once SITE_ROOT . '/lib/UploadServe.php';
+    UploadServe::handle((string) $rel);
+    exit;
 }
 
 if ($route === 'health' || $path === '/health') {
