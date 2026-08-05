@@ -240,29 +240,49 @@
     metrics.push(metricCard('Sources', intList.length ? `${online}/${intList.length}` : '—', 'Integrations linked', 'Plug'));
 
     const chartCards = [];
-    if (enabled.has('monitoring') && total > 0 && fleetStatusSlices(counts).length) {
-      chartCards.push(chartCardHtml('Fleet status', 'Moving · idle · stopped · offline', 'dash-chart-fleet-status'));
-    }
-    if (enabled.has('monitoring') && total > 0) {
+
+    // Monitoring widget board (structure parity with legacy React dashboard)
+    if (enabled.has('monitoring')) {
+      chartCards.push(chartCardHtml('Health check status', 'Live connection · freshness · fuel risk', 'dash-widget-health-check'));
       chartCards.push(chartCardHtml('Connection status', 'Live online vs offline', 'dash-chart-connection'));
+      chartCards.push(chartCardHtml('Motion state', 'Live motion · ignition · not period-filtered', 'dash-widget-motion-state'));
+      chartCards.push(chartCardHtml('Fleet status', 'Moving · idle · stopped · offline', 'dash-chart-fleet-status'));
+      chartCards.push(chartCardHtml('Mileage', 'Live odometer total · not period-filtered', 'dash-widget-mileage'));
+      chartCards.push(chartCardHtml('Top units by mileage', 'Live odometer leaders · not period-filtered', 'dash-widget-top-mileage'));
+      chartCards.push(chartCardHtml('Fleet utilization', 'Moving + idle share · not period-filtered', 'dash-widget-fleet-utilization'));
+      chartCards.push(chartCardHtml('Geofences', 'Zones & boundaries (preview)', 'dash-widget-geofences'));
+      chartCards.push(chartCardHtml('Device battery', 'Battery health snapshot', 'dash-widget-device-battery'));
+      chartCards.push(chartCardHtml('Voltage level', 'Voltage distribution', 'dash-widget-voltage-level'));
     }
-    if (enabled.has('alerts') && alertSeveritySlices(alertList).length) {
+
+    // Alerts widget board (structure parity with legacy React dashboard)
+    if (enabled.has('alerts')) {
+      chartCards.push(chartCardHtml('Alerts trend', 'Last 24h alert volume', 'dash-widget-alerts-trend'));
+      chartCards.push(chartCardHtml('Alerts ack', 'Acknowledged vs unacknowledged', 'dash-widget-alerts-ack'));
       chartCards.push(chartCardHtml('Alert severity', 'Critical · warning · info', 'dash-chart-alert-severity'));
+      chartCards.push(chartCardHtml('Alert types', 'By alert type', 'dash-widget-alerts-types'));
+      chartCards.push(chartCardHtml('Notifications', 'Latest notifications (preview)', 'dash-widget-notifications'));
+      chartCards.push(chartCardHtml('Speedings', 'Speeding events (preview)', 'dash-widget-speedings'));
     }
-    const hasFuel = enabled.has('fuel');
-    if (hasFuel && trend.some((r) => Number(r.filled) > 0 || Number(r.consumed) > 0)) {
+
+    // Fuel / Ops charts (what we already have data for)
+    if (enabled.has('fuel') && trend.some((r) => Number(r.filled) > 0 || Number(r.consumed) > 0)) {
       chartCards.push(chartCardHtml('Monthly fill vs consumption', 'From fuel reports', 'dash-chart-fuel-trend'));
     }
+
     const workshopHasData = workshopKpis && Object.values(workshopKpis).some((v) => Number(v) > 0);
     if (enabled.has('workshop') && workshopHasData) {
       chartCards.push(chartCardHtml('Workshop load', 'Pending · done · breakdowns', 'dash-chart-workshop'));
     }
+
     if (enabled.has('drivers') && Number(driverStats?.total) > 0) {
       chartCards.push(chartCardHtml('Driver duty', 'Live roster split', 'dash-chart-driver-duty'));
     }
+
     if (enabled.has('routes') && Number(routeStats?.total) > 0) {
       chartCards.push(chartCardHtml('Route pipeline', 'Scheduled · in progress · completed', 'dash-chart-route-pipeline'));
     }
+
     if (intList.length) {
       chartCards.push(chartCardHtml('Integration sources', 'Connected vs configured', 'dash-chart-sources'));
     }
@@ -370,26 +390,189 @@
     const { counts, alertList, trend, workshopKpis, driverStats, routeStats, intList, onlineCount, total } = data;
     const p = MamsCharts.palette();
 
-    const fleetSlices = fleetStatusSlices(counts);
-    if (fleetSlices.length && document.getElementById('dash-chart-fleet-status')) {
-      MamsCharts.doughnut('dash-chart-fleet-status', fleetSlices.map((s) => s.label), fleetSlices.map((s) => s.value), fleetSlices.map((s) => s.color));
-    }
+    const drawNoDataDoughnut = (canvasId, label = 'No data') => {
+      if (!document.getElementById(canvasId)) return;
+      MamsCharts.doughnut(canvasId, [label], [1], [p.muted]);
+    };
 
-    if (document.getElementById('dash-chart-connection')) {
-      const offline = Math.max(0, (total || 0) - (onlineCount || 0));
-      const connSlices = [
-        { label: 'Online', value: onlineCount || 0, color: p.primary },
-        { label: 'Offline', value: offline, color: p.fleet.offline },
+    const moving = Number(counts?.moving ?? 0);
+    const idle = Number(counts?.idle ?? 0);
+    const stopped = Number(counts?.stopped ?? 0);
+    const offline = Number(counts?.offline ?? 0);
+
+    // Health check (preview derived from fleet status partition)
+    if (document.getElementById('dash-widget-health-check')) {
+      const healthSlices = [
+        { label: 'Healthy', value: moving, color: p.fleet.moving },
+        { label: 'Watch', value: idle, color: p.fleet.idle },
+        { label: 'Offline', value: offline > 0 ? offline : (Math.max(0, (total || 0) - (moving + idle + stopped))), color: p.fleet.offline },
       ].filter((s) => s.value > 0);
-      if (connSlices.length) {
-        MamsCharts.doughnut('dash-chart-connection', connSlices.map((s) => s.label), connSlices.map((s) => s.value), connSlices.map((s) => s.color));
+      if (healthSlices.length) {
+        MamsCharts.doughnut(
+          'dash-widget-health-check',
+          healthSlices.map((s) => s.label),
+          healthSlices.map((s) => s.value),
+          healthSlices.map((s) => s.color),
+        );
+      } else {
+        drawNoDataDoughnut('dash-widget-health-check');
       }
     }
 
-    const severitySlices = alertSeveritySlices(alertList);
-    if (severitySlices.length && document.getElementById('dash-chart-alert-severity')) {
-      MamsCharts.doughnut('dash-chart-alert-severity', severitySlices.map((s) => s.label), severitySlices.map((s) => s.value), severitySlices.map((s) => s.color));
+    // Connection status
+    if (document.getElementById('dash-chart-connection')) {
+      const totalSafe = Math.max(0, Number(total || 0));
+      const onlineSafe = Math.max(0, Number(onlineCount || 0));
+      const offlineSafe = Math.max(0, totalSafe - onlineSafe);
+      const connSlices = [
+        { label: 'Online', value: onlineSafe, color: p.primary },
+        { label: 'Offline', value: offlineSafe, color: p.fleet.offline },
+      ].filter((s) => s.value > 0);
+      if (connSlices.length) {
+        MamsCharts.doughnut('dash-chart-connection', connSlices.map((s) => s.label), connSlices.map((s) => s.value), connSlices.map((s) => s.color));
+      } else {
+        drawNoDataDoughnut('dash-chart-connection');
+      }
     }
+
+    // Motion state (preview)
+    if (document.getElementById('dash-widget-motion-state')) {
+      const motionSlices = [
+        { label: 'Moving', value: moving, color: p.fleet.moving },
+        { label: 'Idle', value: idle, color: p.fleet.idle },
+        { label: 'Stopped', value: stopped, color: p.fleet.stopped },
+      ].filter((s) => s.value > 0);
+      if (motionSlices.length) {
+        MamsCharts.doughnut('dash-widget-motion-state', motionSlices.map((s) => s.label), motionSlices.map((s) => s.value), motionSlices.map((s) => s.color));
+      } else {
+        drawNoDataDoughnut('dash-widget-motion-state');
+      }
+    }
+
+    // Fleet status (existing card, now always filled)
+    if (document.getElementById('dash-chart-fleet-status')) {
+      const fleetSlices = fleetStatusSlices(counts);
+      if (fleetSlices.length) {
+        MamsCharts.doughnut('dash-chart-fleet-status', fleetSlices.map((s) => s.label), fleetSlices.map((s) => s.value), fleetSlices.map((s) => s.color));
+      } else {
+        drawNoDataDoughnut('dash-chart-fleet-status');
+      }
+    }
+
+    // Fleet utilization (preview)
+    if (document.getElementById('dash-widget-fleet-utilization')) {
+      const totalSafe = Math.max(0, Number(total || 0));
+      const active = moving + idle;
+      const inactive = Math.max(0, totalSafe - active);
+      const utilSlices = [
+        { label: 'Active', value: active, color: p.accent },
+        { label: 'Inactive', value: inactive, color: p.muted },
+      ].filter((s) => s.value > 0);
+      if (utilSlices.length) {
+        MamsCharts.doughnut('dash-widget-fleet-utilization', utilSlices.map((s) => s.label), utilSlices.map((s) => s.value), utilSlices.map((s) => s.color));
+      } else {
+        drawNoDataDoughnut('dash-widget-fleet-utilization');
+      }
+    }
+
+    // No-data placeholders (we don’t yet have endpoints wired for these)
+    [
+      'dash-widget-mileage',
+      'dash-widget-top-mileage',
+      'dash-widget-geofences',
+      'dash-widget-device-battery',
+      'dash-widget-voltage-level',
+    ].forEach((id) => drawNoDataDoughnut(id, 'No data'));
+
+    // Alerts trend (last 24 hours, preview)
+    if (document.getElementById('dash-widget-alerts-trend')) {
+      const now = Date.now();
+      const bins = new Array(24).fill(0);
+      const tsToBin = (ts) => {
+        const d = now - ts;
+        const h = Math.floor(d / 3600000);
+        return h >= 0 && h < 24 ? 23 - h : null;
+      };
+
+      (alertList || []).forEach((a) => {
+        const tsRaw = a.timestamp ?? a.occurredAt ?? null;
+        const ts = typeof tsRaw === 'number' ? tsRaw * 1000 : (tsRaw ? Date.parse(String(tsRaw)) : NaN);
+        if (!Number.isFinite(ts)) return;
+        const bin = tsToBin(ts);
+        if (bin == null) return;
+        bins[bin] += 1;
+      });
+
+      const sum = bins.reduce((x, y) => x + y, 0);
+      if (sum > 0) {
+        const labels = bins.map((_, i) => {
+          const hourTs = now - (23 - i) * 3600000;
+          const d = new Date(hourTs);
+          return `${String(d.getHours()).padStart(2, '0')}:00`;
+        });
+        MamsCharts.line(
+          'dash-widget-alerts-trend',
+          labels,
+          [{ label: 'Alerts', data: bins, fill: true, borderColor: p.primary, backgroundColor: p.primary }],
+        );
+      } else {
+        drawNoDataDoughnut('dash-widget-alerts-trend');
+      }
+    }
+
+    // Alerts ack (preview from current alert list)
+    if (document.getElementById('dash-widget-alerts-ack')) {
+      const totalAlerts = Array.isArray(alertList) ? alertList.length : 0;
+      const open = (alertList || []).filter((a) => !a.acknowledged).length;
+      const acked = Math.max(0, totalAlerts - open);
+      const ackSlices = [
+        { label: 'Open', value: open, color: p.danger },
+        { label: 'Acknowledged', value: acked, color: p.primary },
+      ].filter((s) => s.value > 0);
+      if (ackSlices.length) {
+        MamsCharts.doughnut('dash-widget-alerts-ack', ackSlices.map((s) => s.label), ackSlices.map((s) => s.value), ackSlices.map((s) => s.color));
+      } else {
+        drawNoDataDoughnut('dash-widget-alerts-ack');
+      }
+    }
+
+    // Alert severity (existing card, now always filled)
+    if (document.getElementById('dash-chart-alert-severity')) {
+      const severitySlices = alertSeveritySlices(alertList);
+      if (severitySlices.length) {
+        MamsCharts.doughnut('dash-chart-alert-severity', severitySlices.map((s) => s.label), severitySlices.map((s) => s.value), severitySlices.map((s) => s.color));
+      } else {
+        drawNoDataDoughnut('dash-chart-alert-severity');
+      }
+    }
+
+    // Alert types (preview)
+    if (document.getElementById('dash-widget-alerts-types')) {
+      const buckets = {};
+      (alertList || []).forEach((a) => {
+        const t = String(a.type || 'other');
+        buckets[t] = (buckets[t] || 0) + 1;
+      });
+      const entries = Object.entries(buckets).sort((a, b) => b[1] - a[1]);
+      const top = entries.slice(0, 5);
+      if (top.length) {
+        const otherCount = entries.slice(5).reduce((s, [, v]) => s + v, 0);
+        if (otherCount > 0) top.push(['Other', otherCount]);
+        const palette = [p.primary, p.accent, p.warn, p.danger, p.info, p.muted];
+        MamsCharts.doughnut(
+          'dash-widget-alerts-types',
+          top.map(([k]) => k),
+          top.map(([, v]) => v),
+          top.map((_, i) => palette[i % palette.length]),
+        );
+      } else {
+        drawNoDataDoughnut('dash-widget-alerts-types');
+      }
+    }
+
+    // Notifications + speedings placeholders (no dedicated endpoints yet)
+    drawNoDataDoughnut('dash-widget-notifications', 'Notifications');
+    drawNoDataDoughnut('dash-widget-speedings', 'No data');
 
     if (document.getElementById('dash-chart-fuel-trend')) {
       const rows = (trend || []).slice(-8);

@@ -982,17 +982,17 @@ label > span { display: block; margin-bottom: 0.35rem; font-size: 0.8125rem; fon
 }
 .dash-widget-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 0.75rem;
 }
-.dash-widget { min-height: 250px; }
+.dash-widget { min-height: 220px; }
 .chart-panel-head {
   display: flex; align-items: baseline; justify-content: space-between;
   gap: 0.5rem; margin-bottom: 0.65rem;
 }
 .chart-panel-head h4 { margin: 0; font-size: 0.875rem; color: var(--brand-dark); }
 .chart-panel-head .muted { font-size: 0.7rem; white-space: nowrap; }
-.chart-box { position: relative; height: 180px; width: 100%; }
+.chart-box { position: relative; height: 160px; width: 100%; }
 
 .wialon-banner {
   display: flex; align-items: center; gap: 0.6rem;
