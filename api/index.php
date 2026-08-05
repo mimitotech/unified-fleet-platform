@@ -112,6 +112,9 @@ try {
     if (route_match('/client/wialon/units/:id/trips', $apiPath, $p) && $method === 'GET') {
         ClientController::wialonUnitTrips($p['id']);
     }
+    if (route_match('/client/wialon/units/:id/commands', $apiPath, $p) && $method === 'GET') {
+        ClientController::wialonUnitCommands($p['id']);
+    }
     if (route_match('/client/wialon/units/:id', $apiPath, $p) && $method === 'GET') {
         ClientController::wialonUnitDetail($p['id']);
     }
@@ -124,6 +127,9 @@ try {
     if ($apiPath === '/client/wialon/notifications' && $method === 'GET') {
         ClientController::wialonNotifications();
     }
+    if ($apiPath === '/client/wialon/reports/catalog' && $method === 'GET') {
+        ClientController::wialonReportCatalog();
+    }
     if ($apiPath === '/client/wialon/reports/templates' && $method === 'GET') {
         ClientController::wialonReportTemplates();
     }
@@ -133,8 +139,17 @@ try {
     if ($apiPath === '/client/wialon/fuel/live' && $method === 'GET') {
         ClientController::wialonFuelLive();
     }
+    if ($apiPath === '/client/wialon/fuel/assets' && $method === 'GET') {
+        ClientController::wialonFuelAssets();
+    }
+    if ($apiPath === '/client/wialon/fuel/overview' && $method === 'GET') {
+        ClientController::wialonFuelOverview();
+    }
     if ($apiPath === '/client/wialon/commands' && $method === 'POST') {
         ClientController::wialonCommandSend();
+    }
+    if ($apiPath === '/client/surveillance/units' && $method === 'GET') {
+        ClientController::surveillanceUnits();
     }
     if ($apiPath === '/client/preferences' && $method === 'GET') {
         ClientController::preferencesGet();

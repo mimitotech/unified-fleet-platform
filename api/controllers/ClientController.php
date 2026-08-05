@@ -1013,13 +1013,19 @@ class ClientController
             $units[] = [
                 'id' => $u['id'] ?? null,
                 'wialonId' => $u['wialonId'] ?? null,
+                'unitId' => $u['wialonId'] ?? (isset($u['id']) ? (int) $u['id'] : null),
                 'name' => $u['name'] ?? null,
+                'unitName' => $u['name'] ?? null,
                 'plate' => $u['plate'] ?? null,
                 'status' => $u['status'] ?? null,
+                'assetType' => WialonFleet::classifyAsset($u),
                 'fuelLevel' => $u['fuelLevel'] ?? null,
+                'fuelPercent' => $u['fuelLevel'] ?? null,
+                'fuelLiters' => WialonFleet::extractFuelLiters($u),
                 'mileage' => $u['mileage'] ?? null,
                 'battery' => WialonFleet::unitParam($u, 'battery'),
                 'voltage' => WialonFleet::unitParam($u, 'pwr_ext', 'ext_voltage', 'external_voltage', 'battery_voltage', 'pwr_int'),
+                'sensorCount' => is_array($u['sens'] ?? null) ? count($u['sens']) : 0,
             ];
         }
         Response::success([
@@ -1027,6 +1033,249 @@ class ClientController
             'count' => count($units),
             'live' => true,
             'fetchedAt' => $live['fetchedAt'] ?? gmdate('c'),
+        ]);
+    }
+
+    /** GET /client/wialon/fuel/assets — classified live fleet for fuel tabs */
+    public static function wialonFuelAssets(): void
+    {
+        $tenantId = self::requireTenantId();
+        require_once __DIR__ . '/../../lib/WialonFleet.php';
+        $live = WialonFleet::tryLiveSnapshot($tenantId);
+        if (!$live) {
+            Response::success([
+                'assets' => [],
+                'summary' => [
+                    'total' => 0,
+                    'vehicles' => 0,
+                    'generators' => 0,
+                    'machinery' => 0,
+                    'withFuel' => 0,
+                ],
+                'live' => false,
+                'fetchedAt' => gmdate('c'),
+            ]);
+            return;
+        }
+        $assets = [];
+        $summary = ['total' => 0, 'vehicles' => 0, 'generators' => 0, 'machinery' => 0, 'withFuel' => 0];
+        foreach ($live['units'] ?? [] as $u) {
+            $type = WialonFleet::classifyAsset($u);
+            $liters = WialonFleet::extractFuelLiters($u);
+            $pct = $u['fuelLevel'] ?? null;
+            $assets[] = [
+                'unitId' => $u['wialonId'] ?? (isset($u['id']) ? (int) $u['id'] : null),
+                'id' => $u['id'] ?? null,
+                'name' => $u['name'] ?? null,
+                'plate' => $u['plate'] ?? null,
+                'assetType' => $type,
+                'status' => $u['status'] ?? null,
+                'fuelPercent' => $pct,
+                'fuelLiters' => $liters,
+                'mileage' => $u['mileage'] ?? null,
+                'battery' => WialonFleet::unitParam($u, 'battery'),
+                'voltage' => WialonFleet::unitParam($u, 'pwr_ext', 'ext_voltage', 'external_voltage', 'battery_voltage', 'pwr_int'),
+            ];
+            $summary['total']++;
+            if ($type === 'generator') {
+                $summary['generators']++;
+            } elseif ($type === 'machinery') {
+                $summary['machinery']++;
+            } else {
+                $summary['vehicles']++;
+            }
+            if ($pct !== null || $liters !== null) {
+                $summary['withFuel']++;
+            }
+        }
+        Response::success([
+            'assets' => $assets,
+            'summary' => $summary,
+            'live' => true,
+            'fetchedAt' => $live['fetchedAt'] ?? gmdate('c'),
+        ]);
+    }
+
+    /** GET /client/wialon/fuel/overview — DB KPIs + live asset counts */
+    public static function wialonFuelOverview(): void
+    {
+        $tenantId = self::requireTenantId();
+        $fromTs = strtotime('-30 days');
+        $toTs = time();
+        $kpis = [
+            'totalFilled' => 0.0,
+            'totalConsumed' => 0.0,
+            'avgConsumptionL100km' => 0,
+            'transactionCount' => 0,
+            'theftEvents' => 0,
+        ];
+        try {
+            $rows = Database::query(
+                'SELECT section, filled, fuel_used, mileage FROM fuel_transactions
+                 WHERE tenant_id = ?
+                   AND timestamp >= ? AND timestamp <= ?
+                   AND COALESCE(sensor, \'\') NOT LIKE \'wialon_group_summary%\'
+                   AND COALESCE(sensor, \'\') <> \'balance\'',
+                [$tenantId, $fromTs, $toTs]
+            );
+            $filled = 0.0;
+            $consumed = 0.0;
+            $mileage = 0.0;
+            foreach ($rows as $row) {
+                $filled += (float) ($row['filled'] ?? 0);
+                $consumed += (float) ($row['fuel_used'] ?? 0);
+                $mileage += (float) ($row['mileage'] ?? 0);
+            }
+            $kpis = [
+                'totalFilled' => round($filled, 1),
+                'totalConsumed' => round($consumed, 1),
+                'avgConsumptionL100km' => $mileage > 0 ? round(($consumed / $mileage) * 100, 2) : 0,
+                'transactionCount' => count($rows),
+                'theftEvents' => 0,
+            ];
+        } catch (Throwable $e) {
+            error_log('ClientController wialonFuelOverview: ' . $e->getMessage());
+        }
+
+        $liveSummary = ['total' => 0, 'withFuel' => 0, 'vehicles' => 0, 'generators' => 0, 'machinery' => 0];
+        require_once __DIR__ . '/../../lib/WialonFleet.php';
+        $live = WialonFleet::tryLiveSnapshot($tenantId);
+        if ($live) {
+            foreach ($live['units'] ?? [] as $u) {
+                $liveSummary['total']++;
+                $type = WialonFleet::classifyAsset($u);
+                if ($type === 'generator') {
+                    $liveSummary['generators']++;
+                } elseif ($type === 'machinery') {
+                    $liveSummary['machinery']++;
+                } else {
+                    $liveSummary['vehicles']++;
+                }
+                if (($u['fuelLevel'] ?? null) !== null || WialonFleet::extractFuelLiters($u) !== null) {
+                    $liveSummary['withFuel']++;
+                }
+            }
+        }
+
+        Response::success([
+            'totalFilled' => $kpis['totalFilled'],
+            'totalConsumed' => $kpis['totalConsumed'],
+            'avgConsumptionL100km' => $kpis['avgConsumptionL100km'],
+            'transactionCount' => $kpis['transactionCount'],
+            'theftEvents' => $kpis['theftEvents'],
+            'live' => (bool) $live,
+            'assets' => $liveSummary,
+            'from' => gmdate('Y-m-d', $fromTs),
+            'to' => gmdate('Y-m-d', $toTs),
+            'fetchedAt' => gmdate('c'),
+        ]);
+    }
+
+    /** GET /client/wialon/reports/catalog */
+    public static function wialonReportCatalog(): void
+    {
+        $tenantId = self::requireTenantId();
+        require_once __DIR__ . '/../../lib/WialonLive.php';
+        try {
+            Response::success(WialonLive::reportCatalog($tenantId));
+        } catch (Throwable $e) {
+            error_log('ClientController wialonReportCatalog: ' . $e->getMessage());
+            Response::success([
+                'templates' => [],
+                'modules' => [],
+                'groups' => [],
+                'users' => [],
+                'count' => 0,
+                'error' => $e->getMessage(),
+                'fetchedAt' => gmdate('c'),
+            ]);
+        }
+    }
+
+    /** GET /client/wialon/units/:id/commands */
+    public static function wialonUnitCommands(?string $id = null): void
+    {
+        $tenantId = self::requireTenantId();
+        $unitId = (int) ($id ?? 0);
+        if ($unitId <= 0) {
+            Response::error('Unit id required', 400);
+            return;
+        }
+        require_once __DIR__ . '/../../lib/WialonLive.php';
+        try {
+            $commands = WialonLive::getUnitCommands($tenantId, $unitId);
+            Response::success(['unitId' => $unitId, 'commands' => $commands, 'count' => count($commands)]);
+        } catch (Throwable $e) {
+            error_log('ClientController wialonUnitCommands: ' . $e->getMessage());
+            Response::success(['unitId' => $unitId, 'commands' => [], 'count' => 0, 'error' => $e->getMessage()]);
+        }
+    }
+
+    /** GET /client/surveillance/units — video-capable fleet units (list; streams later) */
+    public static function surveillanceUnits(): void
+    {
+        $tenantId = self::requireTenantId();
+        require_once __DIR__ . '/../../lib/WialonFleet.php';
+        $live = WialonFleet::tryLiveSnapshot($tenantId);
+        $units = [];
+        if ($live) {
+            foreach ($live['units'] ?? [] as $u) {
+                if (!WialonFleet::looksLikeVideoUnit($u)) {
+                    continue;
+                }
+                $units[] = [
+                    'id' => $u['id'] ?? null,
+                    'wialonId' => $u['wialonId'] ?? null,
+                    'name' => $u['name'] ?? null,
+                    'plate' => $u['plate'] ?? null,
+                    'status' => $u['status'] ?? null,
+                    'hwName' => $u['hwName'] ?? null,
+                    'position' => $u['position'] ?? null,
+                    'streamAvailable' => false,
+                ];
+            }
+        }
+
+        // Fallback: assets matched by name when live empty
+        if (!$units) {
+            try {
+                $rows = Database::query(
+                    "SELECT id, name, registration_plate FROM assets
+                     WHERE tenant_id = ?
+                       AND (
+                         LOWER(name) LIKE '%cam%'
+                         OR LOWER(name) LIKE '%video%'
+                         OR LOWER(name) LIKE '%mdvr%'
+                         OR LOWER(name) LIKE '%dvr%'
+                         OR LOWER(name) LIKE '%dashcam%'
+                       )
+                     ORDER BY name ASC LIMIT 100",
+                    [$tenantId]
+                );
+                foreach ($rows as $row) {
+                    $units[] = [
+                        'id' => $row['id'] ?? null,
+                        'wialonId' => null,
+                        'name' => $row['name'] ?? null,
+                        'plate' => $row['registration_plate'] ?? null,
+                        'status' => null,
+                        'hwName' => null,
+                        'position' => null,
+                        'streamAvailable' => false,
+                    ];
+                }
+            } catch (Throwable $e) {
+                // REGEXP may fail on some MySQL modes — soft empty
+            }
+        }
+
+        Response::success([
+            'units' => $units,
+            'count' => count($units),
+            'live' => (bool) $live,
+            'streaming' => false,
+            'message' => 'Live HLS / playback coming next — unit discovery is live.',
+            'fetchedAt' => gmdate('c'),
         ]);
     }
 

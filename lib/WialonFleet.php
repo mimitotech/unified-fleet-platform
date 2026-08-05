@@ -481,6 +481,99 @@ final class WialonFleet
     }
 
     /**
+     * Heuristic asset category for fuel tabs (vehicle / generator / machinery).
+     * @param array<string, mixed> $unit
+     */
+    public static function classifyAsset(array $unit): string
+    {
+        $hay = strtolower(trim((string) ($unit['name'] ?? '') . ' ' . (string) ($unit['plate'] ?? '') . ' ' . (string) ($unit['hwName'] ?? '')));
+        if (preg_match('/\b(gen(?:erator|set)?|genset|diesel\s*gen)\b/', $hay)) {
+            return 'generator';
+        }
+        if (preg_match('/\b(excavator|loader|crane|bulldozer|machinery|plant|forklift|compactor|roller)\b/', $hay)) {
+            return 'machinery';
+        }
+        return 'vehicle';
+    }
+
+    /**
+     * Best-effort fuel liters from live params/sensors (not percent).
+     * @param array<string, mixed> $unit
+     */
+    public static function extractFuelLiters(array $unit): ?float
+    {
+        $candidates = [];
+        $keys = ['fuel_liters', 'fuel_level_liters', 'fuel_l', 'fls', 'fuel_level', 'can_fuel', 'fuel'];
+        foreach ($keys as $key) {
+            $v = self::unitParam($unit, $key);
+            if ($v !== null) {
+                $candidates[] = $v;
+            }
+        }
+        foreach ($unit['sens'] ?? [] as $s) {
+            if (!is_array($s)) {
+                continue;
+            }
+            $name = strtolower((string) ($s['name'] ?? ''));
+            $type = strtolower((string) ($s['type'] ?? ''));
+            $unitLabel = strtolower((string) ($s['unit'] ?? ''));
+            $looksFuel = str_contains($name, 'fuel') || str_contains($type, 'fuel') || str_contains($name, 'fls');
+            if (!$looksFuel) {
+                continue;
+            }
+            $param = (string) ($s['param'] ?? '');
+            if ($param === '') {
+                continue;
+            }
+            $v = self::unitParam($unit, $param);
+            if ($v === null) {
+                continue;
+            }
+            if (str_contains($unitLabel, 'l') || $v > 100) {
+                $candidates[] = $v;
+            }
+        }
+        foreach ($candidates as $v) {
+            if ($v > 100 && $v < 100000) {
+                return round($v, 1);
+            }
+        }
+        foreach ($candidates as $v) {
+            $pct = $unit['fuelLevel'] ?? null;
+            if ($pct !== null && abs($v - (float) $pct) < 0.5) {
+                continue; // likely percent duplicate
+            }
+            if ($v > 0 && $v <= 100000) {
+                return round($v, 1);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Whether a unit likely has video / MDVR capability.
+     * @param array<string, mixed> $unit
+     */
+    public static function looksLikeVideoUnit(array $unit): bool
+    {
+        $hay = strtolower(trim(
+            (string) ($unit['name'] ?? '') . ' ' .
+            (string) ($unit['hwName'] ?? '') . ' ' .
+            (string) ($unit['hardware'] ?? '')
+        ));
+        if (preg_match('/\b(cam|camera|video|mdvr|dvr|dashcam|cctv|stream)\b/', $hay)) {
+            return true;
+        }
+        foreach ($unit['prp'] ?? [] as $k => $v) {
+            $key = strtolower((string) $k);
+            if (str_contains($key, 'video') || str_contains($key, 'camera') || $key === 'ugi') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Read a unit param (battery / voltage) — mirrors frontend unitParam.
      * @param array<string, mixed> $unit
      */

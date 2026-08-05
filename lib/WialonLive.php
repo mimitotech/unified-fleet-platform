@@ -521,4 +521,249 @@ final class WialonLive
             $client->logout();
         }
     }
+
+    private const UNIT_FLAG_COMMANDS = 0x00080000;
+    private const UNIT_FLAG_COMMANDS_AVAILABLE = 0x00000200;
+
+    /**
+     * Commands configured / available on a Wialon unit (cml / cmds / definitions).
+     * @return array<int, array{name:string,label:string,type:?string,linkType:string,params:?string}>
+     */
+    public static function getUnitCommands(string $tenantId, int $unitId): array
+    {
+        $creds = self::creds($tenantId);
+        $client = new WialonClient($creds['baseUrl']);
+        try {
+            $client->login($creds['token'], $creds['operateAs']);
+            $commandIds = [];
+
+            try {
+                $configured = $client->call('core/search_item', [
+                    'id' => $unitId,
+                    'flags' => self::UNIT_FLAG_COMMANDS,
+                ]);
+                $cml = is_array($configured['item']['cml'] ?? null) ? $configured['item']['cml'] : [];
+                $fromCml = self::parseCommandList($cml);
+                if ($fromCml) {
+                    return $fromCml;
+                }
+                foreach ($cml as $c) {
+                    if (!is_array($c)) {
+                        continue;
+                    }
+                    $cid = (int) ($c['id'] ?? 0);
+                    if ($cid > 0) {
+                        $commandIds[] = $cid;
+                    }
+                }
+            } catch (Throwable $e) {
+            }
+
+            try {
+                $available = $client->call('core/search_item', [
+                    'id' => $unitId,
+                    'flags' => self::UNIT_FLAG_COMMANDS_AVAILABLE,
+                ]);
+                $cmds = is_array($available['item']['cmds'] ?? null) ? $available['item']['cmds'] : [];
+                $fromAvailable = self::parseAvailableCommands($cmds);
+                if ($fromAvailable) {
+                    return $fromAvailable;
+                }
+            } catch (Throwable $e) {
+            }
+
+            try {
+                $params = ['itemId' => $unitId];
+                if ($commandIds) {
+                    $params['col'] = $commandIds;
+                }
+                $result = $client->call('unit/get_command_definition_data', $params);
+                return self::parseCommandDefinitionData($result);
+            } catch (Throwable $e) {
+                return [];
+            }
+        } finally {
+            $client->logout();
+        }
+    }
+
+    /**
+     * Template catalog grouped by module keywords (lighter than React resolver).
+     * @return array<string, mixed>
+     */
+    public static function reportCatalog(string $tenantId): array
+    {
+        $templates = self::listReportTemplates($tenantId, 500);
+        $enriched = [];
+        $byModule = [];
+        foreach ($templates as $t) {
+            $module = self::classifyTemplateModule((string) ($t['name'] ?? ''));
+            $row = array_merge($t, ['module' => $module]);
+            $enriched[] = $row;
+            if (!isset($byModule[$module])) {
+                $byModule[$module] = [];
+            }
+            $byModule[$module][] = $row;
+        }
+        $modules = [];
+        foreach ($byModule as $module => $items) {
+            $modules[] = [
+                'module' => $module,
+                'count' => count($items),
+                'templates' => $items,
+            ];
+        }
+        usort($modules, static fn(array $a, array $b): int => $b['count'] <=> $a['count']);
+
+        return [
+            'templates' => $enriched,
+            'modules' => $modules,
+            'groups' => [],
+            'users' => [],
+            'count' => count($enriched),
+            'fetchedAt' => gmdate('c'),
+        ];
+    }
+
+    public static function classifyTemplateModule(string $name): string
+    {
+        $n = strtolower(trim($name));
+        if ($n === '') {
+            return 'events';
+        }
+        if (str_contains($n, 'fuel') || str_contains($n, 'fill') || str_contains($n, 'theft') || str_contains($n, 'drain')) {
+            return 'fuel';
+        }
+        if (str_contains($n, 'engine hour') || str_contains($n, 'engine_hours') || str_contains($n, 'moto hour') || preg_match('/\beh\b/', $n)) {
+            return 'engineHours';
+        }
+        if (str_contains($n, 'trip') || str_contains($n, 'journey') || str_contains($n, 'mileage') || str_contains($n, 'distance')) {
+            return 'trips';
+        }
+        if (str_contains($n, 'geofence') || str_contains($n, 'geo-fence') || str_contains($n, 'zone')) {
+            return 'geofence';
+        }
+        if (str_contains($n, 'driver') || str_contains($n, 'eco') || str_contains($n, 'speeding')) {
+            return 'driver';
+        }
+        if (str_contains($n, 'emission') || str_contains($n, 'co2') || str_contains($n, 'carbon')) {
+            return 'emissions';
+        }
+        return 'events';
+    }
+
+    /**
+     * @param array<string|int, mixed> $cml
+     * @return array<int, array{name:string,label:string,type:?string,linkType:string,params:?string}>
+     */
+    private static function parseCommandList(array $cml): array
+    {
+        $out = [];
+        foreach ($cml as $c) {
+            if (!is_array($c)) {
+                continue;
+            }
+            $mapped = self::mapCmd($c);
+            if ($mapped['name'] !== '') {
+                $out[] = $mapped;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * @param array<int, mixed> $cmds
+     * @return array<int, array{name:string,label:string,type:?string,linkType:string,params:?string}>
+     */
+    private static function parseAvailableCommands(array $cmds): array
+    {
+        $out = [];
+        foreach ($cmds as $c) {
+            if (!is_array($c)) {
+                continue;
+            }
+            $name = (string) ($c['n'] ?? $c['name'] ?? '');
+            if ($name === '') {
+                continue;
+            }
+            $out[] = [
+                'name' => $name,
+                'label' => $name,
+                'type' => isset($c['c']) ? (string) $c['c'] : (isset($c['type']) ? (string) $c['type'] : null),
+                'linkType' => (string) ($c['t'] ?? $c['l'] ?? $c['linkType'] ?? ''),
+                'params' => isset($c['p']) ? (string) $c['p'] : (isset($c['params']) ? (string) $c['params'] : null),
+            ];
+        }
+        return $out;
+    }
+
+    /**
+     * @return array<int, array{name:string,label:string,type:?string,linkType:string,params:?string}>
+     */
+    private static function parseCommandDefinitionData(mixed $raw): array
+    {
+        if ($raw === null) {
+            return [];
+        }
+        if (is_array($raw) && isset($raw['commands']) && is_array($raw['commands'])) {
+            $out = [];
+            foreach ($raw['commands'] as $c) {
+                if (!is_array($c)) {
+                    continue;
+                }
+                $mapped = self::mapCmd($c);
+                if ($mapped['name'] !== '') {
+                    $out[] = $mapped;
+                }
+            }
+            return $out;
+        }
+        if (is_array($raw) && isset($raw['cml']) && is_array($raw['cml'])) {
+            return self::parseCommandList($raw['cml']);
+        }
+        if (!is_array($raw)) {
+            return [];
+        }
+        $out = [];
+        foreach ($raw as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $mapped = self::mapCmd($item);
+            if ($mapped['name'] !== '') {
+                $out[] = $mapped;
+            }
+        }
+        if ($out) {
+            return $out;
+        }
+        // Alternating [id, cmd, id, cmd, ...]
+        for ($i = 0; $i < count($raw) - 1; $i += 2) {
+            $cmd = $raw[$i + 1] ?? null;
+            if (!is_array($cmd)) {
+                continue;
+            }
+            $mapped = self::mapCmd($cmd);
+            if ($mapped['name'] !== '') {
+                $out[] = $mapped;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * @param array<string, mixed> $c
+     * @return array{name:string,label:string,type:?string,linkType:string,params:?string}
+     */
+    private static function mapCmd(array $c): array
+    {
+        $name = (string) ($c['n'] ?? $c['name'] ?? '');
+        return [
+            'name' => $name,
+            'label' => $name,
+            'type' => isset($c['c']) ? (string) $c['c'] : (isset($c['type']) ? (string) $c['type'] : null),
+            'linkType' => (string) ($c['l'] ?? $c['t'] ?? $c['linkType'] ?? ''),
+            'params' => isset($c['p']) ? (string) $c['p'] : (isset($c['params']) ? (string) $c['params'] : null),
+        ];
+    }
 }

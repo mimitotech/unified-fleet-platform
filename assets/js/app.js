@@ -885,20 +885,26 @@
   }
 
   async function renderFuel() {
-    const [data, monthly, liveFuel] = await Promise.all([
+    const [data, monthly, liveFuel, overview, assetsRes] = await Promise.all([
       MamsApi.api('/client/fuel/transactions').catch(() => ({ transactions: [], kpis: {} })),
       MamsApi.api('/client/fuel/monthly-trend').catch(() => []),
       MamsApi.api('/client/wialon/fuel/live').catch(() => ({ units: [], live: false })),
+      MamsApi.api('/client/wialon/fuel/overview').catch(() => ({})),
+      MamsApi.api('/client/wialon/fuel/assets').catch(() => ({ assets: [], summary: {} })),
     ]);
     const txs = data.transactions || (Array.isArray(data) ? data : []);
     const kpis = data.kpis || {};
     const trend = Array.isArray(monthly) ? monthly : [];
     const liveUnits = liveFuel.units || [];
+    const assets = assetsRes.assets || [];
+    const summary = assetsRes.summary || overview.assets || {};
     const params = new URLSearchParams(location.search);
     const tab = (params.get('fuelTab') || 'all').toLowerCase();
     const fills = txs.filter((t) => Number(t.filled) > 0);
     const drains = txs.filter((t) => Number(t.fuelUsed || t.fuel_used) > 0 && !(Number(t.filled) > 0));
-    const shown = tab === 'fills' ? fills : tab === 'drains' ? drains : tab === 'live' ? [] : txs;
+    const assetFilter = tab === 'generators' ? 'generator' : tab === 'machinery' ? 'machinery' : tab === 'vehicles' ? 'vehicle' : null;
+    const filteredAssets = assetFilter ? assets.filter((a) => a.assetType === assetFilter) : assets;
+    const shown = tab === 'fills' ? fills : tab === 'drains' ? drains : (tab === 'live' || assetFilter || tab === 'assets') ? [] : txs;
 
     const rows = shown.slice(0, 100).map((t) => `<tr>
       <td>${fmtDate(t.timestamp ? t.timestamp * 1000 : t.date)}</td>
@@ -909,13 +915,14 @@
       <td class="muted">${t.mileage != null ? esc(Math.round(Number(t.mileage))) + ' km' : '—'}</td>
     </tr>`).join('');
 
-    const liveRows = liveUnits.slice(0, 80).map((u) => `<tr>
-      <td><strong>${esc(u.name)}</strong>${u.plate ? `<div class="muted">${esc(u.plate)}</div>` : ''}</td>
+    const liveRows = (tab === 'live' ? liveUnits : filteredAssets).slice(0, 100).map((u) => `<tr>
+      <td><strong>${esc(u.name || u.unitName)}</strong>${u.plate ? `<div class="muted">${esc(u.plate)}</div>` : ''}</td>
+      <td><span class="badge badge-info">${esc(u.assetType || 'vehicle')}</span></td>
       <td>${statusBadge(u.status)}</td>
-      <td>${u.fuelLevel != null ? esc(Math.round(u.fuelLevel)) + '%' : '—'}</td>
+      <td>${u.fuelPercent != null || u.fuelLevel != null ? esc(Math.round(u.fuelPercent ?? u.fuelLevel)) + '%' : '—'}</td>
+      <td>${u.fuelLiters != null ? esc(u.fuelLiters) + ' L' : '—'}</td>
       <td class="muted">${u.mileage != null ? esc(Math.round(Number(u.mileage))).toLocaleString() + ' km' : '—'}</td>
       <td>${u.battery != null ? esc(Math.round(u.battery)) + '%' : '—'}</td>
-      <td>${u.voltage != null ? esc(Math.round(u.voltage * 10) / 10) + ' V' : '—'}</td>
     </tr>`).join('');
 
     const trendRows = trend.slice(-8).map((m) => `<tr>
@@ -924,28 +931,32 @@
       <td>${esc(m.consumed)} L</td>
     </tr>`).join('');
 
-    const banner = liveFuel.live
-      ? `<div class="banner banner-success">Live Wialon fuel levels available · ${liveUnits.length} units</div>`
+    const showLiveTable = tab === 'live' || tab === 'assets' || !!assetFilter;
+    const banner = liveFuel.live || assetsRes.live
+      ? `<div class="banner banner-success">Live Wialon fuel · ${summary.withFuel ?? liveUnits.length} with readings · ${summary.vehicles ?? 0} vehicles / ${summary.generators ?? 0} gens / ${summary.machinery ?? 0} machinery</div>`
       : (txs.length > 0
-        ? `<div class="banner banner-info">Showing fuel events for ${esc(data.from || '')} – ${esc(data.to || '')}.</div>`
+        ? `<div class="banner banner-info">Showing fuel events for ${esc(data.from || overview.from || '')} – ${esc(data.to || overview.to || '')}.</div>`
         : integrationBanner('Wialon fuel reports'));
 
     return `${banner}
     <div class="kpi-grid">
-      ${kpi('Filled', (kpis.totalFilled ?? 0) + ' L')}
-      ${kpi('Consumed', (kpis.totalConsumed ?? 0) + ' L')}
-      ${kpi('Avg L/100km', kpis.avgConsumptionL100km ?? 0)}
-      ${kpi('Live units', liveUnits.length)}
+      ${kpi('Filled', (overview.totalFilled ?? kpis.totalFilled ?? 0) + ' L')}
+      ${kpi('Consumed', (overview.totalConsumed ?? kpis.totalConsumed ?? 0) + ' L')}
+      ${kpi('Avg L/100km', overview.avgConsumptionL100km ?? kpis.avgConsumptionL100km ?? 0)}
+      ${kpi('Live with fuel', summary.withFuel ?? liveUnits.length)}
     </div>
     <div class="tab-bar mt-2">
       <a class="tab ${tab === 'all' ? 'active' : ''}" href="/app/fuel?fuelTab=all">All (${txs.length})</a>
       <a class="tab ${tab === 'fills' ? 'active' : ''}" href="/app/fuel?fuelTab=fills">Fills (${fills.length})</a>
       <a class="tab ${tab === 'drains' ? 'active' : ''}" href="/app/fuel?fuelTab=drains">Consumption (${drains.length})</a>
-      <a class="tab ${tab === 'live' ? 'active' : ''}" href="/app/fuel?fuelTab=live">Live levels (${liveUnits.length})</a>
+      <a class="tab ${tab === 'live' ? 'active' : ''}" href="/app/fuel?fuelTab=live">Live (${liveUnits.length})</a>
+      <a class="tab ${tab === 'vehicles' ? 'active' : ''}" href="/app/fuel?fuelTab=vehicles">Vehicles (${summary.vehicles ?? 0})</a>
+      <a class="tab ${tab === 'generators' ? 'active' : ''}" href="/app/fuel?fuelTab=generators">Generators (${summary.generators ?? 0})</a>
+      <a class="tab ${tab === 'machinery' ? 'active' : ''}" href="/app/fuel?fuelTab=machinery">Machinery (${summary.machinery ?? 0})</a>
     </div>
-    ${tab === 'live' ? `<div class="card mt-2">
-      <div class="card-header"><h3>Live fuel / battery</h3><span class="badge ${liveFuel.live ? 'badge-success' : 'badge-inactive'}">${liveFuel.live ? 'Live' : 'Offline'}</span></div>
-      ${tableWrap(['Asset', 'Status', 'Fuel', 'Mileage', 'Battery', 'Voltage'], liveRows, 'No live fuel levels (link + verify Wialon)')}
+    ${showLiveTable ? `<div class="card mt-2">
+      <div class="card-header"><h3>${tab === 'live' ? 'Live fuel / battery' : esc(tab) + ' assets'}</h3><span class="badge ${liveFuel.live || assetsRes.live ? 'badge-success' : 'badge-inactive'}">${liveFuel.live || assetsRes.live ? 'Live' : 'Offline'}</span></div>
+      ${tableWrap(['Asset', 'Type', 'Status', 'Fuel %', 'Liters', 'Mileage', 'Battery'], liveRows, 'No live fuel levels (link + verify Wialon)')}
     </div>` : `<div class="grid-main-side mt-2">
       <div class="card">
         <div class="card-header"><h3>Fuel events</h3></div>
@@ -1287,10 +1298,11 @@
       <td>${esc(a.registrationPlate || '—')}</td>
       <td>${live ? statusBadge(live.status) : '—'}</td>
       <td class="actions">
-        <button type="button" class="btn btn-sm" data-action="send-command" data-unit="${esc(wialonId)}" data-asset="${esc(a.id)}" data-name="${esc(a.name)}" data-cmd="query_pos" ${wialonId ? '' : 'disabled'}>Query pos</button>
-        <button type="button" class="btn btn-sm btn-ghost" data-action="send-command" data-unit="${esc(wialonId)}" data-asset="${esc(a.id)}" data-name="${esc(a.name)}" data-cmd="block_engine" ${wialonId ? '' : 'disabled'}>Block</button>
+        <button type="button" class="btn btn-sm" data-action="load-unit-commands" data-unit="${esc(wialonId)}" data-asset="${esc(a.id)}" data-name="${esc(a.name)}" ${wialonId ? '' : 'disabled'}>Load commands</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="send-command" data-unit="${esc(wialonId)}" data-asset="${esc(a.id)}" data-name="${esc(a.name)}" data-cmd="query_pos" ${wialonId ? '' : 'disabled'}>Query pos</button>
       </td>
-    </tr>`;
+    </tr>
+    <tr class="cmd-catalog-row" id="cmd-catalog-${esc(wialonId || a.id)}" hidden><td colspan="4" class="muted">Expand with Load commands</td></tr>`;
     }).join('');
     const histRows = hist.slice(0, 40).map((h) => `<tr>
       <td>${esc(h.command || h.type || '—')}</td>
@@ -1299,7 +1311,7 @@
       <td class="muted">${fmtDate(h.createdAt || h.sentAt)}</td>
     </tr>`).join('');
 
-    return `<div class="banner banner-info">Commands are sent via Wialon <code>unit/exec_cmd</code>. Use query_pos for a safe test; block_engine requires elevated permissions.</div>
+    return `<div class="banner banner-info">Commands load from each unit’s Wialon catalog (<code>cml</code>). Prefer non-destructive commands first.</div>
     <div class="card">
       ${tableWrap(['Asset', 'Plate', 'Live', 'Actions'], rows, 'No command-capable assets')}
     </div>
@@ -1310,22 +1322,31 @@
   }
 
   async function renderSurveillance() {
-    const assets = await MamsApi.api('/client/assets').catch(() => []);
-    const list = (Array.isArray(assets) ? assets : []).filter((a) => /cam|video|mdvr/i.test(a.name || ''));
-    const rows = list.map((a) => `<tr>
-      <td><strong>${esc(a.name)}</strong></td>
-      <td>${esc(a.registrationPlate || '—')}</td>
-      <td>${(a.sources || []).map((s) => esc(s.type || s)).join(', ') || '—'}</td>
+    const data = await MamsApi.api('/client/surveillance/units').catch(() => ({ units: [], streaming: false }));
+    const list = data.units || [];
+    const rows = list.map((u) => `<tr>
+      <td><strong>${esc(u.name)}</strong>${u.plate ? `<div class="muted">${esc(u.plate)}</div>` : ''}</td>
+      <td>${u.status ? statusBadge(u.status) : '—'}</td>
+      <td class="muted">${esc(u.hwName || '—')}</td>
+      <td>${u.position ? `${Number(u.position.lat).toFixed(4)}, ${Number(u.position.lng).toFixed(4)}` : '—'}</td>
+      <td><span class="badge ${u.streamAvailable ? 'badge-success' : 'badge-inactive'}">${u.streamAvailable ? 'Stream ready' : 'Discovery only'}</span></td>
     </tr>`).join('');
 
     return `<div class="integration-panel mt-1">
-      <h3>📹 Surveillance & video</h3>
-      <p>Live camera streams, event clips and Wialon video integration are available when your tenant has video telematics enabled.</p>
-      <p class="mt-1"><span class="badge badge-brand">Wialon Video</span> <span class="badge badge-info">Coming soon in PHP UI</span></p>
+      <h3>Surveillance & video</h3>
+      <p>${esc(data.message || 'Video-capable units discovered from live fleet heuristics. HLS live/playback is the next port.')}</p>
+      <p class="mt-1"><span class="badge badge-brand">Wialon Video</span>
+        <span class="badge ${data.live ? 'badge-success' : 'badge-inactive'}">${data.live ? 'Live discovery' : 'DB fallback'}</span>
+        <span class="badge badge-info">${data.streaming ? 'Streaming on' : 'Streaming soon'}</span>
+      </p>
+    </div>
+    <div class="kpi-grid mt-2">
+      ${kpi('Video units', data.count ?? list.length)}
+      ${kpi('Source', data.live ? 'Live Wialon' : 'Assets DB')}
     </div>
     <div class="card mt-2">
-      <div class="card-header"><h3>Camera-capable assets</h3><span class="muted">Matched by name</span></div>
-      ${tableWrap(['Asset', 'Plate', 'Sources'], rows, 'No camera-capable assets detected in your fleet')}
+      <div class="card-header"><h3>Camera-capable units</h3><span class="muted">${list.length}</span></div>
+      ${tableWrap(['Unit', 'Status', 'Hardware', 'Position', 'Stream'], rows, 'No camera-capable units detected')}
     </div>`;
   }
 
@@ -1432,23 +1453,54 @@
   }
 
   async function renderReports() {
-    const [types, templates, snap] = await Promise.all([
+    const [types, catalog, snap] = await Promise.all([
       MamsApi.api('/client/reports/types').catch(() => []),
-      MamsApi.api('/client/wialon/reports/templates').catch(() => ({ templates: [] })),
+      MamsApi.api('/client/wialon/reports/catalog').catch(() => ({ templates: [], modules: [] })),
       MamsApi.api('/client/fleet/snapshot').catch(() => ({ units: [] })),
     ]);
     const list = Array.isArray(types) ? types : [];
-    const tplList = templates.templates || [];
+    const modules = catalog.modules || [];
+    const tplList = catalog.templates || [];
     const units = snap.units || [];
+    const params = new URLSearchParams(location.search);
+    const moduleFilter = params.get('reportModule') || '';
+    const filteredTpl = moduleFilter
+      ? tplList.filter((t) => t.module === moduleFilter)
+      : tplList;
+
     const options = list.map((t) => `<option value="${esc(t.id)}">${esc(t.label)}</option>`).join('');
-    const tplOptions = tplList.slice(0, 200).map((t) =>
-      `<option value="${esc(t.resourceId)}:${esc(t.id)}" data-resource="${esc(t.resourceId)}" data-template="${esc(t.id)}">${esc(t.name)} (${esc(t.resourceName || t.resourceId)})</option>`
+    const tplOptions = filteredTpl.slice(0, 300).map((t) =>
+      `<option value="${esc(t.resourceId)}:${esc(t.id)}">${esc(t.name)} · ${esc(t.module || '')} (${esc(t.resourceName || t.resourceId)})</option>`
     ).join('');
     const unitOptions = units.slice(0, 300).map((u) =>
       `<option value="${esc(u.wialonId || u.id)}">${esc(u.name)}${u.plate ? ' · ' + esc(u.plate) : ''}</option>`
     ).join('');
+    const now = Math.floor(Date.now() / 1000);
+    const moduleTabs = [
+      { id: '', label: `All (${tplList.length})` },
+      ...modules.map((m) => ({ id: m.module, label: `${m.module} (${m.count})` })),
+    ].map((m) =>
+      `<a class="tab ${moduleFilter === m.id ? 'active' : ''}" href="/app/reports?reportModule=${encodeURIComponent(m.id)}">${esc(m.label)}</a>`
+    ).join('');
 
-    return `<div class="card">
+    const liveQuick = [
+      { id: 'fleet-status', label: 'Live fleet status' },
+      { id: 'fleet-fuel', label: 'Live fuel levels' },
+    ].map((r) =>
+      `<button type="button" class="btn btn-sm" data-action="live-report" data-id="${esc(r.id)}">${esc(r.label)}</button>`
+    ).join(' ');
+
+    return `<div class="kpi-grid">
+      ${kpi('Wialon templates', catalog.count ?? tplList.length)}
+      ${kpi('Modules', modules.length)}
+      ${kpi('Units', units.length)}
+      ${kpi('DB report types', list.length)}
+    </div>
+    <div class="card mt-2">
+      <div class="card-header"><h3>Live snapshot reports</h3><span class="muted">No Wialon exec needed</span></div>
+      <div class="actions">${liveQuick}</div>
+    </div>
+    <div class="card mt-2">
       <div class="card-header"><h3>Generate DB report</h3></div>
       <form id="report-form" class="form-grid">
         <label><span>Report type</span><select class="select" name="type">${options}</select></label>
@@ -1456,18 +1508,25 @@
       </form>
     </div>
     <div class="card mt-2">
-      <div class="card-header"><h3>Run Wialon template</h3><span class="muted">${tplList.length} templates</span></div>
-      <form id="wialon-report-form" class="form-grid">
+      <div class="card-header"><h3>Run Wialon template</h3><span class="muted">${filteredTpl.length} shown</span></div>
+      <div class="tab-bar">${moduleTabs}</div>
+      <form id="wialon-report-form" class="form-grid mt-1">
         <label><span>Template</span><select class="select" name="template" required>${tplOptions || '<option value="">No templates</option>'}</select></label>
         <label><span>Object (unit)</span><select class="select" name="objectId" required>${unitOptions || '<option value="">No units</option>'}</select></label>
-        <label><span>From (unix)</span><input class="input" name="from" type="number" value="${Math.floor(Date.now() / 1000) - 86400}" /></label>
-        <label><span>To (unix)</span><input class="input" name="to" type="number" value="${Math.floor(Date.now() / 1000)}" /></label>
+        <label><span>Preset</span><select class="select" name="preset" id="report-preset">
+          <option value="86400">Last 24h</option>
+          <option value="604800">Last 7 days</option>
+          <option value="2592000">Last 30 days</option>
+          <option value="custom">Custom unix</option>
+        </select></label>
+        <label><span>From (unix)</span><input class="input" name="from" id="report-from" type="number" value="${now - 86400}" /></label>
+        <label><span>To (unix)</span><input class="input" name="to" id="report-to" type="number" value="${now}" /></label>
         <div class="form-grid-action"><button type="submit" class="btn">Execute</button></div>
         <p id="wialon-report-error" class="error" hidden></p>
       </form>
     </div>
     <div class="card mt-2" id="report-result">
-      ${emptyState('📄', 'No report loaded', 'Choose a DB report or run a Wialon template.')}
+      ${emptyState('📄', 'No report loaded', 'Pick a live snapshot, DB type, or Wialon template.')}
     </div>`;
   }
 
@@ -1855,7 +1914,7 @@
       const unitId = btn.dataset.unit;
       const cmd = btn.dataset.cmd || 'query_pos';
       if (!unitId) return;
-      if (cmd === 'block_engine' && !confirm('Send block_engine to this unit?')) return;
+      if (/block|lock|engine_stop|immobil/i.test(cmd) && !confirm(`Send "${cmd}" to this unit?`)) return;
       btn.disabled = true;
       try {
         await MamsApi.api('/client/wialon/commands', {
@@ -1872,6 +1931,81 @@
       } catch (ex) {
         alert(ex.message || 'Command failed');
         btn.disabled = false;
+      }
+      return;
+    }
+
+    if (action === 'load-unit-commands') {
+      const unitId = btn.dataset.unit;
+      if (!unitId) return;
+      const row = document.getElementById('cmd-catalog-' + unitId);
+      if (!row) return;
+      btn.disabled = true;
+      row.hidden = false;
+      row.querySelector('td').innerHTML = typeof loader === 'function' ? loader() : 'Loading…';
+      try {
+        const data = await MamsApi.api(`/client/wialon/units/${encodeURIComponent(unitId)}/commands`);
+        const cmds = data.commands || [];
+        if (!cmds.length) {
+          row.querySelector('td').innerHTML = `<span class="muted">${esc(data.error || 'No commands configured on this unit')}</span>
+            <div class="actions mt-1">
+              <button type="button" class="btn btn-sm" data-action="send-command" data-unit="${esc(unitId)}" data-asset="${esc(btn.dataset.asset || '')}" data-name="${esc(btn.dataset.name || '')}" data-cmd="query_pos">Query pos</button>
+            </div>`;
+        } else {
+          const buttons = cmds.slice(0, 40).map((c) => {
+            const name = c.name || c.label;
+            const dangerous = /block|lock|engine_stop|immobil|cut|output/i.test(name);
+            return `<button type="button" class="btn btn-sm ${dangerous ? 'btn-ghost' : ''}" data-action="send-command" data-unit="${esc(unitId)}" data-asset="${esc(btn.dataset.asset || '')}" data-name="${esc(btn.dataset.name || '')}" data-cmd="${esc(name)}" title="${esc(c.linkType || '')}">${esc(c.label || name)}</button>`;
+          }).join(' ');
+          row.querySelector('td').innerHTML = `<div class="muted mb-1">${cmds.length} commands from Wialon</div><div class="actions" style="flex-wrap:wrap;gap:6px">${buttons}</div>`;
+        }
+      } catch (ex) {
+        row.querySelector('td').innerHTML = `<span class="error">${esc(ex.message || 'Failed to load commands')}</span>`;
+      } finally {
+        btn.disabled = false;
+      }
+      return;
+    }
+
+    if (action === 'live-report') {
+      const reportId = btn.dataset.id;
+      const resultEl = document.getElementById('report-result');
+      if (!resultEl) return;
+      resultEl.innerHTML = typeof loader === 'function' ? loader() : 'Loading…';
+      try {
+        const snap = await MamsApi.api('/client/fleet/snapshot');
+        const units = snap.units || [];
+        let cols;
+        let body;
+        if (reportId === 'fleet-fuel') {
+          const fuel = await MamsApi.api('/client/wialon/fuel/live').catch(() => ({ units: [] }));
+          const fuelUnits = fuel.units?.length ? fuel.units : units;
+          cols = ['Asset', 'Type', 'Status', 'Fuel %', 'Liters', 'Mileage', 'Battery'];
+          body = fuelUnits.map((u) => `<tr>
+              <td><strong>${esc(u.name || u.unitName)}</strong></td>
+              <td>${esc(u.assetType || '—')}</td>
+              <td>${statusBadge(u.status)}</td>
+              <td>${(u.fuelPercent ?? u.fuelLevel) != null ? esc(Math.round(u.fuelPercent ?? u.fuelLevel)) + '%' : '—'}</td>
+              <td>${u.fuelLiters != null ? esc(u.fuelLiters) + ' L' : '—'}</td>
+              <td>${u.mileage != null ? esc(Math.round(u.mileage)).toLocaleString() + ' km' : '—'}</td>
+              <td>${u.battery != null ? esc(Math.round(u.battery)) + '%' : '—'}</td>
+            </tr>`).join('');
+          resultEl.innerHTML = `<div class="card-header"><h3>Live fuel levels</h3><span class="muted">${fuelUnits.length} units · ${fuel.live || snap.live ? 'Live' : 'Cached'}</span></div>${tableWrap(cols, body, 'No units')}`;
+          return;
+        } else {
+          cols = ['Asset', 'Status', 'Speed', 'Fuel %', 'Position', 'Updated'];
+          body = units.map((u) => `<tr>
+            <td><strong>${esc(u.name)}</strong>${u.plate ? `<div class="muted">${esc(u.plate)}</div>` : ''}</td>
+            <td>${statusBadge(u.status)}</td>
+            <td>${u.position ? Number(u.position.speed || 0).toFixed(0) + ' km/h' : '—'}</td>
+            <td>${u.fuelLevel != null ? esc(Math.round(u.fuelLevel)) + '%' : '—'}</td>
+            <td class="muted">${u.position ? `${Number(u.position.lat).toFixed(4)}, ${Number(u.position.lng).toFixed(4)}` : '—'}</td>
+            <td class="muted">${u.position ? fmtDate(u.position.time) : '—'}</td>
+          </tr>`).join('');
+        }
+        resultEl.innerHTML = `<div class="card-header"><h3>${esc(reportId)}</h3><span class="muted">${units.length} units · ${snap.live ? 'Live' : 'Cached'}</span></div>${tableWrap(cols, body, 'No units')}`;
+      } catch (ex) {
+        resultEl.innerHTML = `<div class="banner banner-error">${esc(ex.message || 'Live report failed')}</div>`;
       }
       return;
     }
@@ -1966,6 +2100,19 @@
         alert(ex.message || 'Failed to update user');
         btn.disabled = false;
       }
+    }
+  });
+
+  content.addEventListener('change', (e) => {
+    const el = e.target;
+    if (el && el.id === 'report-preset') {
+      const secs = Number(el.value);
+      const fromEl = document.getElementById('report-from');
+      const toEl = document.getElementById('report-to');
+      if (!fromEl || !toEl || !Number.isFinite(secs) || secs <= 0) return;
+      const now = Math.floor(Date.now() / 1000);
+      toEl.value = String(now);
+      fromEl.value = String(now - secs);
     }
   });
 
