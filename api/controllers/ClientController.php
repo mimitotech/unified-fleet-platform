@@ -311,6 +311,13 @@ class ClientController
     {
         $tenantId = self::requireTenantId();
 
+        require_once __DIR__ . '/../../lib/WialonFleet.php';
+        $live = WialonFleet::tryLiveSnapshot($tenantId);
+        if (is_array($live) && !empty($live['units'])) {
+            Response::success($live);
+            return;
+        }
+
         $rows = Database::query(
             'SELECT a.id AS asset_id, a.name, a.registration_plate,
                     ast.status, ast.latitude, ast.longitude, ast.speed, ast.fuel_level,
@@ -695,6 +702,71 @@ class ClientController
             'lastSyncAt' => $row['last_sync_at'] ?? null,
             'sessionMeta' => $sessionMeta,
         ]);
+    }
+
+    /** GET /client/wialon/units/:id — unit detail from live fleet cache */
+    public static function wialonUnitDetail(?string $id = null): void
+    {
+        $tenantId = self::requireTenantId();
+        $unitId = $id ?? '';
+        if ($unitId === '') {
+            Response::error('Unit id required', 400);
+            return;
+        }
+
+        require_once __DIR__ . '/../../lib/WialonFleet.php';
+        $live = WialonFleet::tryLiveSnapshot($tenantId);
+        if (!$live) {
+            Response::error('Live Wialon fleet unavailable', 404);
+            return;
+        }
+
+        $found = null;
+        foreach ($live['units'] ?? [] as $u) {
+            if ((string) ($u['id'] ?? '') === (string) $unitId
+                || (string) ($u['wialonId'] ?? '') === (string) $unitId) {
+                $found = $u;
+                break;
+            }
+        }
+        if (!$found) {
+            Response::error('Unit not found in live fleet', 404);
+            return;
+        }
+
+        $battery = WialonFleet::unitParam($found, 'battery');
+        $voltage = WialonFleet::unitParam(
+            $found,
+            'pwr_ext',
+            'ext_voltage',
+            'external_voltage',
+            'battery_voltage',
+            'pwr_int'
+        );
+
+        Response::success([
+            'unit' => $found,
+            'health' => [
+                'battery' => $battery,
+                'voltage' => $voltage,
+                'mileage' => $found['mileage'] ?? null,
+                'engineHours' => $found['engineHours'] ?? null,
+                'fuelLevel' => $found['fuelLevel'] ?? null,
+            ],
+        ]);
+    }
+
+    /** GET /client/wialon/fleet — alias for live snapshot */
+    public static function wialonFleet(): void
+    {
+        $tenantId = self::requireTenantId();
+        require_once __DIR__ . '/../../lib/WialonFleet.php';
+        $live = WialonFleet::tryLiveSnapshot($tenantId);
+        if (!$live) {
+            Response::error('Live Wialon fleet unavailable', 404);
+            return;
+        }
+        Response::success($live);
     }
 
     /** GET /client/integrations/status */

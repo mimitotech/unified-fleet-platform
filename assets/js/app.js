@@ -44,6 +44,33 @@
     return `<span class="badge badge-brand">${esc(role || '—')}</span>`;
   }
 
+  /** Mirror React Dashboard unitParam — battery % / voltage from lmsg/prms/sens */
+  function unitParam(unit, ...keys) {
+    if (!unit) return null;
+    const lmsg = (unit.lmsg && unit.lmsg.params) || {};
+    const prms = {};
+    (unit.prms || []).forEach((p) => {
+      if (p && p.key != null) prms[p.key] = p.value;
+    });
+    for (const key of keys) {
+      if (lmsg[key] != null && Number.isFinite(Number(lmsg[key]))) return Number(lmsg[key]);
+      if (prms[key] != null && Number.isFinite(Number(prms[key]))) return Number(prms[key]);
+    }
+    for (const s of (unit.sens || [])) {
+      const name = String(s.name || '').toLowerCase();
+      const type = String(s.type || '').toLowerCase();
+      const param = String(s.param || '');
+      for (const key of keys) {
+        const k = String(key).toLowerCase();
+        if (name.includes(k) || type.includes(k) || param.toLowerCase() === k) {
+          if (param && lmsg[param] != null && Number.isFinite(Number(lmsg[param]))) return Number(lmsg[param]);
+          if (param && prms[param] != null && Number.isFinite(Number(prms[param]))) return Number(prms[param]);
+        }
+      }
+    }
+    return null;
+  }
+
   const ADMIN_ROLES = ['tenant_admin', 'platform_admin', 'super_admin'];
   function isAdminRole(role) {
     return ADMIN_ROLES.includes(role);
@@ -272,20 +299,24 @@
         'dash-chart-fleet-status',
         `${(counts.moving ?? moving)} moving · ${(counts.idle ?? idle)} idle`
       ));
-      chartCards.push(chartCardHtml('Mileage', 'Trip odometer total · from trip summaries', 'dash-widget-mileage',
+      chartCards.push(chartCardHtml('Mileage', snap.live ? 'Live odometer total · from Wialon' : 'Trip odometer total · from trip summaries', 'dash-widget-mileage',
         (() => {
           const totalKm = units.reduce((s, u) => s + (Number(u.mileage) || 0), 0);
-          return totalKm > 0 ? `${Math.round(totalKm).toLocaleString()} km total` : 'No trip mileage yet';
+          return totalKm > 0 ? `${Math.round(totalKm).toLocaleString()} km total` : 'No mileage yet';
         })()));
-      chartCards.push(chartCardHtml('Top units by mileage', 'Trip odometer leaders', 'dash-widget-top-mileage',
+      chartCards.push(chartCardHtml('Top units by mileage', snap.live ? 'Live odometer leaders' : 'Trip odometer leaders', 'dash-widget-top-mileage',
         (() => {
           const leaders = [...units].filter((u) => Number(u.mileage) > 0).sort((a, b) => Number(b.mileage) - Number(a.mileage));
-          return leaders[0] ? `${leaders[0].name} · ${Math.round(Number(leaders[0].mileage)).toLocaleString()} km` : 'No trip mileage yet';
+          return leaders[0] ? `${leaders[0].name} · ${Math.round(Number(leaders[0].mileage)).toLocaleString()} km` : 'No mileage yet';
         })()));
       chartCards.push(chartCardHtml('Fleet utilization', 'Moving + idle share · not period-filtered', 'dash-widget-fleet-utilization', `${util}% utilization`));
       chartCards.push(chartCardHtml('Geofences', 'Zones & boundaries', 'dash-widget-geofences', `${geofences.length} zones configured`));
-      chartCards.push(chartCardHtml('Device battery', 'Battery health snapshot', 'dash-widget-device-battery', 'Requires live sensor params'));
-      chartCards.push(chartCardHtml('Voltage level', 'Voltage distribution', 'dash-widget-voltage-level', 'Requires live sensor params'));
+      const battCount = units.filter((u) => unitParam(u, 'battery') != null).length;
+      const voltCount = units.filter((u) => unitParam(u, 'pwr_ext', 'ext_voltage', 'external_voltage', 'battery_voltage', 'pwr_int') != null).length;
+      chartCards.push(chartCardHtml('Device battery', 'Live battery % · not period-filtered', 'dash-widget-device-battery',
+        battCount ? `${battCount} units reporting` : 'No battery sensors'));
+      chartCards.push(chartCardHtml('Voltage level', 'Live supply / internal voltage', 'dash-widget-voltage-level',
+        voltCount ? `${voltCount} units reporting` : 'No voltage sensors'));
     }
 
     // Alerts widget board (structure parity with legacy React dashboard)
@@ -329,6 +360,7 @@
       <div><span class="muted">Open alerts</span><strong>${openAlerts || (kpis.unacknowledgedAlerts ?? 0)}</strong></div>
       <div><span class="muted">Modules</span><strong>${enabled.size}</strong></div>
       ${wialonCtx?.connected ? `<div><span class="muted">Wialon</span><strong>Linked</strong></div>` : ''}
+      ${snap.live ? `<div><span class="muted">Telemetry</span><strong>Live</strong></div>` : ''}
     </div>
     <div class="metric-strip">${metrics.join('')}</div>
     ${wialonBannerHtml(wialonCtx)}
@@ -347,7 +379,8 @@
     </div>`;
 
     window.__dashPaint = () => paintDashboardCharts({
-      counts, alertList, trend, workshopKpis, driverStats, routeStats, intList, onlineCount, total, geofences,
+      units, counts, alertList, trend, workshopKpis, driverStats, routeStats, intList, onlineCount, total, geofences,
+      moving, idle, snapLive: !!snap.live,
     });
 
     return html;
@@ -422,7 +455,7 @@
   /** Paints Chart.js canvases into the dashboard HTML after it is in the DOM. */
   function paintDashboardCharts(data) {
     if (typeof Chart === 'undefined') return;
-    const { counts, alertList, trend, workshopKpis, driverStats, routeStats, intList, onlineCount, total, geofences } = data;
+    const { units, counts, alertList, trend, workshopKpis, driverStats, routeStats, intList, onlineCount, total, geofences } = data;
     const p = MamsCharts.palette();
 
     const drawNoDataDoughnut = (canvasId, label = 'No data') => {
@@ -430,8 +463,8 @@
       MamsCharts.doughnut(canvasId, [label], [1], [p.muted]);
     };
 
-    const moving = Number(counts?.moving ?? 0);
-    const idle = Number(counts?.idle ?? 0);
+    const moving = Number(data.moving ?? counts?.moving ?? 0);
+    const idle = Number(data.idle ?? counts?.idle ?? 0);
     const stopped = Number(counts?.stopped ?? 0);
     const offline = Number(counts?.offline ?? 0);
 
@@ -497,7 +530,7 @@
     // Fleet utilization (preview)
     if (document.getElementById('dash-widget-fleet-utilization')) {
       const totalSafe = Math.max(0, Number(total || 0));
-      const active = moving + idle;
+      const active = Number(moving || 0) + Number(idle || 0);
       const inactive = Math.max(0, totalSafe - active);
       const utilSlices = [
         { label: 'Active', value: active, color: p.accent },
@@ -543,8 +576,42 @@
       }
     }
 
-    // Battery / voltage need live Wialon sensor params — keep honest empty state
-    ['dash-widget-device-battery', 'dash-widget-voltage-level'].forEach((id) => drawNoDataDoughnut(id, 'No sensor data'));
+    // Battery / voltage from live Wialon sensor params
+    if (document.getElementById('dash-widget-device-battery')) {
+      const batt = [...(units || [])]
+        .map((u) => ({ name: u.name || u.plate || 'Unit', value: unitParam(u, 'battery') }))
+        .filter((r) => r.value != null && r.value >= 0 && r.value <= 100)
+        .sort((a, b) => a.value - b.value)
+        .slice(0, 8);
+      if (batt.length) {
+        MamsCharts.bar(
+          'dash-widget-device-battery',
+          batt.map((r) => r.name),
+          [{ label: '%', data: batt.map((r) => Math.round(r.value)), backgroundColor: p.warn }],
+        );
+      } else {
+        drawNoDataDoughnut('dash-widget-device-battery', 'No sensor data');
+      }
+    }
+    if (document.getElementById('dash-widget-voltage-level')) {
+      const volts = [...(units || [])]
+        .map((u) => ({
+          name: u.name || u.plate || 'Unit',
+          value: unitParam(u, 'pwr_ext', 'ext_voltage', 'external_voltage', 'battery_voltage', 'pwr_int'),
+        }))
+        .filter((r) => r.value != null && r.value > 0)
+        .sort((a, b) => a.value - b.value)
+        .slice(0, 8);
+      if (volts.length) {
+        MamsCharts.bar(
+          'dash-widget-voltage-level',
+          volts.map((r) => r.name),
+          [{ label: 'V', data: volts.map((r) => Math.round(r.value * 10) / 10), backgroundColor: p.info }],
+        );
+      } else {
+        drawNoDataDoughnut('dash-widget-voltage-level', 'No sensor data');
+      }
+    }
 
     if (document.getElementById('dash-widget-geofences')) {
       const count = Array.isArray(geofences) ? geofences.length : 0;
@@ -739,30 +806,38 @@
     const snap = await MamsApi.api('/client/fleet/snapshot');
     const units = snap.units || [];
     const counts = snap.counts || {};
-    const rows = units.map((u) => `<tr data-lat="${u.position?.lat ?? ''}" data-lng="${u.position?.lng ?? ''}" data-name="${esc(u.name)}">
-      <td><strong>${esc(u.name)}</strong></td>
-      <td>${esc(u.plate || '—')}</td>
+    const rows = units.map((u) => {
+      const batt = unitParam(u, 'battery');
+      const km = Number(u.mileage) > 0 ? `${Math.round(Number(u.mileage)).toLocaleString()} km` : '—';
+      return `<tr class="row-clickable" data-action="open-unit" data-id="${esc(u.id)}" data-lat="${u.position?.lat ?? ''}" data-lng="${u.position?.lng ?? ''}" data-name="${esc(u.name)}">
+      <td><strong>${esc(u.name)}</strong>${u.plate ? `<div class="muted">${esc(u.plate)}</div>` : ''}</td>
       <td>${statusBadge(u.status)}</td>
-      <td>${u.position ? `${Number(u.position.lat).toFixed(5)}, ${Number(u.position.lng).toFixed(5)}` : '—'}</td>
       <td>${u.position ? Number(u.position.speed || 0).toFixed(0) + ' km/h' : '—'}</td>
-    </tr>`).join('');
+      <td>${u.fuelLevel != null ? esc(Math.round(u.fuelLevel)) + '%' : '—'}</td>
+      <td>${esc(km)}</td>
+      <td>${batt != null ? esc(Math.round(batt)) + '%' : '—'}</td>
+      <td class="muted">${u.position ? fmtDate(u.position.time) : '—'}</td>
+    </tr>`;
+    }).join('');
 
     return `<div class="kpi-grid">
       ${kpi('Total', counts.total ?? units.length)}
       ${kpi('Moving', counts.moving ?? 0)}
       ${kpi('Idle', counts.idle ?? 0)}
+      ${kpi('Offline', counts.offline ?? 0)}
       ${kpi('With GPS', counts.withPosition ?? 0)}
     </div>
     <div class="grid-main-side mt-1">
       <div class="card card-flat">
-        <div class="card-header"><h3>Live map</h3><span class="badge badge-brand">${snap.live ? 'Live' : 'Cached'}</span></div>
+        <div class="card-header"><h3>Live map</h3><span class="badge ${snap.live ? 'badge-success' : 'badge-inactive'}">${snap.live ? 'Live Wialon' : 'Cached DB'}</span></div>
         <div id="fleet-map" class="map-panel"></div>
       </div>
       <div class="card card-flat">
-        <div class="card-header"><h3>Fleet list</h3></div>
-        ${tableWrap(['Name', 'Plate', 'Status', 'Position', 'Speed'], rows, 'No units with telemetry')}
+        <div class="card-header"><h3>Fleet list</h3><span class="muted">${units.length}</span></div>
+        ${tableWrap(['Name', 'Status', 'Speed', 'Fuel', 'Mileage', 'Battery', 'Updated'], rows, 'No units with telemetry')}
       </div>
-    </div>`;
+    </div>
+    <div id="unit-detail-root"></div>`;
   }
 
   function initFleetMap(units) {
@@ -817,23 +892,29 @@
     const txs = data.transactions || (Array.isArray(data) ? data : []);
     const kpis = data.kpis || {};
     const trend = Array.isArray(monthly) ? monthly : [];
+    const params = new URLSearchParams(location.search);
+    const tab = (params.get('fuelTab') || 'all').toLowerCase();
+    const fills = txs.filter((t) => Number(t.filled) > 0);
+    const drains = txs.filter((t) => Number(t.fuelUsed || t.fuel_used) > 0 && !(Number(t.filled) > 0));
+    const shown = tab === 'fills' ? fills : tab === 'drains' ? drains : txs;
 
-    const rows = txs.slice(0, 100).map((t) => `<tr>
+    const rows = shown.slice(0, 100).map((t) => `<tr>
       <td>${fmtDate(t.timestamp ? t.timestamp * 1000 : t.date)}</td>
-      <td>${esc(t.unitName || t.assetName || '—')}</td>
-      <td>${esc(t.section || '—')}</td>
+      <td><strong>${esc(t.unitName || t.assetName || '—')}</strong></td>
+      <td>${esc(t.section || (t.filled ? 'fill' : 'consume'))}</td>
       <td>${t.filled ? esc(t.filled) + ' L filled' : (t.fuelUsed ? esc(t.fuelUsed) + ' L used' : '—')}</td>
       <td>${esc(t.location || '—')}</td>
+      <td class="muted">${t.mileage != null ? esc(Math.round(Number(t.mileage))) + ' km' : '—'}</td>
     </tr>`).join('');
 
-    const trendRows = trend.slice(-6).map((m) => `<tr>
+    const trendRows = trend.slice(-8).map((m) => `<tr>
       <td>${esc(m.month)}</td>
       <td>${esc(m.filled)} L</td>
       <td>${esc(m.consumed)} L</td>
     </tr>`).join('');
 
     const banner = txs.length > 0
-      ? `<div class="banner banner-info">Showing ${txs.length} fuel transactions for ${esc(data.from || '')} – ${esc(data.to || '')}.</div>`
+      ? `<div class="banner banner-info">Showing ${shown.length} of ${txs.length} fuel events for ${esc(data.from || '')} – ${esc(data.to || '')}.</div>`
       : integrationBanner('Wialon fuel reports');
 
     return `${banner}
@@ -843,33 +924,41 @@
       ${kpi('Avg L/100km', kpis.avgConsumptionL100km ?? 0)}
       ${kpi('Transactions', kpis.transactionCount ?? txs.length)}
     </div>
+    <div class="tab-bar mt-2">
+      <a class="tab ${tab === 'all' ? 'active' : ''}" href="/app/fuel?fuelTab=all">All (${txs.length})</a>
+      <a class="tab ${tab === 'fills' ? 'active' : ''}" href="/app/fuel?fuelTab=fills">Fills (${fills.length})</a>
+      <a class="tab ${tab === 'drains' ? 'active' : ''}" href="/app/fuel?fuelTab=drains">Consumption (${drains.length})</a>
+    </div>
     <div class="grid-main-side mt-2">
       <div class="card">
-        <div class="card-header"><h3>Fuel transactions</h3></div>
-        ${tableWrap(['Date', 'Asset', 'Type', 'Volume', 'Location'], rows, 'No fuel transactions yet')}
+        <div class="card-header"><h3>Fuel events</h3></div>
+        ${tableWrap(['Date', 'Asset', 'Type', 'Volume', 'Location', 'Odo'], rows, 'No fuel transactions yet')}
       </div>
       <div class="card">
         <div class="card-header"><h3>Monthly trend</h3></div>
         ${tableWrap(['Month', 'Filled', 'Consumed'], trendRows, 'No trend data yet')}
+        ${trend.some((r) => Number(r.filled) > 0 || Number(r.consumed) > 0) ? '<div class="chart-box mt-1" style="height:180px"><canvas id="fuel-page-trend"></canvas></div>' : ''}
       </div>
     </div>`;
   }
 
   async function renderWorkshop() {
-    const [kpis, inspections, maintenance, breakdowns] = await Promise.all([
+    const [kpis, inspections, maintenance, breakdowns, mechanics] = await Promise.all([
       MamsApi.api('/client/workshop/kpis').catch(() => ({})),
       MamsApi.api('/client/workshop/inspections').catch(() => []),
       MamsApi.api('/client/workshop/maintenance').catch(() => []),
       MamsApi.api('/client/workshop/breakdowns').catch(() => []),
+      MamsApi.api('/client/workshop/mechanics').catch(() => []),
     ]);
     const insp = Array.isArray(inspections) ? inspections : [];
     const maint = Array.isArray(maintenance) ? maintenance : [];
     const brk = Array.isArray(breakdowns) ? breakdowns : [];
+    const mechs = Array.isArray(mechanics) ? mechanics : [];
     return `<div class="kpi-grid">
       ${kpi('Pending maintenance', kpis.pendingMaintenance ?? 0)}
       ${kpi('Completed this month', kpis.completedThisMonth ?? 0)}
       ${kpi('Open breakdowns', kpis.openBreakdowns ?? 0)}
-      ${kpi('Inspections', insp.length)}
+      ${kpi('Mechanics', mechs.length || (kpis.mechanics ?? 0))}
     </div>
     <div class="grid-2 mt-2">
       <div class="card">
@@ -889,21 +978,40 @@
         </tr>`).join(''), 'No breakdowns')}
       </div>
     </div>
-    <div class="card mt-2">
-      <div class="card-header"><h3>Maintenance logs</h3></div>
-      ${tableWrap(['Asset', 'Type', 'Status', 'When'], maint.slice(0, 40).map((m) => `<tr>
-        <td>${esc(m.vehicleName || m.assetName || m.vehiclePlate || m.assetId || '—')}</td>
-        <td>${esc(m.maintenanceType || m.type || m.title || '—')}</td>
-        <td>${statusBadge(m.status || '—')}</td>
-        <td class="muted">${fmtDate(m.startDate || m.scheduledAt || m.createdAt)}</td>
-      </tr>`).join(''), 'No maintenance logs')}
+    <div class="grid-2 mt-2">
+      <div class="card">
+        <div class="card-header"><h3>Maintenance logs</h3></div>
+        ${tableWrap(['Asset', 'Type', 'Status', 'When'], maint.slice(0, 40).map((m) => `<tr>
+          <td>${esc(m.vehicleName || m.assetName || m.vehiclePlate || m.assetId || '—')}</td>
+          <td>${esc(m.maintenanceType || m.type || m.title || '—')}</td>
+          <td>${statusBadge(m.status || '—')}</td>
+          <td class="muted">${fmtDate(m.startDate || m.scheduledAt || m.createdAt)}</td>
+        </tr>`).join(''), 'No maintenance logs')}
+      </div>
+      <div class="card">
+        <div class="card-header"><h3>Mechanics</h3></div>
+        ${tableWrap(['Name', 'Phone', 'Status'], mechs.slice(0, 40).map((m) => `<tr>
+          <td><strong>${esc(m.fullName || m.name || '—')}</strong></td>
+          <td>${esc(m.phone || '—')}</td>
+          <td>${statusBadge(m.isActive === false ? 'inactive' : 'active')}</td>
+        </tr>`).join(''), 'No mechanics listed')}
+      </div>
     </div>`;
   }
 
   async function renderAlerts() {
     const alerts = await MamsApi.api('/client/alerts');
     const list = Array.isArray(alerts) ? alerts : alerts.alerts || [];
-    const rows = list.slice(0, 100).map((a) => `<tr>
+    const params = new URLSearchParams(location.search);
+    const sev = (params.get('sev') || 'all').toLowerCase();
+    const filtered = sev === 'all' ? list : list.filter((a) => {
+      const s = String(a.severity || '').toLowerCase();
+      if (sev === 'critical') return s === 'critical' || s === 'emergency';
+      return s === sev;
+    });
+    const openIds = filtered.filter((a) => !a.acknowledged).map((a) => a.id);
+
+    const rows = filtered.slice(0, 150).map((a) => `<tr>
       <td>${severityBadge(a.severity)}</td>
       <td>${esc(a.type)}</td>
       <td><strong>${esc(a.title)}</strong>${a.description ? `<br><span class="muted">${esc(a.description)}</span>` : ''}</td>
@@ -913,12 +1021,24 @@
     </tr>`).join('');
 
     const open = list.filter((a) => !a.acknowledged).length;
+    const critical = list.filter((a) => ['critical', 'emergency'].includes(String(a.severity || '').toLowerCase())).length;
     return `<div class="kpi-grid">
       ${kpi('Total', list.length)}
       ${kpi('Open', open)}
+      ${kpi('Critical', critical)}
       ${kpi('Acknowledged', list.length - open)}
     </div>
+    <div class="tab-bar mt-2">
+      <a class="tab ${sev === 'all' ? 'active' : ''}" href="/app/alerts?sev=all">All</a>
+      <a class="tab ${sev === 'critical' ? 'active' : ''}" href="/app/alerts?sev=critical">Critical</a>
+      <a class="tab ${sev === 'warning' ? 'active' : ''}" href="/app/alerts?sev=warning">Warning</a>
+      <a class="tab ${sev === 'info' ? 'active' : ''}" href="/app/alerts?sev=info">Info</a>
+    </div>
     <div class="card mt-2">
+      <div class="card-header">
+        <h3>Alert inbox</h3>
+        ${openIds.length ? `<button type="button" class="btn btn-sm" data-action="ack-alerts-bulk" data-ids="${esc(openIds.slice(0, 50).join(','))}">Ack open (${Math.min(openIds.length, 50)})</button>` : ''}
+      </div>
       ${tableWrap(['Severity', 'Type', 'Message', 'Status', 'When', 'Actions'], rows, 'No alerts')}
     </div>`;
   }
@@ -1461,6 +1581,21 @@
       const snap = await MamsApi.api('/client/fleet/snapshot').catch(() => ({ units: [] }));
       loadLeaflet(() => initFleetMap(snap.units || []));
     }
+
+    if (mod === 'fuel' && document.getElementById('fuel-page-trend')) {
+      const monthly = await MamsApi.api('/client/fuel/monthly-trend').catch(() => []);
+      const rows = (Array.isArray(monthly) ? monthly : []).slice(-8);
+      if (rows.length && typeof MamsCharts?.composed === 'function') {
+        const p = MamsCharts.palette();
+        MamsCharts.composed(
+          'fuel-page-trend',
+          rows.map((r) => String(r.month || '')),
+          { label: 'Filled (L)', data: rows.map((r) => Number(r.filled) || 0) },
+          { label: 'Consumed (L)', data: rows.map((r) => Number(r.consumed) || 0) },
+          { bar: p.primary, line: p.accent },
+        );
+      }
+    }
   }
 
   content.addEventListener('click', async (e) => {
@@ -1480,6 +1615,59 @@
         btn.disabled = false;
         btn.textContent = 'Acknowledge';
       }
+      return;
+    }
+
+    if (action === 'ack-alerts-bulk') {
+      const ids = String(btn.dataset.ids || '').split(',').filter(Boolean);
+      if (!ids.length) return;
+      btn.disabled = true;
+      try {
+        for (const alertId of ids) {
+          await MamsApi.api(`/client/alerts/${encodeURIComponent(alertId)}/acknowledge`, { method: 'POST' }).catch(() => null);
+        }
+        await loadModule();
+      } catch (ex) {
+        alert(ex.message || 'Bulk acknowledge failed');
+        btn.disabled = false;
+      }
+      return;
+    }
+
+    if (action === 'open-unit') {
+      const root = document.getElementById('unit-detail-root');
+      if (!root) return;
+      root.innerHTML = `<div class="card mt-2">${typeof loader === 'function' ? loader() : 'Loading…'}</div>`;
+      try {
+        const detail = await MamsApi.api(`/client/wialon/units/${encodeURIComponent(id)}`);
+        const u = detail.unit || {};
+        const h = detail.health || {};
+        root.innerHTML = `<div class="card mt-2">
+          <div class="card-header">
+            <h3>${esc(u.name || 'Unit')}</h3>
+            <button type="button" class="btn btn-sm btn-ghost" data-action="close-unit-detail">Close</button>
+          </div>
+          <div class="settings-grid">
+            <div><span class="muted">Status</span><div>${statusBadge(u.status)}</div></div>
+            <div><span class="muted">Plate</span><div>${esc(u.plate || '—')}</div></div>
+            <div><span class="muted">Fuel</span><div>${h.fuelLevel != null ? esc(Math.round(h.fuelLevel)) + '%' : '—'}</div></div>
+            <div><span class="muted">Mileage</span><div>${h.mileage != null ? esc(Math.round(h.mileage)).toLocaleString() + ' km' : '—'}</div></div>
+            <div><span class="muted">Battery</span><div>${h.battery != null ? esc(Math.round(h.battery)) + '%' : '—'}</div></div>
+            <div><span class="muted">Voltage</span><div>${h.voltage != null ? esc(Math.round(h.voltage * 10) / 10) + ' V' : '—'}</div></div>
+            <div><span class="muted">Engine hours</span><div>${h.engineHours != null ? esc(Math.round(h.engineHours)) : '—'}</div></div>
+            <div><span class="muted">Position</span><div>${u.position ? `${Number(u.position.lat).toFixed(5)}, ${Number(u.position.lng).toFixed(5)}` : '—'}</div></div>
+          </div>
+        </div>`;
+      } catch (ex) {
+        root.innerHTML = `<div class="banner banner-error mt-2">${esc(ex.message || 'Unit detail unavailable (live Wialon required)')}</div>`;
+      }
+      return;
+    }
+
+    if (action === 'close-unit-detail') {
+      const root = document.getElementById('unit-detail-root');
+      if (root) root.innerHTML = '';
+      return;
     }
 
     if (action === 'delete-driver') {

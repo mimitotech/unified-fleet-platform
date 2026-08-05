@@ -100,6 +100,12 @@ try {
     if ($apiPath === '/client/wialon/context' && $method === 'GET') {
         ClientController::wialonContext();
     }
+    if ($apiPath === '/client/wialon/fleet' && $method === 'GET') {
+        ClientController::wialonFleet();
+    }
+    if (route_match('/client/wialon/units/:id', $apiPath, $p) && $method === 'GET') {
+        ClientController::wialonUnitDetail($p['id']);
+    }
     if ($apiPath === '/client/preferences' && $method === 'GET') {
         ClientController::preferencesGet();
     }

@@ -17,7 +17,7 @@ $bodyClass = $isApp ? 'app-body' : ($isLanding ? 'landing-body' : '');
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/assets/css/app.css?v=20260805m" />
+  <link rel="stylesheet" href="/assets/css/app.css?v=20260805n" />
   <script>window.MAMS_ASSET_V = '20260805f';</script>
   <?php if ($isLanding): ?>
   <style>
