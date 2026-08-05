@@ -335,56 +335,180 @@
     <div id="tenant-detail-root"></div>`;
   }
 
-  async function openTenantDetail(id) {
+  async function openTenantDetail(id, tab) {
     const root = document.getElementById('tenant-detail-root');
     if (!root) return;
-    root.innerHTML = `<div class="modal-overlay" id="tenant-modal"><div class="modal-panel">${loader()}</div></div>`;
+    const activeTab = tab || 'general';
+    root.innerHTML = `<div class="modal-overlay" id="tenant-modal"><div class="modal-panel modal-panel-wide">${loader()}</div></div>`;
 
     try {
-      const [tenant, modules, integrations] = await Promise.all([
+      const [tenant, modules, integrations, users] = await Promise.all([
         MamsApi.api(`/admin/tenants/${encodeURIComponent(id)}`),
         MamsApi.api(`/admin/tenants/${encodeURIComponent(id)}/modules`).catch(() => []),
         MamsApi.api(`/admin/tenants/${encodeURIComponent(id)}/integrations`).catch(() => []),
+        MamsApi.api(`/admin/users?tenant=${encodeURIComponent(id)}`).catch(() => []),
       ]);
       const modList = Array.isArray(modules) ? modules : [];
       const intList = Array.isArray(integrations) ? integrations : [];
+      const userList = Array.isArray(users) ? users : users.users || [];
+      let fuelCfg = null;
+      let fuelTemplates = [];
+      let fuelSheets = [];
+      if (activeTab === 'fuel-module') {
+        const [cfg, tpl, sheets] = await Promise.all([
+          MamsApi.api(`/admin/tenants/${encodeURIComponent(id)}/fuel-module-config`).catch(() => null),
+          MamsApi.api(`/admin/tenants/${encodeURIComponent(id)}/wialon/report-templates`).catch(() => ({ templates: [] })),
+          MamsApi.api(`/admin/tenants/${encodeURIComponent(id)}/fuel-station-sheets`).catch(() => ({ uploads: [] })),
+        ]);
+        // Admin may not have client tenant context for templates — use empty if fails
+        fuelCfg = cfg;
+        fuelTemplates = (tpl && (tpl.templates || tpl)) || [];
+        if (!Array.isArray(fuelTemplates)) fuelTemplates = [];
+        fuelSheets = (sheets && sheets.uploads) || [];
+      }
       const panel = document.querySelector('#tenant-modal .modal-panel');
       if (!panel) return;
 
-      const intRows = intList.map((i) => `<tr>
-        <td><strong>${esc(i.sourceType)}</strong></td>
-        <td>${i.isActive && i.verified ? '<span class="badge badge-success">Connected</span>' : '<span class="badge badge-inactive">Not connected</span>'}</td>
-        <td class="muted">${fmtDate(i.lastSyncAt)}</td>
-      </tr>`).join('');
+      const tabs = ['general', 'integrations', 'branding', 'modules', 'fuel-module', 'users'];
+      const tabBar = `<div class="tab-bar branded-tabs" style="margin:0.75rem 0">
+        ${tabs.map((t) => `<button type="button" class="tab ${activeTab === t ? 'active' : ''}" data-action="tenant-detail-tab" data-id="${esc(id)}" data-tab="${t}">${esc(t)}</button>`).join('')}
+      </div>`;
 
-      const modToggles = modList.map((m) => `<label class="module-toggle">
-        <input type="checkbox" data-module-key="${esc(m.moduleKey || m.key)}" ${m.isEnabled ? 'checked' : ''} />
-        <span>${esc(m.label || m.moduleKey || m.key)}</span>
-      </label>`).join('');
-
-      panel.innerHTML = `
-        <div class="modal-header">
-          <h3>${esc(tenant.name)}</h3>
-          <button type="button" class="modal-close" data-action="close-tenant-modal">✕</button>
-        </div>
-        <div class="settings-grid">
-          <div><span class="muted">Slug</span><div><strong>${esc(tenant.slug)}</strong></div></div>
-          <div><span class="muted">Status</span><div>${statusBadge(tenant.status)}</div></div>
-          <div><span class="muted">Contact</span><div>${esc(tenant.contactEmail || '—')}</div></div>
-          <div><span class="muted">Manager</span><div>${esc(tenant.assignedManagerName || '—')}</div></div>
-          <div><span class="muted">Vehicles used</span><div>${tenant.usage?.vehiclesUsed ?? '—'}${tenant.maxVehicles ? ' / ' + tenant.maxVehicles : ''}</div></div>
-          <div><span class="muted">Users used</span><div>${tenant.usage?.usersUsed ?? '—'}${tenant.maxUsers ? ' / ' + tenant.maxUsers : ''}</div></div>
-        </div>
-        <div class="actions" style="margin-top:1rem;gap:0.5rem;display:flex;flex-wrap:wrap">
-          <button type="button" class="btn btn-sm" data-action="tenant-toggle-status" data-id="${esc(id)}" data-status="${esc(tenant.status === 'active' ? 'inactive' : 'active')}">${tenant.status === 'active' ? 'Suspend client' : 'Activate client'}</button>
-        </div>
-        <h4 style="margin:1.25rem 0 0.5rem;color:var(--brand-dark)">Modules</h4>
+      let body = '';
+      if (activeTab === 'general') {
+        body = `
+        <form id="tenant-general-form" class="form-stack" data-id="${esc(id)}">
+          <div class="form-grid">
+            <label><span>Name</span><input class="input" name="name" value="${esc(tenant.name || '')}" /></label>
+            <label><span>Slug</span><input class="input" name="slug" value="${esc(tenant.slug || '')}" disabled /></label>
+            <label><span>Contact email</span><input class="input" name="contactEmail" value="${esc(tenant.contactEmail || '')}" /></label>
+            <label><span>Phone</span><input class="input" name="phone" value="${esc(tenant.phone || '')}" /></label>
+            <label><span>Country</span><input class="input" name="country" value="${esc(tenant.country || '')}" /></label>
+            <label><span>Timezone</span><input class="input" name="timezone" value="${esc(tenant.timezone || 'UTC')}" /></label>
+            <label><span>Status</span><div>${statusBadge(tenant.status)}</div></label>
+            <label><span>Manager</span><div>${esc(tenant.assignedManagerName || '—')}</div></label>
+          </div>
+          <div class="actions" style="gap:0.5rem;display:flex;flex-wrap:wrap">
+            <button type="submit" class="btn btn-sm">Save profile</button>
+            <button type="button" class="btn btn-sm" data-action="tenant-toggle-status" data-id="${esc(id)}" data-status="${esc(tenant.status === 'active' ? 'inactive' : 'active')}">${tenant.status === 'active' ? 'Suspend client' : 'Activate client'}</button>
+          </div>
+          <p id="tenant-general-msg" class="muted"></p>
+        </form>`;
+      } else if (activeTab === 'integrations') {
+        const sources = ['wialon', 'loconav', 'tracksolid'];
+        const byType = Object.fromEntries(intList.map((i) => [i.sourceType, i]));
+        const cards = sources.map((src) => {
+          const i = byType[src] || { sourceType: src, isActive: false, verified: false };
+          const connected = i.isActive && i.verified;
+          return `<div class="card branded-panel" style="margin-bottom:12px">
+            <div class="card-header"><h3>${esc(src)}</h3>
+              ${connected ? '<span class="badge badge-success">Connected</span>' : '<span class="badge badge-inactive">Not connected</span>'}
+            </div>
+            <p class="muted">${src === 'wialon' ? 'Prefer linking via Wialon Center; token can also be saved here.' : 'Save API credentials. Webhook URL is shown after save.'}</p>
+            <form class="form-stack integration-cred-form" data-tenant="${esc(id)}" data-source="${esc(src)}">
+              ${src === 'wialon' ? `<label><span>Token</span><input class="input" name="token" type="password" placeholder="${i.hasCredentials ? '•••• (unchanged if blank)' : 'Wialon token'}" autocomplete="off" /></label>
+                <label><span>Operate as</span><input class="input" name="operateAs" placeholder="optional" /></label>` : ''}
+              ${src === 'loconav' ? `<label><span>API token</span><input class="input" name="token" type="password" placeholder="${i.hasCredentials ? '••••' : 'LocoNav token'}" autocomplete="off" /></label>` : ''}
+              ${src === 'tracksolid' ? `<label><span>App key</span><input class="input" name="appKey" autocomplete="off" /></label>
+                <label><span>App secret</span><input class="input" name="appSecret" type="password" autocomplete="off" /></label>
+                <label><span>Account / user id</span><input class="input" name="account" autocomplete="off" /></label>
+                <label><span>Password</span><input class="input" name="password" type="password" placeholder="${i.hasCredentials ? '••••' : ''}" autocomplete="off" /></label>` : ''}
+              <div class="actions" style="gap:6px;display:flex;flex-wrap:wrap">
+                <button type="submit" class="btn btn-sm">Save</button>
+                <button type="button" class="btn btn-sm btn-ghost" data-action="integration-test" data-tenant="${esc(id)}" data-source="${esc(src)}">Test</button>
+                <button type="button" class="btn btn-sm btn-ghost" data-action="integration-sync" data-tenant="${esc(id)}" data-source="${esc(src)}">Sync</button>
+              </div>
+              <p class="muted integration-msg" data-source="${esc(src)}"></p>
+            </form>
+            ${i.wialonAccountName ? `<p class="muted">Account: ${esc(i.wialonAccountName)}</p>` : ''}
+            ${i.lastSyncAt ? `<p class="muted">Last sync: ${fmtDate(i.lastSyncAt)}</p>` : ''}
+            ${i.lastError ? `<p class="banner banner-error">${esc(i.lastError)}</p>` : ''}
+          </div>`;
+        }).join('');
+        body = `
+        <p class="muted">Configure Wialon, LocoNav, and TrackSolid. Mother-token linking remains in <a href="/admin/wialon">Wialon Center</a>.</p>
+        ${cards}`;
+      } else if (activeTab === 'branding') {
+        body = `
+        <form id="tenant-branding-form" class="form-stack" data-id="${esc(id)}">
+          <div class="form-grid">
+            <label><span>Primary</span><input class="input" type="color" name="primaryColor" value="${esc(tenant.primaryColor || '#004225')}" /></label>
+            <label><span>Secondary</span><input class="input" type="color" name="secondaryColor" value="${esc(tenant.secondaryColor || '#0f172a')}" /></label>
+            <label><span>Accent</span><input class="input" type="color" name="accentColor" value="${esc(tenant.accentColor || '#1a6b45')}" /></label>
+            <label><span>Logo URL</span><input class="input" name="logoUrl" id="tenant-logo-url" value="${esc(tenant.logoUrl || '')}" placeholder="/uploads/…" /></label>
+            <label><span>Favicon URL</span><input class="input" name="faviconUrl" id="tenant-favicon-url" value="${esc(tenant.faviconUrl || '')}" /></label>
+          </div>
+          <div class="form-grid">
+            <label><span>Upload logo</span><input class="input" type="file" accept="image/*" id="tenant-logo-file" data-tenant="${esc(id)}" /></label>
+            <label><span>Upload favicon</span><input class="input" type="file" accept="image/*" id="tenant-favicon-file" data-tenant="${esc(id)}" /></label>
+          </div>
+          ${tenant.logoUrl ? `<p><img src="${esc(tenant.logoUrl)}" alt="logo" style="max-height:48px;object-fit:contain" /></p>` : ''}
+          <label><span>Custom CSS</span><textarea class="input" name="customCss" rows="4">${esc(tenant.customCss || '')}</textarea></label>
+          <button type="submit" class="btn btn-sm">Save branding</button>
+          <p id="tenant-branding-msg" class="muted"></p>
+        </form>`;
+      } else if (activeTab === 'modules') {
+        const modToggles = modList.map((m) => `<label class="module-toggle">
+          <input type="checkbox" data-module-key="${esc(m.moduleKey || m.key)}" ${m.isEnabled ? 'checked' : ''} />
+          <span>${esc(m.label || m.moduleKey || m.key)}</span>
+        </label>`).join('');
+        body = `
         <div id="tenant-modules-form" data-tenant-id="${esc(id)}" style="display:flex;flex-wrap:wrap;gap:0.6rem 1rem">
           ${modToggles || '<span class="muted">No modules configured</span>'}
         </div>
-        ${modList.length ? `<button type="button" class="btn btn-sm mt-1" data-action="tenant-save-modules" data-id="${esc(id)}">Save modules</button>` : ''}
-        <h4 style="margin:1.25rem 0 0.5rem;color:var(--brand-dark)">Integrations</h4>
-        ${intList.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Source</th><th>Status</th><th>Last sync</th></tr></thead><tbody>${intRows}</tbody></table></div>` : '<p class="muted">No integrations configured</p>'}
+        ${modList.length ? `<button type="button" class="btn btn-sm mt-1" data-action="tenant-save-modules" data-id="${esc(id)}">Save modules</button>` : ''}`;
+      } else if (activeTab === 'fuel-module') {
+        const selected = (fuelCfg && fuelCfg.selectedReports) || [];
+        const selectedKeys = new Set(selected.map((r) => `${r.resourceId}:${r.templateId}`));
+        const fuelTpls = fuelTemplates.filter((t) => /fuel/i.test(String(t.name || t.n || '')) || (t.module === 'fuel'));
+        const tplChecks = (fuelTpls.length ? fuelTpls : fuelTemplates).slice(0, 60).map((t) => {
+          const rid = t.resourceId || t.resource_id || '';
+          const tid = t.id;
+          const key = `${rid}:${tid}`;
+          return `<label class="module-toggle">
+            <input type="checkbox" data-fuel-tpl data-resource="${esc(rid)}" data-template="${esc(tid)}" data-name="${esc(t.name || t.n || '')}" ${selectedKeys.has(key) ? 'checked' : ''} />
+            <span>${esc(t.name || t.n || tid)} <span class="muted">(${esc(rid)}/${esc(tid)})</span></span>
+          </label>`;
+        }).join('');
+        const sheetRows = fuelSheets.map((u) => `<tr>
+          <td>${esc(u.fileName)}</td>
+          <td>${esc(u.importedCount ?? 0)} / ${esc(u.rowCount ?? 0)}</td>
+          <td class="muted">${fmtDate(u.createdAt)}</td>
+          <td><button type="button" class="btn btn-sm btn-ghost" data-action="fuel-sheet-delete" data-tenant="${esc(id)}" data-upload="${esc(u.id)}">Delete</button></td>
+        </tr>`).join('');
+        body = `
+        <div class="banner banner-info">Bind Hosting fuel report templates. Canonical: Fuel Report(Group/Unit), Fuel Usage Report(Gensets/Units).</div>
+        <form id="fuel-module-form" data-id="${esc(id)}" class="form-stack mt-1">
+          <label><span>Fuel price / liter (optional)</span>
+            <input class="input" type="number" step="0.01" name="fuelPricePerLiter" value="${esc((fuelCfg && fuelCfg.fuelPricePerLiter) ?? '')}" />
+          </label>
+          <h4 style="margin:0.75rem 0 0.35rem;color:var(--brand-dark)">Selected report templates</h4>
+          <div style="display:flex;flex-wrap:wrap;gap:0.5rem 1rem;max-height:220px;overflow:auto">${tplChecks || '<span class="muted">No templates — link Wialon and open this tab while templates API is reachable, or paste IDs after harvest.</span>'}</div>
+          <button type="submit" class="btn btn-sm">Save fuel module</button>
+          <p id="fuel-module-msg" class="muted"></p>
+        </form>
+        <h4 style="margin:1.25rem 0 0.5rem;color:var(--brand-dark)">Station sheets (CSV)</h4>
+        <p class="muted">Upload petrol-station .xlsx or .csv with Registration + Quantity + Date columns for Variance (FLS matching).</p>
+        <input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" id="fuel-sheet-file" data-tenant="${esc(id)}" />
+        <p id="fuel-sheet-msg" class="muted"></p>
+        ${tableWrap(['File', 'Imported', 'When', ''], sheetRows, 'No station sheets uploaded')}`;
+      } else if (activeTab === 'users') {
+        const urows = userList.map((u) => `<tr>
+          <td><strong>${esc(u.fullName || u.full_name || '—')}</strong></td>
+          <td>${esc(u.email)}</td>
+          <td>${roleBadge(u.role)}</td>
+          <td>${u.isActive !== false ? '<span class="badge badge-success">Active</span>' : '<span class="badge badge-inactive">Off</span>'}</td>
+        </tr>`).join('');
+        body = tableWrap(['Name', 'Email', 'Role', 'Status'], urows, 'No users for this client — create under Client Users');
+      }
+
+      panel.innerHTML = `
+        <div class="modal-header">
+          <h3>${esc(tenant.name)} <span class="muted" style="font-weight:400;font-size:.85rem">/${esc(tenant.slug)}</span></h3>
+          <button type="button" class="modal-close" data-action="close-tenant-modal">✕</button>
+        </div>
+        ${tabBar}
+        ${body}
       `;
     } catch (ex) {
       root.innerHTML = `<div class="modal-overlay" id="tenant-modal"><div class="modal-panel"><div class="banner banner-error">${esc(ex.message || 'Failed to load client')}</div></div></div>`;
@@ -770,18 +894,44 @@
     if (title) title.textContent = accountName || `Account ${accountId}`;
     body.innerHTML = loader();
     try {
-      const detail = await MamsApi.api(
-        `/admin/centers/wialon/accounts/${encodeURIComponent(accountId)}?motherId=${encodeURIComponent(motherId)}`
-      );
+      const [detail, tenantsRes] = await Promise.all([
+        MamsApi.api(
+          `/admin/centers/wialon/accounts/${encodeURIComponent(accountId)}?motherId=${encodeURIComponent(motherId)}`
+        ),
+        MamsApi.api('/admin/tenants?limit=100').catch(() => ({ tenants: [] })),
+      ]);
       const units = detail.sampleUnits || detail.units || [];
       const unitRows = units.slice(0, 50).map((u) => `<tr>
         <td><strong>${esc(u.nm || u.name || u.id)}</strong></td>
         <td class="muted">${esc(u.id)}</td>
       </tr>`).join('');
+      const tenants = tenantsRes.tenants || (Array.isArray(tenantsRes) ? tenantsRes : []);
+      const tenantOpts = tenants.map((t) =>
+        `<option value="${esc(t.id)}" ${detail.assignedTenant && detail.assignedTenant.id === t.id ? 'selected' : ''}>${esc(t.name)} (${esc(t.slug || '')})</option>`
+      ).join('');
+      const linked = detail.assignedTenant
+        ? `<div class="banner banner-success">Linked to <strong>${esc(detail.assignedTenant.name)}</strong></div>`
+        : `<div class="banner banner-info">Not linked — pick a client and link this Hosting account.</div>`;
       body.innerHTML = `
+        ${linked}
         <div class="settings-grid" style="margin-bottom:1rem">
           <div><span class="muted">Units</span><div><strong>${esc(detail.unitCount ?? units.length)}</strong></div></div>
           <div><span class="muted">Linked client</span><div>${detail.assignedTenant ? esc(detail.assignedTenant.name) : '—'}</div></div>
+        </div>
+        <div class="card" style="margin-bottom:1rem">
+          <div class="card-header"><h3>Link to client</h3></div>
+          <div class="form-grid">
+            <label><span>Client</span>
+              <select class="select" id="wialon-link-tenant">${tenantOpts || '<option value="">No clients</option>'}</select>
+            </label>
+            <div class="form-grid-action">
+              <button type="button" class="btn" data-action="wialon-link-account"
+                data-account="${esc(accountId)}" data-name="${esc(accountName || '')}" data-mother="${esc(motherId || detail.motherAccountId || '')}">
+                Link account
+              </button>
+            </div>
+          </div>
+          <p id="wialon-link-msg" class="muted mt-1"></p>
         </div>
         ${tableWrap(['Unit', 'ID'], unitRows, 'No units in this account')}`;
     } catch (ex) {
@@ -1120,6 +1270,53 @@
         return;
       }
 
+      if (action === 'tenant-detail-tab') {
+        await openTenantDetail(btn.dataset.id, btn.dataset.tab);
+        return;
+      }
+
+      if (action === 'integration-test' || action === 'integration-sync') {
+        const tenantId = btn.dataset.tenant;
+        const source = btn.dataset.source;
+        const msg = document.querySelector(`.integration-msg[data-source="${source}"]`);
+        if (!tenantId || !source) return;
+        btn.disabled = true;
+        if (msg) msg.textContent = action === 'integration-test' ? 'Testing…' : 'Syncing…';
+        try {
+          const path = action === 'integration-test' ? 'test' : 'sync';
+          const result = await MamsApi.api(
+            `/admin/tenants/${encodeURIComponent(tenantId)}/integrations/${encodeURIComponent(source)}/${path}`,
+            { method: 'POST', body: '{}' }
+          );
+          if (msg) {
+            msg.textContent = action === 'integration-test'
+              ? (result.connected ? `Connected · ${result.assetCount || 0} assets` : (result.error || 'Not connected'))
+              : (result.message || `Synced ${result.vehiclesSynced || 0}`);
+          }
+        } catch (ex) {
+          if (msg) msg.textContent = ex.message || 'Failed';
+        } finally {
+          btn.disabled = false;
+        }
+        return;
+      }
+
+      if (action === 'fuel-sheet-delete') {
+        if (!confirm('Delete this station sheet upload?')) return;
+        btn.disabled = true;
+        try {
+          await MamsApi.api(
+            `/admin/tenants/${encodeURIComponent(btn.dataset.tenant)}/fuel-station-sheets/${encodeURIComponent(btn.dataset.upload)}`,
+            { method: 'DELETE' }
+          );
+          await openTenantDetail(btn.dataset.tenant, 'fuel-module');
+        } catch (ex) {
+          alert(ex.message || 'Delete failed');
+          btn.disabled = false;
+        }
+        return;
+      }
+
       if (action === 'toggle-tenant') {
         const newStatus = btn.dataset.status === 'active' ? 'inactive' : 'active';
         btn.disabled = true;
@@ -1352,6 +1549,35 @@
         return;
       }
 
+      if (action === 'wialon-link-account') {
+        const tenantId = document.getElementById('wialon-link-tenant')?.value || '';
+        const msg = document.getElementById('wialon-link-msg');
+        if (!tenantId) {
+          if (msg) msg.textContent = 'Select a client first';
+          return;
+        }
+        btn.disabled = true;
+        if (msg) msg.textContent = 'Linking…';
+        try {
+          const result = await MamsApi.api(`/admin/tenants/${encodeURIComponent(tenantId)}/wialon/link-account`, {
+            method: 'POST',
+            body: JSON.stringify({
+              accountId: Number(btn.dataset.account),
+              accountName: btn.dataset.name || undefined,
+              motherAccountId: btn.dataset.mother || undefined,
+            }),
+          });
+          if (msg) {
+            msg.innerHTML = `<span class="banner banner-success">Linked · ${esc(result.unitCount ?? 0)} units · ${esc(result.assetsSynced ?? 0)} assets synced</span>`;
+          }
+          await openWialonAccount(btn.dataset.account, btn.dataset.name);
+        } catch (ex) {
+          if (msg) msg.innerHTML = `<span class="banner banner-error">${esc(ex.message || 'Link failed')}</span>`;
+          btn.disabled = false;
+        }
+        return;
+      }
+
       if (action === 'tenant-save-modules') {
         const form = document.getElementById('tenant-modules-form');
         if (!form) return;
@@ -1506,11 +1732,92 @@
     }
     if (e.target.id === 'wialon-mother-picker') {
       await loadWialonHierarchy(e.target.value);
+      return;
+    }
+
+    async function readFileAsBase64(file) {
+      const buf = await file.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      return btoa(binary);
+    }
+
+    if (e.target.id === 'tenant-logo-file' || e.target.id === 'tenant-favicon-file') {
+      const file = e.target.files?.[0];
+      const tenantId = e.target.dataset.tenant;
+      const msg = document.getElementById('tenant-branding-msg');
+      if (!file || !tenantId) return;
+      const fileType = e.target.id === 'tenant-favicon-file' ? 'favicon' : 'logo';
+      if (msg) msg.textContent = `Uploading ${fileType}…`;
+      try {
+        const data = await readFileAsBase64(file);
+        const result = await MamsApi.api(`/admin/tenants/${encodeURIComponent(tenantId)}/upload`, {
+          method: 'POST',
+          body: JSON.stringify({
+            fileName: file.name,
+            mimeType: file.type || undefined,
+            fileType,
+            data,
+          }),
+        });
+        if (msg) msg.textContent = result.message || 'Uploaded';
+        await openTenantDetail(tenantId, 'branding');
+      } catch (ex) {
+        if (msg) msg.textContent = ex.message || 'Upload failed';
+      }
+      return;
+    }
+
+    if (e.target.id === 'fuel-sheet-file') {
+      const file = e.target.files?.[0];
+      const tenantId = e.target.dataset.tenant;
+      const msg = document.getElementById('fuel-sheet-msg');
+      if (!file || !tenantId) return;
+      if (msg) msg.textContent = 'Importing sheet…';
+      try {
+        const data = await readFileAsBase64(file);
+        const result = await MamsApi.api(`/admin/tenants/${encodeURIComponent(tenantId)}/fuel-station-sheets`, {
+          method: 'POST',
+          body: JSON.stringify({ fileName: file.name, data }),
+        });
+        if (msg) msg.textContent = `Imported ${result.imported}/${result.rowCount} rows` + (result.skipped ? ` (${result.skipped} skipped)` : '');
+        await openTenantDetail(tenantId, 'fuel-module');
+      } catch (ex) {
+        if (msg) msg.textContent = ex.message || 'Import failed';
+      }
     }
   });
 
   content.addEventListener('submit', async (e) => {
     const form = e.target;
+
+    if (form.classList?.contains('integration-cred-form')) {
+      e.preventDefault();
+      const tenantId = form.dataset.tenant;
+      const source = form.dataset.source;
+      const msg = form.querySelector('.integration-msg');
+      const fd = new FormData(form);
+      const credentials = {};
+      fd.forEach((v, k) => {
+        if (String(v).trim() !== '') credentials[k] = String(v).trim();
+      });
+      if (msg) msg.textContent = 'Saving…';
+      try {
+        const result = await MamsApi.api(
+          `/admin/tenants/${encodeURIComponent(tenantId)}/integrations/${encodeURIComponent(source)}`,
+          { method: 'PUT', body: JSON.stringify({ credentials }) }
+        );
+        if (msg) {
+          msg.textContent = result.message || 'Saved'
+            + (result.webhookUrl ? ` · webhook: ${result.webhookUrl}` : '');
+        }
+        await openTenantDetail(tenantId, 'integrations');
+      } catch (ex) {
+        if (msg) msg.textContent = ex.message || 'Save failed';
+      }
+      return;
+    }
 
     if (form.id === 'tenant-form') {
       e.preventDefault();
@@ -1531,6 +1838,79 @@
         await reloadTenants('');
       } catch (ex) {
         if (errEl) { errEl.textContent = ex.message || 'Failed to create client'; errEl.hidden = false; }
+      }
+      return;
+    }
+
+    if (form.id === 'tenant-general-form') {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const msg = document.getElementById('tenant-general-msg');
+      try {
+        await MamsApi.api(`/admin/tenants/${encodeURIComponent(form.dataset.id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            name: fd.get('name'),
+            contactEmail: fd.get('contactEmail'),
+            phone: fd.get('phone'),
+            country: fd.get('country'),
+            timezone: fd.get('timezone'),
+          }),
+        });
+        if (msg) msg.textContent = 'Profile saved';
+        await openTenantDetail(form.dataset.id, 'general');
+      } catch (ex) {
+        if (msg) msg.textContent = ex.message || 'Save failed';
+      }
+      return;
+    }
+
+    if (form.id === 'tenant-branding-form') {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const msg = document.getElementById('tenant-branding-msg');
+      try {
+        await MamsApi.api(`/admin/tenants/${encodeURIComponent(form.dataset.id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            primaryColor: fd.get('primaryColor'),
+            secondaryColor: fd.get('secondaryColor'),
+            accentColor: fd.get('accentColor'),
+            logoUrl: fd.get('logoUrl') || null,
+            faviconUrl: fd.get('faviconUrl') || null,
+            customCss: fd.get('customCss') || null,
+          }),
+        });
+        if (msg) msg.textContent = 'Branding saved';
+        await openTenantDetail(form.dataset.id, 'branding');
+      } catch (ex) {
+        if (msg) msg.textContent = ex.message || 'Save failed';
+      }
+      return;
+    }
+
+    if (form.id === 'fuel-module-form') {
+      e.preventDefault();
+      const msg = document.getElementById('fuel-module-msg');
+      const selectedReports = [...form.querySelectorAll('[data-fuel-tpl]:checked')].map((el) => ({
+        resourceId: Number(el.dataset.resource),
+        templateId: Number(el.dataset.template),
+        templateName: el.dataset.name || '',
+        module: 'fuel',
+      }));
+      const price = form.fuelPricePerLiter?.value;
+      try {
+        await MamsApi.api(`/admin/tenants/${encodeURIComponent(form.dataset.id)}/fuel-module-config`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            selectedReports,
+            fuelPricePerLiter: price !== '' ? Number(price) : null,
+          }),
+        });
+        if (msg) msg.textContent = `Saved · ${selectedReports.length} templates`;
+        await openTenantDetail(form.dataset.id, 'fuel-module');
+      } catch (ex) {
+        if (msg) msg.textContent = ex.message || 'Save failed';
       }
       return;
     }

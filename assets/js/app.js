@@ -209,7 +209,9 @@
 
   /* ── Module renderers ── */
   async function renderDashboard() {
-    const [kpis, snap, integrations, alertsRaw, wialonCtx, modulesRaw, fuelTrend, workshopKpis, driverStats, routeStats, geofencesRaw] = await Promise.all([
+    const params = new URLSearchParams(location.search);
+    const rangeDays = Math.max(1, Math.min(90, Number(params.get('days') || 30)));
+    const [kpis, snap, integrations, alertsRaw, wialonCtx, modulesRaw, fuelTrend, workshopKpis, driverStats, routeStats, geofencesRaw, prefs] = await Promise.all([
       MamsApi.api('/client/dashboard/kpis').catch(() => ({})),
       MamsApi.api('/client/fleet/snapshot').catch(() => ({ units: [], counts: {} })),
       MamsApi.api('/client/integrations/status').catch(() => []),
@@ -221,7 +223,10 @@
       MamsApi.api('/client/drivers/stats').catch(() => ({})),
       MamsApi.api('/client/routes/stats').catch(() => ({})),
       MamsApi.api('/client/geofences').catch(() => []),
+      MamsApi.api('/client/preferences').catch(() => ({})),
     ]);
+    const layout = prefs.dashboardLayout || {};
+    const arrange = params.get('arrange') === '1' || layout.arrangeMode === true;
 
     const units = snap.units || [];
     const counts = snap.counts || {};
@@ -353,7 +358,15 @@
     }
 
     const html = `
-    <div class="dash-meta">
+    <div class="actions" style="gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
+      <span class="muted">Range</span>
+      ${[7, 14, 30, 90].map((d) =>
+        `<a class="btn btn-sm ${rangeDays === d ? '' : 'btn-ghost'}" href="/app/dashboard?days=${d}${arrange ? '&arrange=1' : ''}">${d}d</a>`
+      ).join('')}
+      <a class="btn btn-sm btn-ghost" href="/app/dashboard?days=${rangeDays}&arrange=${arrange ? '0' : '1'}">${arrange ? 'Done arranging' : 'Arrange widgets'}</a>
+      <span class="muted">Showing last ${rangeDays} days context</span>
+    </div>
+    <div class="dash-meta ${arrange ? 'dash-arrange' : ''}">
       <div><span class="muted">Fleet</span><strong>${total} assets</strong></div>
       <div><span class="muted">Online</span><strong>${onlineCount}/${total || '—'}</strong></div>
       <div><span class="muted">Utilization</span><strong>${util}%</strong></div>
@@ -802,10 +815,184 @@
     }
   }
 
+
+  /** Module Reports tab — Wialon templates filtered by keyword + domain CSV */
+  async function moduleReportsHtml(moduleKey, title) {
+    const keywords = {
+      monitoring: /trip|unit|event|mileage|engine|track|fleet/i,
+      drivers: /driver|eco|safety|violation/i,
+      routes: /route|trip|round/i,
+      geofencing: /geofence|zone|geo/i,
+      commands: /command|exec/i,
+      trailers: /trailer|unit/i,
+      sensors: /sensor|param|io/i,
+      emissions: /eco|emission|fuel|violation/i,
+      workshop: /service|maintenance|workshop/i,
+      surveillance: /video|camera|media/i,
+    }[moduleKey] || /./i;
+
+    const domainType = moduleKey === 'emissions' ? 'violations'
+      : moduleKey === 'workshop' ? 'workshop'
+      : moduleKey === 'drivers' ? 'drivers'
+      : 'trips';
+
+    const [templates, domain, snap] = await Promise.all([
+      MamsApi.api('/client/wialon/reports/templates').catch(() => ({ templates: [] })),
+      MamsApi.api(`/client/reports/data/${encodeURIComponent(domainType)}`).catch(() => []),
+      MamsApi.api('/client/fleet/snapshot').catch(() => ({ units: [] })),
+    ]);
+    const list = (templates.templates || templates || []).filter((t) => keywords.test(String(t.name || t.n || '')));
+    const units = snap.units || [];
+    const unitOpts = units.slice(0, 200).map((u) =>
+      `<option value="${esc(u.wialonId || u.id)}">${esc(u.name || u.wialonId)}</option>`
+    ).join('');
+    const rows = list.slice(0, 40).map((t) => `<tr>
+      <td><strong>${esc(t.name || t.n)}</strong></td>
+      <td class="muted">${esc(t.resourceName || '—')}</td>
+      <td>${esc(t.id)}</td>
+      <td><button type="button" class="btn btn-sm" data-action="exec-module-report"
+        data-resource="${esc(t.resourceId || '')}" data-template="${esc(t.id)}"
+        data-name="${esc(t.name || t.n || '')}">Run</button></td>
+    </tr>`).join('');
+    const domainList = Array.isArray(domain) ? domain : domain.rows || [];
+    return `<div class="card mt-2 branded-panel" id="module-report-print-root">
+      <div class="card-header"><h3>${esc(title || 'Reports')}</h3><span class="muted">${list.length} templates</span></div>
+      <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:8px">
+        <label><span class="muted">Report object</span>
+          <select class="select" id="module-report-object"><option value="">Auto (first unit / resource)</option>${unitOpts}</select>
+        </label>
+        <label><span class="muted">Days</span>
+          <select class="select" id="module-report-days">
+            <option value="1">1</option><option value="7" selected>7</option><option value="30">30</option>
+          </select>
+        </label>
+      </div>
+      ${tableWrap(['Template', 'Resource', 'ID', ''], rows, 'No matching report templates on this account')}
+      <div id="module-report-result" class="mt-1"></div>
+      <div class="actions mt-1" id="module-report-print-actions" hidden>
+        <button type="button" class="btn btn-sm" data-action="print-module-report">Print / PDF</button>
+      </div>
+    </div>
+    ${domainList.length ? `<div class="card mt-2"><div class="card-header"><h3>Domain export preview</h3><span class="muted">${domainList.length} rows</span></div>
+      <p class="muted">Domain ledger available (${domainList.length} rows) — run a Hosting template above for charts.</p>
+    </div>` : ''}`;
+  }
+
+  function printReportElement(root, title) {
+    if (!root) return;
+    const win = window.open('', '_blank', 'noopener,noreferrer,width=960,height=720');
+    if (!win) {
+      window.print();
+      return;
+    }
+    const brand = (getComputedStyle(document.documentElement).getPropertyValue('--brand') || '#004225').trim();
+    win.document.write(`<!DOCTYPE html><html><head><title>${esc(title || 'Report')}</title>
+      <style>
+        body{font-family:system-ui,sans-serif;padding:24px;color:#111}
+        h1{color:${brand};font-size:1.25rem;margin:0 0 12px}
+        img{max-width:100%;height:auto;margin:8px 0;border-radius:6px}
+        table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px}
+        th,td{border:1px solid #ddd;padding:6px 8px;text-align:left}
+        th{background:#f5f5f5}
+        .muted{color:#666;font-size:11px}
+        pre{white-space:pre-wrap;font-size:11px}
+        @media print{body{padding:0}}
+      </style></head><body>
+      <h1>${esc(title || 'Report')}</h1>
+      <p class="muted">${new Date().toLocaleString()}</p>
+      ${root.innerHTML}
+      <script>window.onload=function(){setTimeout(function(){window.print()},200)}<\/script>
+      </body></html>`);
+    win.document.close();
+  }
+
+  function workshopSectionHtml(sections) {
+    if (!sections || !sections.length) return '<p class="muted">No checklist items</p>';
+    return sections.map((sec, si) => {
+      const items = (sec.items || []).map((it, ii) => {
+        const name = typeof it === 'string' ? it : (it.name || '');
+        return `<label class="checklist-item">
+          <input type="checkbox" name="check_${si}_${ii}" data-section="${esc(sec.id || si)}" data-item="${esc(name)}" />
+          <span>${esc(name)}</span>
+        </label>`;
+      }).join('');
+      return `<div class="checklist-section branded-panel">
+        <h4>${esc(sec.title || ('Section ' + (si + 1)))}</h4>
+        <div class="checklist-grid">${items}</div>
+      </div>`;
+    }).join('');
+  }
+
   async function renderMonitoring() {
-    const snap = await MamsApi.api('/client/fleet/snapshot');
+    // Spec views: Live Map | Fleet List | Track | Events | Reports
+    const params = new URLSearchParams(location.search);
+    let view = (params.get('view') || 'map').toLowerCase();
+    if (!['map', 'list', 'track', 'events', 'reports'].includes(view)) view = 'map';
+
+    const [snap, alerts] = await Promise.all([
+      MamsApi.api('/client/fleet/snapshot').catch(() => ({ units: [], counts: {}, live: false })),
+      view === 'events' ? MamsApi.api('/client/alerts?limit=100').catch(() => []) : Promise.resolve([]),
+    ]);
     const units = snap.units || [];
     const counts = snap.counts || {};
+    window.__fleetUnits = units;
+
+    const tabBar = `<div class="tab-bar branded-tabs">
+      <a class="tab ${view === 'map' ? 'active' : ''}" href="/app/monitoring?view=map">Live Map</a>
+      <a class="tab ${view === 'list' ? 'active' : ''}" href="/app/monitoring?view=list">Fleet List</a>
+      <a class="tab ${view === 'track' ? 'active' : ''}" href="/app/monitoring?view=track">Track</a>
+      <a class="tab ${view === 'events' ? 'active' : ''}" href="/app/monitoring?view=events">Events</a>
+      <a class="tab ${view === 'reports' ? 'active' : ''}" href="/app/monitoring?view=reports">Reports</a>
+    </div>
+    <div class="kpi-grid mt-2">
+      ${kpi('Total', counts.total ?? units.length)}
+      ${kpi('Moving', counts.moving ?? 0)}
+      ${kpi('Idle', counts.idle ?? 0)}
+      ${kpi('Stopped', counts.stopped ?? 0)}
+      ${kpi('Offline', counts.offline ?? 0)}
+    </div>`;
+
+    if (view === 'reports') {
+      return tabBar + await moduleReportsHtml('monitoring', 'Monitoring reports');
+    }
+
+    if (view === 'events') {
+      const list = Array.isArray(alerts) ? alerts : alerts.alerts || [];
+      const rows = list.slice(0, 100).map((a) => `<tr>
+        <td>${severityBadge(a.severity)}</td>
+        <td><strong>${esc(a.title)}</strong></td>
+        <td>${esc(a.type || '—')}</td>
+        <td class="muted">${fmtDate(a.timestamp || a.occurredAt)}</td>
+      </tr>`).join('');
+      return `${tabBar}
+      <div class="card mt-2 branded-panel">
+        <div class="card-header"><h3>Fleet events</h3><span class="muted">From alerts inbox</span></div>
+        ${tableWrap(['Severity', 'Event', 'Type', 'When'], rows, 'No events')}
+      </div>`;
+    }
+
+    if (view === 'track') {
+      const opts = units.slice(0, 200).map((u) =>
+        `<option value="${esc(u.wialonId || u.id)}">${esc(u.name)}</option>`
+      ).join('') || '<option value="">No units</option>';
+      return `${tabBar}
+      <div class="card mt-2">
+        <div class="card-header"><h3>Track history</h3></div>
+        <div class="form-grid">
+          <label><span>Unit</span><select class="select" id="track-unit">${opts}</select></label>
+          <label><span>Range</span><select class="select" id="track-range">
+            <option value="3600">Last 1h</option>
+            <option value="21600">Last 6h</option>
+            <option value="86400" selected>Last 24h</option>
+            <option value="259200">Last 3d</option>
+          </select></label>
+          <div class="form-grid-action"><button type="button" class="btn" data-action="load-monitoring-track">Load track</button></div>
+        </div>
+        <div id="track-map" class="map-panel mt-1"></div>
+        <div id="track-meta" class="muted mt-1"></div>
+      </div>`;
+    }
+
     const rows = units.map((u) => {
       const batt = unitParam(u, 'battery');
       const km = Number(u.mileage) > 0 ? `${Math.round(Number(u.mileage)).toLocaleString()} km` : '—';
@@ -820,21 +1007,29 @@
     </tr>`;
     }).join('');
 
-    return `<div class="kpi-grid">
-      ${kpi('Total', counts.total ?? units.length)}
-      ${kpi('Moving', counts.moving ?? 0)}
-      ${kpi('Idle', counts.idle ?? 0)}
-      ${kpi('Offline', counts.offline ?? 0)}
-      ${kpi('With GPS', counts.withPosition ?? 0)}
-    </div>
+    const banner = snap.live
+      ? `<div class="banner banner-success">Live fleet · ${units.length} units</div>`
+      : integrationBanner('Live fleet map');
+
+    if (view === 'list') {
+      return `${tabBar}${banner}
+      <div class="card mt-2 branded-panel">
+        <div class="card-header"><h3>Fleet list</h3><span class="badge ${snap.live ? 'badge-success' : 'badge-inactive'}">${snap.live ? 'Live' : 'Offline'}</span></div>
+        ${tableWrap(['Name', 'Status', 'Speed', 'Fuel', 'Mileage', 'Battery', 'Updated'], rows, 'No units with telemetry')}
+      </div>
+      <div id="unit-detail-root"></div>`;
+    }
+
+    // Live Map (default)
+    return `${tabBar}${banner}
     <div class="grid-main-side mt-1">
-      <div class="card card-flat">
-        <div class="card-header"><h3>Live map</h3><span class="badge ${snap.live ? 'badge-success' : 'badge-inactive'}">${snap.live ? 'Live Wialon' : 'Cached DB'}</span></div>
+      <div class="card card-flat branded-panel">
+        <div class="card-header"><h3>Live map</h3><span class="badge ${snap.live ? 'badge-success' : 'badge-inactive'}">${snap.live ? 'Live' : 'Offline'}</span></div>
         <div id="fleet-map" class="map-panel"></div>
       </div>
       <div class="card card-flat">
-        <div class="card-header"><h3>Fleet list</h3><span class="muted">${units.length}</span></div>
-        ${tableWrap(['Name', 'Status', 'Speed', 'Fuel', 'Mileage', 'Battery', 'Updated'], rows, 'No units with telemetry')}
+        <div class="card-header"><h3>Units</h3><span class="muted">${units.length}</span></div>
+        ${tableWrap(['Name', 'Status', 'Speed', 'Fuel', 'Mileage', 'Battery', 'Updated'], rows, 'No units')}
       </div>
     </div>
     <div id="unit-detail-root"></div>`;
@@ -931,288 +1126,534 @@
     });
   }
 
+  function fuelCategoryOf(u) {
+    const t = String(u.assetType || u.assetCategory || u.category || '').toLowerCase();
+    const n = String(u.name || u.unitName || '').toLowerCase();
+    // Spec: bowsers/tankers stay with generators, not vehicles
+    if (/bowser|tanker|genset|generator|stationary/.test(n) || t === 'generator' || t === 'genset') return 'generator';
+    if (t === 'machinery' || /machinery|excavator|crane/.test(n)) return 'machinery';
+    if (t === 'vehicle' || t === 'truck' || t === 'car') return 'vehicle';
+    return t || 'vehicle';
+  }
+
+  function fuelAlertCategory(type) {
+    const t = String(type || '').toLowerCase();
+    if (/fuel|fill|drain|theft|tank/.test(t)) return 'fuel';
+    if (/power|battery|voltage|ignition/.test(t)) return 'power';
+    if (/speed|harsh|eco|driver|idle/.test(t)) return 'driving';
+    if (/geofence|zone|route/.test(t)) return 'geofence';
+    if (/engine|rpm|hours/.test(t)) return 'engine';
+    if (/sensor|temp|door/.test(t)) return 'sensors';
+    return 'other';
+  }
+
   async function renderFuel() {
-    const [data, monthly, liveFuel, overview, assetsRes, intel, eventsRes] = await Promise.all([
+    // Spec tabs: Vehicles | Generators | Machinery | Reports | Variance
+    const params = new URLSearchParams(location.search);
+    let tab = (params.get('fuelTab') || 'vehicles').toLowerCase();
+    if (!['vehicles', 'generators', 'machinery', 'reports', 'variance'].includes(tab)) tab = 'vehicles';
+
+    const [data, monthly, assetsRes, templates, variance, analytics] = await Promise.all([
       MamsApi.api('/client/fuel/transactions').catch(() => ({ transactions: [], kpis: {} })),
       MamsApi.api('/client/fuel/monthly-trend').catch(() => []),
-      MamsApi.api('/client/wialon/fuel/live').catch(() => ({ units: [], live: false })),
-      MamsApi.api('/client/wialon/fuel/overview').catch(() => ({})),
-      MamsApi.api('/client/wialon/fuel/assets').catch(() => ({ assets: [], summary: {} })),
-      MamsApi.api('/client/wialon/fuel/intelligence').catch(() => null),
-      MamsApi.api('/client/wialon/fuel/events?limit=40').catch(() => ({ events: [] })),
+      MamsApi.api('/client/wialon/fuel/assets').catch(() => ({ assets: [], summary: {}, live: false })),
+      MamsApi.api('/client/wialon/reports/templates').catch(() => ({ templates: [] })),
+      MamsApi.api('/client/fuel/variance').catch(() => ({ rows: [], configured: false })),
+      MamsApi.api('/client/wialon/fuel/analytics?period=30').catch(() => null),
     ]);
     const txs = data.transactions || (Array.isArray(data) ? data : []);
     const kpis = data.kpis || {};
     const trend = Array.isArray(monthly) ? monthly : [];
-    const liveUnits = liveFuel.units || [];
+    const ak = (analytics && analytics.kpis) || {};
+    const topAssets = ((analytics && analytics.byAsset) || []).slice(0, 8);
+    const anomalies = ((analytics && analytics.anomalies) || []).slice(0, 8);
     const assets = assetsRes.assets || [];
-    const summary = assetsRes.summary || overview.assets || {};
-    const events = eventsRes.events || [];
-    const params = new URLSearchParams(location.search);
-    const tab = (params.get('fuelTab') || 'all').toLowerCase();
-    const fills = txs.filter((t) => Number(t.filled) > 0);
-    const drains = txs.filter((t) => Number(t.fuelUsed || t.fuel_used) > 0 && !(Number(t.filled) > 0));
-    const assetFilter = tab === 'generators' ? 'generator' : tab === 'machinery' ? 'machinery' : tab === 'vehicles' ? 'vehicle' : null;
-    const filteredAssets = assetFilter ? assets.filter((a) => a.assetType === assetFilter) : assets;
-    const shown = tab === 'fills' ? fills : tab === 'drains' ? drains : (tab === 'live' || assetFilter || tab === 'assets' || tab === 'intel' || tab === 'events' || tab === 'series') ? [] : txs;
+    const summary = assetsRes.summary || {};
+    const live = !!assetsRes.live;
 
-    const rows = shown.slice(0, 100).map((t) => `<tr>
-      <td>${fmtDate(t.timestamp ? t.timestamp * 1000 : t.date)}</td>
-      <td><strong>${esc(t.unitName || t.assetName || '—')}</strong></td>
-      <td>${esc(t.section || (t.filled ? 'fill' : 'consume'))}</td>
-      <td>${t.filled ? esc(t.filled) + ' L filled' : (t.fuelUsed ? esc(t.fuelUsed) + ' L used' : '—')}</td>
-      <td>${esc(t.location || '—')}</td>
-      <td class="muted">${t.mileage != null ? esc(Math.round(Number(t.mileage))) + ' km' : '—'}</td>
-    </tr>`).join('');
+    const byCat = { vehicle: [], generator: [], machinery: [] };
+    assets.forEach((a) => {
+      const c = fuelCategoryOf(a);
+      if (byCat[c]) byCat[c].push(a);
+      else byCat.vehicle.push(a);
+    });
 
-    const liveRows = (tab === 'live' ? liveUnits : filteredAssets).slice(0, 100).map((u) => `<tr>
+    const catKey = tab === 'generators' ? 'generator' : tab === 'machinery' ? 'machinery' : 'vehicle';
+    const catAssets = byCat[catKey] || [];
+    const catTxs = txs.filter((t) => {
+      const name = String(t.unitName || t.assetName || '');
+      const hit = assets.find((a) => String(a.name || a.unitName) === name);
+      if (!hit) {
+        if (tab === 'vehicles') return !/genset|generator|bowser|tanker|machinery/i.test(name);
+        if (tab === 'generators') return /genset|generator|bowser|tanker/i.test(name);
+        if (tab === 'machinery') return /machinery|excavator|crane/i.test(name);
+        return true;
+      }
+      return fuelCategoryOf(hit) === catKey;
+    });
+
+    const liveRows = catAssets.slice(0, 120).map((u) => `<tr>
       <td><strong>${esc(u.name || u.unitName)}</strong>${u.plate ? `<div class="muted">${esc(u.plate)}</div>` : ''}</td>
-      <td><span class="badge badge-info">${esc(u.assetType || 'vehicle')}</span></td>
       <td>${statusBadge(u.status)}</td>
       <td>${u.fuelPercent != null || u.fuelLevel != null ? esc(Math.round(u.fuelPercent ?? u.fuelLevel)) + '%' : '—'}</td>
       <td>${u.fuelLiters != null ? esc(u.fuelLiters) + ' L' : '—'}</td>
       <td class="muted">${u.mileage != null ? esc(Math.round(Number(u.mileage))).toLocaleString() + ' km' : '—'}</td>
-      <td>${u.battery != null ? esc(Math.round(u.battery)) + '%' : '—'}</td>
-      <td><button type="button" class="btn btn-sm btn-ghost" data-action="fuel-unit-report" data-unit="${esc(u.unitId || u.wialonId || u.id)}" data-name="${esc(u.name || u.unitName || '')}">Pull report</button></td>
+      <td><button type="button" class="btn btn-sm btn-ghost" data-action="fuel-unit-report" data-unit="${esc(u.unitId || u.wialonId || u.id)}" data-name="${esc(u.name || u.unitName || '')}">Refresh report</button></td>
     </tr>`).join('');
 
-    const trendRows = trend.slice(-8).map((m) => `<tr>
-      <td>${esc(m.month)}</td>
-      <td>${esc(m.filled)} L</td>
-      <td>${esc(m.consumed)} L</td>
+    const txRows = catTxs.slice(0, 100).map((t) => {
+      const filled = Number(t.filled) || 0;
+      const used = Number(t.fuelUsed || t.fuel_used) || 0;
+      const isBowser = /bowser|tanker/i.test(String(t.unitName || t.assetName || ''));
+      const label = filled > 0 ? `${filled} L filled` : (used > 0 ? `${used} L ${isBowser ? 'dispensed' : 'used'}` : '—');
+      return `<tr>
+        <td>${fmtDate(t.timestamp ? t.timestamp * 1000 : t.date)}</td>
+        <td><strong>${esc(t.unitName || t.assetName || '—')}</strong></td>
+        <td>${esc(t.section || (filled ? 'fill' : 'consume'))}</td>
+        <td>${esc(label)}</td>
+        <td>${esc(t.location || '—')}</td>
+      </tr>`;
+    }).join('');
+
+    const filledSum = catTxs.reduce((s, t) => s + (Number(t.filled) || 0), 0);
+    const usedSum = catTxs.reduce((s, t) => s + (Number(t.fuelUsed || t.fuel_used) || 0), 0);
+    const withFuel = catAssets.filter((a) => a.fuelLiters != null || a.fuelPercent != null || a.fuelLevel != null).length;
+
+    const fuelTemplates = (templates.templates || templates || []).filter((t) =>
+      /fuel/i.test(String(t.name || t.n || ''))
+    );
+    const tplRows = fuelTemplates.slice(0, 40).map((t) => `<tr>
+      <td><strong>${esc(t.name || t.n)}</strong></td>
+      <td class="muted">${esc(t.resourceName || t.resourceId || '—')}</td>
+      <td>${esc(t.id)}</td>
     </tr>`).join('');
 
-    const intelAssets = (intel && intel.assets) || [];
-    const intelRows = intelAssets.slice(0, 80).map((a) => `<tr>
-      <td><strong>${esc(a.unitName)}</strong></td>
-      <td><span class="badge badge-info">${esc(a.assetCategory)}</span></td>
-      <td>${esc(a.filled)} L</td>
-      <td>${esc(a.consumed)} L</td>
-      <td>${esc(a.theft)} L</td>
-      <td>${esc(a.mileage)} km</td>
-      <td>${esc(a.avgConsumption)}</td>
-      <td>${esc(a.efficiencyScore)}</td>
+    const varSummary = variance.summary || {};
+    const varRows = (variance.rows || variance.assets || []).slice(0, 80).map((r) => `<tr>
+      <td>${esc(r.station || r.registration || r.name || r.unitName || '—')}</td>
+      <td>${esc(r.sheetLiters ?? r.stationLiters ?? '—')}</td>
+      <td>${esc(r.telematicsLiters ?? r.flsLiters ?? '—')}</td>
+      <td>${esc(r.variance ?? r.diff ?? '—')}</td>
     </tr>`).join('');
 
-    const eventRows = events.slice(0, 40).map((ev) => `<tr>
-      <td>${fmtDate(ev.timestamp ? ev.timestamp * 1000 : null)}</td>
-      <td><strong>${esc(ev.unitName)}</strong></td>
-      <td><span class="badge ${ev.type === 'fill' ? 'badge-success' : 'badge-danger'}">${esc(ev.type)}</span></td>
-      <td>${esc(ev.volume)} L</td>
-      <td class="muted">${esc(ev.location || '—')}</td>
-    </tr>`).join('');
+    const banner = !live
+      ? integrationBanner('Live fuel levels')
+      : `<div class="banner banner-success">Live tank levels · ledger from harvested fuel reports · ${withFuel} assets with readings</div>`;
 
-    const showLiveTable = tab === 'live' || tab === 'assets' || !!assetFilter;
-    const totals = (intel && intel.totals) || {};
-    const banner = liveFuel.live || assetsRes.live
-      ? `<div class="banner banner-success">Live Wialon fuel · ${summary.withFuel ?? liveUnits.length} with readings · intel from ${esc((intel && intel.source) || 'db')}</div>`
-      : (txs.length > 0
-        ? `<div class="banner banner-info">Showing fuel events for ${esc(data.from || overview.from || '')} – ${esc(data.to || overview.to || '')}.</div>`
-        : integrationBanner('Wialon fuel reports'));
-
-    return `${banner}
-    <div class="kpi-grid">
-      ${kpi('Filled', (totals.filled ?? overview.totalFilled ?? kpis.totalFilled ?? 0) + ' L')}
-      ${kpi('Consumed', (totals.consumed ?? overview.totalConsumed ?? kpis.totalConsumed ?? 0) + ' L')}
-      ${kpi('Theft', (totals.theft ?? 0) + ' L')}
-      ${kpi('Avg L/100km', totals.avgConsumption ?? overview.avgConsumptionL100km ?? kpis.avgConsumptionL100km ?? 0)}
+    const catBody = `<div class="kpi-grid">
+      ${kpi('Assets', catAssets.length)}
+      ${kpi('With fuel reading', withFuel)}
+      ${kpi('Filled (period)', Math.round(filledSum) + ' L')}
+      ${kpi('Used / dispensed', Math.round(usedSum) + ' L')}
     </div>
-    <div class="tab-bar mt-2">
-      <a class="tab ${tab === 'all' ? 'active' : ''}" href="/app/fuel?fuelTab=all">All (${txs.length})</a>
-      <a class="tab ${tab === 'fills' ? 'active' : ''}" href="/app/fuel?fuelTab=fills">Fills (${fills.length})</a>
-      <a class="tab ${tab === 'drains' ? 'active' : ''}" href="/app/fuel?fuelTab=drains">Consumption (${drains.length})</a>
-      <a class="tab ${tab === 'live' ? 'active' : ''}" href="/app/fuel?fuelTab=live">Live (${liveUnits.length})</a>
-      <a class="tab ${tab === 'vehicles' ? 'active' : ''}" href="/app/fuel?fuelTab=vehicles">Vehicles (${summary.vehicles ?? 0})</a>
-      <a class="tab ${tab === 'generators' ? 'active' : ''}" href="/app/fuel?fuelTab=generators">Generators (${summary.generators ?? 0})</a>
-      <a class="tab ${tab === 'machinery' ? 'active' : ''}" href="/app/fuel?fuelTab=machinery">Machinery (${summary.machinery ?? 0})</a>
-      <a class="tab ${tab === 'intel' ? 'active' : ''}" href="/app/fuel?fuelTab=intel">Intelligence (${intelAssets.length})</a>
-      <a class="tab ${tab === 'events' ? 'active' : ''}" href="/app/fuel?fuelTab=events">Events (${events.length})</a>
-      <a class="tab ${tab === 'series' ? 'active' : ''}" href="/app/fuel?fuelTab=series">Level series</a>
-    </div>
-    <div class="actions mt-1">
-      <button type="button" class="btn btn-sm" data-action="fuel-harvest">Harvest fleet fuel (≤20 units)</button>
-    </div>
-    ${tab === 'series' ? `<div class="card mt-2">
-      <div class="card-header"><h3>Fuel level series</h3><span class="muted">Pick a live unit</span></div>
-      <div class="form-grid">
-        <label><span>Unit</span><select class="select" id="fuel-series-unit">
-          ${liveUnits.slice(0, 200).map((u) => `<option value="${esc(u.unitId || u.wialonId || u.id)}">${esc(u.name || u.unitName)}</option>`).join('') || '<option value="">No units</option>'}
-        </select></label>
-        <label><span>Range</span><select class="select" id="fuel-series-range">
-          <option value="86400">Last 24h</option>
-          <option value="259200">Last 3 days</option>
-          <option value="604800" selected>Last 7 days</option>
-        </select></label>
-        <div class="form-grid-action"><button type="button" class="btn" data-action="load-fuel-series">Load series</button></div>
+    ${analytics ? `<div class="card mt-2 branded-panel">
+      <div class="card-header"><h3>Fuel intelligence</h3>
+        <span class="muted">${esc(analytics.from || '')} → ${esc(analytics.to || '')}</span>
+        <button type="button" class="btn btn-sm" data-action="fuel-analytics-warm">Warm ledger</button>
       </div>
-      <div id="fuel-series-root" class="mt-1">${emptyState('📈', 'No series loaded', 'Choose a unit and load the level series.')}</div>
-    </div>` : tab === 'intel' ? `<div class="card mt-2">
-      <div class="card-header"><h3>Fuel intelligence</h3><span class="muted">${esc((intel && intel.from) || '')} → ${esc((intel && intel.to) || '')}</span></div>
-      ${tableWrap(['Asset', 'Type', 'Filled', 'Consumed', 'Theft', 'Mileage', 'L/100km', 'Score'], intelRows, 'No intelligence data — sync fuel transactions or pull a unit report')}
-      ${(intel && intel.daily && intel.daily.length) ? '<div class="chart-box mt-1" style="height:180px"><canvas id="fuel-intel-daily"></canvas></div>' : ''}
-    </div>` : tab === 'events' ? `<div class="card mt-2">
-      <div class="card-header"><h3>Fill / theft events</h3></div>
-      ${tableWrap(['When', 'Asset', 'Type', 'Volume', 'Location'], eventRows, 'No fill/theft events')}
-    </div>` : showLiveTable ? `<div class="card mt-2">
-      <div class="card-header"><h3>${tab === 'live' ? 'Live fuel / battery' : esc(tab) + ' assets'}</h3><span class="badge ${liveFuel.live || assetsRes.live ? 'badge-success' : 'badge-inactive'}">${liveFuel.live || assetsRes.live ? 'Live' : 'Offline'}</span></div>
-      ${tableWrap(['Asset', 'Type', 'Status', 'Fuel %', 'Liters', 'Mileage', 'Battery', 'Report'], liveRows, 'No live fuel levels (link + verify Wialon)')}
-    </div>` : `<div class="grid-main-side mt-2">
+      <div class="kpi-grid">
+        ${kpi('Filled', (ak.totalFilled ?? '—') + ' L')}
+        ${kpi('Consumed', (ak.totalConsumed ?? '—') + ' L')}
+        ${kpi('Drained', (ak.totalDrained ?? '—') + ' L')}
+        ${kpi('Net', (ak.netBalance ?? '—') + ' L')}
+      </div>
+      <div class="grid-2 mt-1">
+        <div>${tableWrap(['Unit', 'Filled', 'Used', 'Events'], topAssets.map((a) => `<tr>
+          <td><button type="button" class="btn btn-ghost btn-sm" data-action="open-fuel-unit" data-id="${esc(a.unitId)}" data-name="${esc(a.unitName)}">${esc(a.unitName)}</button></td>
+          <td>${esc(a.filled)}</td><td>${esc(a.consumed)}</td><td>${esc(a.events)}</td>
+        </tr>`).join(''), 'No asset ledger yet')}</div>
+        <div>${tableWrap(['Anomaly', 'Unit', 'L'], anomalies.map((a) => `<tr>
+          <td>${esc(a.section)}</td><td>${esc(a.unitName)}</td><td>${esc(a.drained || a.filled || a.fuelUsed || '—')}</td>
+        </tr>`).join(''), 'No anomalies')}</div>
+      </div>
+    </div>` : ''}
+    <div class="card mt-2 branded-panel">
+      <div class="card-header"><h3>Live levels</h3>
+        <button type="button" class="btn btn-sm" data-action="fuel-harvest">Re-pull reports</button>
+      </div>
+      ${tableWrap(['Asset', 'Status', 'Fuel %', 'Liters', 'Odo', ''], liveRows, 'No assets in this category — check Wialon link')}
+    </div>
+    <div class="grid-main-side mt-2">
       <div class="card">
-        <div class="card-header"><h3>Fuel events</h3></div>
-        ${tableWrap(['Date', 'Asset', 'Type', 'Volume', 'Location', 'Odo'], rows, 'No fuel transactions yet')}
+        <div class="card-header"><h3>Fill / use ledger</h3><span class="muted">MySQL</span></div>
+        ${tableWrap(['Date', 'Asset', 'Type', 'Volume', 'Location'], txRows, 'No fuel transactions yet — wait for harvest or re-pull reports')}
       </div>
       <div class="card">
         <div class="card-header"><h3>Monthly trend</h3></div>
-        ${tableWrap(['Month', 'Filled', 'Consumed'], trendRows, 'No trend data yet')}
+        ${tableWrap(['Month', 'Filled', 'Consumed'], trend.slice(-8).map((m) => `<tr>
+          <td>${esc(m.month)}</td><td>${esc(m.filled)} L</td><td>${esc(m.consumed)} L</td>
+        </tr>`).join(''), 'No trend data yet')}
         ${trend.some((r) => Number(r.filled) > 0 || Number(r.consumed) > 0) ? '<div class="chart-box mt-1" style="height:180px"><canvas id="fuel-page-trend"></canvas></div>' : ''}
       </div>
-    </div>`}
+    </div>
     <div id="fuel-report-msg" class="mt-1"></div>`;
+
+    return `${banner}
+    <div class="tab-bar mt-2 branded-tabs">
+      <a class="tab ${tab === 'vehicles' ? 'active' : ''}" href="/app/fuel?fuelTab=vehicles">Vehicles (${byCat.vehicle.length || summary.vehicles || 0})</a>
+      <a class="tab ${tab === 'generators' ? 'active' : ''}" href="/app/fuel?fuelTab=generators">Generators (${byCat.generator.length || summary.generators || 0})</a>
+      <a class="tab ${tab === 'machinery' ? 'active' : ''}" href="/app/fuel?fuelTab=machinery">Machinery (${byCat.machinery.length || summary.machinery || 0})</a>
+      <a class="tab ${tab === 'reports' ? 'active' : ''}" href="/app/fuel?fuelTab=reports">Reports</a>
+      <a class="tab ${tab === 'variance' ? 'active' : ''}" href="/app/fuel?fuelTab=variance">Variance</a>
+    </div>
+    ${tab === 'reports' ? `<div class="card mt-2">
+      <div class="card-header"><h3>Fuel report templates</h3><span class="muted">Hosting templates for this account</span></div>
+      ${tableWrap(['Template', 'Resource', 'ID'], tplRows, 'No fuel report templates found on this account')}
+      <p class="muted mt-1">Canonical names: Fuel Report(Group/Unit), Fuel Usage Report(Gensets/Units).</p>
+      <div class="actions mt-1"><button type="button" class="btn btn-sm" data-action="fuel-harvest">Force re-pull (≤20 units)</button></div>
+      <div id="fuel-report-msg" class="mt-1"></div>
+    </div>` : tab === 'variance' ? `<div class="card mt-2">
+      <div class="card-header"><h3>Station variance</h3><span class="muted">FLS fills vs petrol-station sheets${variance.fromDate ? ` · ${esc(variance.fromDate)} → ${esc(variance.toDate)}` : ''}</span></div>
+      ${variance.configured === false
+        ? emptyState('⛽', 'Variance not configured', 'Upload petrol-station sheets in Admin → Tenant → Fuel module.')
+        : `<div class="kpi-grid mt-1">
+            ${kpi('Station L', varSummary.stationLiters ?? '—')}
+            ${kpi('FLS L', varSummary.flsLiters ?? '—')}
+            ${kpi('Variance', varSummary.variance ?? '—')}
+            ${kpi('Assets', varSummary.assets ?? 0)}
+          </div>
+          ${tableWrap(['Station / unit', 'Sheet L', 'FLS L', 'Variance'], varRows, 'No matched variance rows — upload sheets and harvest fuel fills')}`}
+    </div>` : catBody}`;
   }
 
   async function renderWorkshop() {
-    const [kpis, inspections, maintenance, breakdowns, mechanics] = await Promise.all([
+    // Spec tabs: Fleet Overview | Inspections | Maintenance Jobs | Breakdowns | Costing | Reports
+    const params = new URLSearchParams(location.search);
+    let tab = (params.get('wsTab') || 'overview').toLowerCase();
+    if (!['overview', 'inspections', 'maintenance', 'breakdowns', 'costing', 'reports'].includes(tab)) tab = 'overview';
+    const cat = (params.get('cat') || 'vehicle').toLowerCase();
+
+    const [kpis, inspections, maintenance, breakdowns, mechanics, templates] = await Promise.all([
       MamsApi.api('/client/workshop/kpis').catch(() => ({})),
       MamsApi.api('/client/workshop/inspections').catch(() => []),
       MamsApi.api('/client/workshop/maintenance').catch(() => []),
       MamsApi.api('/client/workshop/breakdowns').catch(() => []),
       MamsApi.api('/client/workshop/mechanics').catch(() => []),
+      tab === 'inspections'
+        ? MamsApi.api(`/client/workshop/checklist-templates?assetCategory=${encodeURIComponent(cat)}`).catch(() => [])
+        : Promise.resolve([]),
     ]);
     const insp = Array.isArray(inspections) ? inspections : [];
     const maint = Array.isArray(maintenance) ? maintenance : [];
     const brk = Array.isArray(breakdowns) ? breakdowns : [];
     const mechs = Array.isArray(mechanics) ? mechanics : [];
-    return `<div class="kpi-grid">
+    const tplList = Array.isArray(templates) ? templates : [];
+    const tpl = tplList[0] || null;
+    const sections = (tpl && tpl.sections) || [];
+
+    const tabBar = `<div class="tab-bar branded-tabs">
+      <a class="tab ${tab === 'overview' ? 'active' : ''}" href="/app/workshop?wsTab=overview">Fleet Overview</a>
+      <a class="tab ${tab === 'inspections' ? 'active' : ''}" href="/app/workshop?wsTab=inspections&cat=${esc(cat)}">Inspections</a>
+      <a class="tab ${tab === 'maintenance' ? 'active' : ''}" href="/app/workshop?wsTab=maintenance">Maintenance Jobs</a>
+      <a class="tab ${tab === 'breakdowns' ? 'active' : ''}" href="/app/workshop?wsTab=breakdowns">Breakdowns</a>
+      <a class="tab ${tab === 'costing' ? 'active' : ''}" href="/app/workshop?wsTab=costing">Costing</a>
+      <a class="tab ${tab === 'reports' ? 'active' : ''}" href="/app/workshop?wsTab=reports">Reports</a>
+    </div>`;
+
+    const kpisHtml = `<div class="kpi-grid mt-2">
       ${kpi('Pending maintenance', kpis.pendingMaintenance ?? 0)}
       ${kpi('Completed this month', kpis.completedThisMonth ?? 0)}
       ${kpi('Open breakdowns', kpis.openBreakdowns ?? 0)}
+      ${kpi('Inspections due', kpis.inspectionsDue ?? 0)}
       ${kpi('Mechanics', mechs.length || (kpis.mechanics ?? 0))}
-    </div>
-    <div class="grid-2 mt-2">
-      <div class="card">
-        <div class="card-header"><h3>Log maintenance</h3></div>
-        <form id="maint-form" class="form-stack">
-          <label><span>Vehicle name</span><input class="input" name="vehicleName" required /></label>
-          <label><span>Plate</span><input class="input" name="vehiclePlate" /></label>
-          <label><span>Type</span><select class="select" name="maintenanceType"><option value="service">Service</option><option value="repair">Repair</option><option value="inspection">Inspection follow-up</option></select></label>
-          <label><span>Mechanic</span><input class="input" name="mechanicName" /></label>
-          <label><span>Description</span><textarea class="input" name="description" rows="2" required></textarea></label>
-          <p id="maint-error" class="error" hidden></p>
-          <button type="submit" class="btn">Save maintenance</button>
-        </form>
+    </div>`;
+
+    if (tab === 'reports') {
+      return tabBar + kpisHtml + await moduleReportsHtml('workshop', 'Workshop reports');
+    }
+
+    if (tab === 'costing') {
+      const costs = maint.reduce((s, m) => s + (Number(m.totalCost || m.cost || 0) || 0), 0);
+      const brkCost = brk.reduce((s, b) => s + (Number(b.totalCost || b.repairCost || 0) || 0), 0);
+      return `${tabBar}${kpisHtml}
+      <div class="kpi-grid mt-2">
+        ${kpi('Maintenance cost', 'UGX ' + Math.round(costs).toLocaleString())}
+        ${kpi('Breakdown cost', 'UGX ' + Math.round(brkCost).toLocaleString())}
+        ${kpi('Combined', 'UGX ' + Math.round(costs + brkCost).toLocaleString())}
       </div>
-      <div class="card">
-        <div class="card-header"><h3>Report breakdown</h3></div>
-        <form id="breakdown-form" class="form-stack">
-          <label><span>Vehicle name</span><input class="input" name="vehicleName" required /></label>
-          <label><span>Plate</span><input class="input" name="vehiclePlate" /></label>
-          <label><span>Severity</span><select class="select" name="severity"><option value="minor">Minor</option><option value="major">Major</option><option value="critical">Critical</option></select></label>
-          <label><span>Description</span><textarea class="input" name="description" rows="2" required></textarea></label>
-          <p id="breakdown-error" class="error" hidden></p>
-          <button type="submit" class="btn">Save breakdown</button>
-        </form>
-      </div>
-    </div>
-    <div class="grid-2 mt-2">
-      <div class="card">
-        <div class="card-header"><h3>Recent inspections</h3></div>
-        ${tableWrap(['Asset', 'Result', 'When'], insp.slice(0, 20).map((i) => `<tr>
-          <td>${esc(i.vehicleName || i.assetName || i.vehiclePlate || i.assetId || '—')}</td>
-          <td>${esc(i.overallStatus || i.result || i.status || '—')}</td>
+      <div class="card mt-2">
+        <div class="card-header"><h3>Costing notes</h3></div>
+        <p class="muted">Costs come from maintenance logs and breakdown reports. Add amounts when logging jobs.</p>
+      </div>`;
+    }
+
+    if (tab === 'inspections') {
+      const catBar = `<div class="actions mt-1" style="gap:.5rem;flex-wrap:wrap">
+        ${['vehicle', 'generator', 'machinery'].map((c) =>
+          `<a class="btn btn-sm ${cat === c ? '' : 'btn-ghost'}" href="/app/workshop?wsTab=inspections&cat=${c}">${c[0].toUpperCase() + c.slice(1)}</a>`
+        ).join('')}
+      </div>`;
+      const inspRows = insp.filter((i) => !cat || String(i.assetCategory || 'vehicle').toLowerCase() === cat || !i.assetCategory)
+        .slice(0, 40).map((i) => `<tr>
+          <td>${esc(i.vehicleName || i.assetName || '—')}</td>
+          <td><span class="badge badge-info">${esc(i.assetCategory || 'vehicle')}</span></td>
+          <td>${esc(i.overallStatus || i.result || '—')}</td>
           <td class="muted">${fmtDate(i.inspectionDate || i.inspectedAt || i.createdAt)}</td>
-        </tr>`).join(''), 'No inspections')}
+        </tr>`).join('');
+      return `${tabBar}${kpisHtml}${catBar}
+      <div class="card mt-2 branded-panel">
+        <div class="card-header"><h3>New ${esc(cat)} inspection</h3>
+          <span class="muted">${esc((tpl && tpl.name) || 'checklist')}</span>
+        </div>
+        <form id="inspection-form" class="form-stack" data-category="${esc(cat)}">
+          <input type="hidden" name="assetCategory" value="${esc(cat)}" />
+          <div class="form-grid">
+            <label><span>Asset name</span><input class="input" name="vehicleName" required /></label>
+            <label><span>Plate / ID</span><input class="input" name="vehiclePlate" /></label>
+            <label><span>Inspector</span><input class="input" name="inspectorName" /></label>
+            ${cat === 'generator'
+              ? '<label><span>Engine hours</span><input class="input" type="number" step="0.1" name="engineHours" /></label>'
+              : '<label><span>Odometer</span><input class="input" type="number" step="0.1" name="odometerReading" /></label>'}
+            <label><span>Result</span><select class="select" name="overallStatus">
+              <option value="pass">Pass</option>
+              <option value="needs-attention">Needs attention</option>
+              <option value="fail">Fail</option>
+            </select></label>
+          </div>
+          <p class="muted">${cat === 'generator' ? 'One form · Daily inspection + Monthly preventive maintenance' : 'Complete checklist items below'}</p>
+          <div id="inspection-checklist">${workshopSectionHtml(sections)}</div>
+          <label><span>Notes</span><textarea class="input" name="notes" rows="2"></textarea></label>
+          <p id="inspection-error" class="error" hidden></p>
+          <button type="submit" class="btn">Save inspection</button>
+        </form>
       </div>
-      <div class="card">
-        <div class="card-header"><h3>Breakdowns</h3></div>
-        ${tableWrap(['Asset', 'Status', 'When'], brk.slice(0, 20).map((b) => `<tr>
-          <td>${esc(b.vehicleName || b.assetName || b.vehiclePlate || b.assetId || '—')}</td>
-          <td>${statusBadge(b.resolutionTime ? 'resolved' : (b.status || 'open'))}</td>
-          <td class="muted">${fmtDate(b.breakdownTime || b.reportedAt || b.createdAt)}</td>
-        </tr>`).join(''), 'No breakdowns')}
+      <div class="card mt-2">
+        <div class="card-header"><h3>Recent inspections</h3></div>
+        ${tableWrap(['Asset', 'Category', 'Result', 'When'], inspRows, 'No inspections yet')}
+      </div>`;
+    }
+
+    if (tab === 'maintenance') {
+      return `${tabBar}${kpisHtml}
+      <div class="grid-2 mt-2">
+        <div class="card">
+          <div class="card-header"><h3>Log maintenance</h3></div>
+          <form id="maint-form" class="form-stack">
+            <label><span>Asset name</span><input class="input" name="vehicleName" required /></label>
+            <label><span>Plate</span><input class="input" name="vehiclePlate" /></label>
+            <label><span>Category</span><select class="select" name="assetCategory"><option value="vehicle">Vehicle</option><option value="generator">Generator</option><option value="machinery">Machinery</option></select></label>
+            <label><span>Type</span><select class="select" name="maintenanceType"><option value="service">Service</option><option value="repair">Repair</option><option value="inspection">Inspection follow-up</option></select></label>
+            <label><span>Mechanic</span><input class="input" name="mechanicName" /></label>
+            <label><span>Cost</span><input class="input" type="number" step="0.01" name="totalCost" /></label>
+            <label><span>Description</span><textarea class="input" name="description" rows="2" required></textarea></label>
+            <p id="maint-error" class="error" hidden></p>
+            <button type="submit" class="btn">Save maintenance</button>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Mechanics</h3></div>
+          ${tableWrap(['Name', 'Phone', 'Status'], mechs.slice(0, 40).map((m) => `<tr>
+            <td><strong>${esc(m.fullName || m.name || '—')}</strong></td>
+            <td>${esc(m.phone || '—')}</td>
+            <td>${statusBadge(m.isActive === false ? 'inactive' : 'active')}</td>
+          </tr>`).join(''), 'No mechanics listed')}
+        </div>
       </div>
-    </div>
-    <div class="grid-2 mt-2">
-      <div class="card">
-        <div class="card-header"><h3>Maintenance logs</h3></div>
+      <div class="card mt-2">
+        <div class="card-header"><h3>Maintenance jobs</h3></div>
         ${tableWrap(['Asset', 'Type', 'Status', 'When'], maint.slice(0, 40).map((m) => `<tr>
-          <td>${esc(m.vehicleName || m.assetName || m.vehiclePlate || m.assetId || '—')}</td>
-          <td>${esc(m.maintenanceType || m.type || m.title || '—')}</td>
+          <td>${esc(m.vehicleName || m.assetName || '—')}</td>
+          <td>${esc(m.maintenanceType || m.type || '—')}</td>
           <td>${statusBadge(m.status || '—')}</td>
           <td class="muted">${fmtDate(m.startDate || m.scheduledAt || m.createdAt)}</td>
         </tr>`).join(''), 'No maintenance logs')}
+      </div>`;
+    }
+
+    if (tab === 'breakdowns') {
+      return `${tabBar}${kpisHtml}
+      <div class="grid-2 mt-2">
+        <div class="card">
+          <div class="card-header"><h3>Report breakdown</h3></div>
+          <form id="breakdown-form" class="form-stack">
+            <label><span>Asset name</span><input class="input" name="vehicleName" required /></label>
+            <label><span>Plate</span><input class="input" name="vehiclePlate" /></label>
+            <label><span>Severity</span><select class="select" name="severity"><option value="minor">Minor</option><option value="major">Major</option><option value="critical">Critical</option></select></label>
+            <label><span>Description</span><textarea class="input" name="description" rows="2" required></textarea></label>
+            <p id="breakdown-error" class="error" hidden></p>
+            <button type="submit" class="btn">Save breakdown</button>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Open breakdowns</h3></div>
+          ${tableWrap(['Asset', 'Status', 'When'], brk.slice(0, 40).map((b) => `<tr>
+            <td>${esc(b.vehicleName || b.assetName || '—')}</td>
+            <td>${statusBadge(b.resolutionTime ? 'resolved' : (b.status || 'open'))}</td>
+            <td class="muted">${fmtDate(b.breakdownTime || b.reportedAt || b.createdAt)}</td>
+          </tr>`).join(''), 'No breakdowns')}
+        </div>
+      </div>`;
+    }
+
+    // Overview
+    return `${tabBar}${kpisHtml}
+    <div class="grid-2 mt-2">
+      <div class="card branded-panel">
+        <div class="card-header"><h3>Fleet maintenance</h3></div>
+        ${tableWrap(['Asset', 'Type', 'Status', 'When'], maint.slice(0, 25).map((m) => `<tr>
+          <td>${esc(m.vehicleName || m.assetName || '—')}</td>
+          <td>${esc(m.maintenanceType || m.type || '—')}</td>
+          <td>${statusBadge(m.status || '—')}</td>
+          <td class="muted">${fmtDate(m.startDate || m.createdAt)}</td>
+        </tr>`).join(''), 'No maintenance jobs')}
       </div>
       <div class="card">
-        <div class="card-header"><h3>Mechanics</h3></div>
-        ${tableWrap(['Name', 'Phone', 'Status'], mechs.slice(0, 40).map((m) => `<tr>
-          <td><strong>${esc(m.fullName || m.name || '—')}</strong></td>
-          <td>${esc(m.phone || '—')}</td>
-          <td>${statusBadge(m.isActive === false ? 'inactive' : 'active')}</td>
-        </tr>`).join(''), 'No mechanics listed')}
+        <div class="card-header"><h3>Recent inspections</h3></div>
+        ${tableWrap(['Asset', 'Result', 'When'], insp.slice(0, 25).map((i) => `<tr>
+          <td>${esc(i.vehicleName || i.assetName || '—')}</td>
+          <td>${esc(i.overallStatus || '—')}</td>
+          <td class="muted">${fmtDate(i.inspectionDate || i.createdAt)}</td>
+        </tr>`).join(''), 'No inspections')}
       </div>
     </div>`;
   }
 
   async function renderAlerts() {
-    const [alerts, wialonNf] = await Promise.all([
-      MamsApi.api('/client/alerts'),
-      MamsApi.api('/client/wialon/notifications').catch(() => ({ notifications: [] })),
+    // Spec tabs: Inbox · Alert types · Reports (never bury types under inbox)
+    const params = new URLSearchParams(location.search);
+    let tab = (params.get('alertTab') || 'inbox').toLowerCase();
+    if (!['inbox', 'types', 'reports'].includes(tab)) tab = 'inbox';
+    const cat = (params.get('cat') || 'all').toLowerCase();
+    const status = (params.get('status') || 'all').toLowerCase();
+    const period = (params.get('period') || '7d').toLowerCase();
+
+    const now = Date.now();
+    const periodMs = period === 'today' ? 86400000
+      : period === '14d' ? 14 * 86400000
+      : period === '30d' ? 30 * 86400000
+      : 7 * 86400000;
+    const fromIso = new Date(now - periodMs).toISOString();
+
+    const [alerts, wialonNf, templates] = await Promise.all([
+      MamsApi.api(`/client/alerts?from=${encodeURIComponent(fromIso)}&limit=500`).catch(() => []),
+      tab === 'types' || tab === 'inbox'
+        ? MamsApi.api('/client/wialon/notifications').catch(() => ({ notifications: [] }))
+        : Promise.resolve({ notifications: [] }),
+      tab === 'reports'
+        ? MamsApi.api('/client/wialon/reports/templates').catch(() => ({ templates: [] }))
+        : Promise.resolve({ templates: [] }),
     ]);
     const list = Array.isArray(alerts) ? alerts : alerts.alerts || [];
     const nfList = wialonNf.notifications || [];
-    const params = new URLSearchParams(location.search);
-    const sev = (params.get('sev') || 'all').toLowerCase();
-    const filtered = sev === 'all' ? list : list.filter((a) => {
-      const s = String(a.severity || '').toLowerCase();
-      if (sev === 'critical') return s === 'critical' || s === 'emergency';
-      return s === sev;
+
+    let filtered = list.filter((a) => {
+      const ts = new Date(a.timestamp || a.occurredAt || 0).getTime();
+      if (period === 'today') {
+        const start = new Date(); start.setHours(0, 0, 0, 0);
+        if (ts < start.getTime()) return false;
+      } else if (ts && ts < now - periodMs) return false;
+      if (status === 'open' && a.acknowledged) return false;
+      if (status === 'ack' && !a.acknowledged) return false;
+      if (cat !== 'all' && fuelAlertCategory(a.type || a.title) !== cat) return false;
+      return true;
     });
+
     const openIds = filtered.filter((a) => !a.acknowledged).map((a) => a.id);
+    const open = list.filter((a) => !a.acknowledged).length;
+    const openCrit = list.filter((a) => !a.acknowledged && ['critical', 'emergency'].includes(String(a.severity || '').toLowerCase())).length;
+    const openWarn = list.filter((a) => !a.acknowledged && String(a.severity || '').toLowerCase() === 'warning').length;
 
     const rows = filtered.slice(0, 150).map((a) => `<tr>
-      <td>${severityBadge(a.severity)}</td>
-      <td>${esc(a.type)}</td>
-      <td><strong>${esc(a.title)}</strong>${a.description ? `<br><span class="muted">${esc(a.description)}</span>` : ''}</td>
-      <td>${a.acknowledged ? '<span class="badge badge-success">Ack</span>' : '<span class="badge badge-warning">Open</span>'}</td>
+      <td><strong>${esc(a.title)}</strong>${a.unitName || a.assetName ? `<div class="muted">${esc(a.unitName || a.assetName)}</div>` : ''}</td>
+      <td>${severityBadge(a.severity)} <span class="badge badge-info">${esc(a.type || '—')}</span></td>
+      <td class="muted">${esc(a.sourceType || a.source || 'harvest')}</td>
+      <td>${a.description ? esc(a.description) : '—'}</td>
       <td class="muted">${fmtDate(a.timestamp || a.occurredAt)}</td>
-      <td>${a.acknowledged ? '—' : `<button class="btn btn-sm" data-action="ack-alert" data-id="${esc(a.id)}">Acknowledge</button>`}</td>
+      <td>${a.acknowledged
+        ? '<span class="badge badge-success">Ack</span>'
+        : `<button class="btn btn-sm" data-action="ack-alert" data-id="${esc(a.id)}">Ack</button>`}</td>
     </tr>`).join('');
 
-    const nfRows = nfList.slice(0, 80).map((n) => `<tr>
-      <td><strong>${esc(n.name)}</strong><div class="muted">${esc(n.resourceName || '')}</div></td>
-      <td>${n.active ? '<span class="badge badge-success">Active</span>' : '<span class="badge badge-inactive">Off</span>'}</td>
-      <td>${esc(n.controlType || '—')}</td>
+    const nfRows = nfList.slice(0, 120).map((n) => `<tr>
+      <td><strong>${esc(n.name)}</strong></td>
+      <td class="muted">${esc(n.resourceName || '—')}</td>
       <td>${esc(n.unitCount ?? '—')}</td>
       <td>${esc(n.triggers ?? '—')}</td>
+      <td>${n.active ? '<span class="badge badge-success">Active</span>' : '<span class="badge badge-inactive">Inactive</span>'}</td>
     </tr>`).join('');
 
-    const open = list.filter((a) => !a.acknowledged).length;
-    const critical = list.filter((a) => ['critical', 'emergency'].includes(String(a.severity || '').toLowerCase())).length;
-    return `<div class="kpi-grid">
-      ${kpi('Total', list.length)}
-      ${kpi('Open', open)}
-      ${kpi('Critical', critical)}
-      ${kpi('Wialon rules', nfList.length)}
-    </div>
-    <div class="tab-bar mt-2">
-      <a class="tab ${sev === 'all' ? 'active' : ''}" href="/app/alerts?sev=all">All</a>
-      <a class="tab ${sev === 'critical' ? 'active' : ''}" href="/app/alerts?sev=critical">Critical</a>
-      <a class="tab ${sev === 'warning' ? 'active' : ''}" href="/app/alerts?sev=warning">Warning</a>
-      <a class="tab ${sev === 'info' ? 'active' : ''}" href="/app/alerts?sev=info">Info</a>
-    </div>
-    <div class="card mt-2">
-      <div class="card-header">
-        <h3>Alert inbox</h3>
-        ${openIds.length ? `<button type="button" class="btn btn-sm" data-action="ack-alerts-bulk" data-ids="${esc(openIds.slice(0, 50).join(','))}">Ack open (${Math.min(openIds.length, 50)})</button>` : ''}
+    const alertTpl = (templates.templates || templates || []).filter((t) =>
+      /alert|event|notif|eco|safety/i.test(String(t.name || t.n || ''))
+    );
+    const reportRows = alertTpl.slice(0, 40).map((t) => `<tr>
+      <td><strong>${esc(t.name || t.n)}</strong></td>
+      <td class="muted">${esc(t.resourceName || '—')}</td>
+      <td>${esc(t.id)}</td>
+    </tr>`).join('');
+
+    const cats = ['all', 'fuel', 'power', 'driving', 'geofence', 'engine', 'sensors', 'other'];
+    const tabBar = `<div class="tab-bar mt-2 branded-tabs">
+      <a class="tab ${tab === 'inbox' ? 'active' : ''}" href="/app/alerts?alertTab=inbox">Inbox</a>
+      <a class="tab ${tab === 'types' ? 'active' : ''}" href="/app/alerts?alertTab=types">Alert types</a>
+      <a class="tab ${tab === 'reports' ? 'active' : ''}" href="/app/alerts?alertTab=reports">Reports</a>
+    </div>`;
+
+    if (tab === 'types') {
+      const active = nfList.filter((n) => n.active).length;
+      return `${tabBar}
+      <div class="kpi-grid mt-2">
+        ${kpi('Total types', nfList.length)}
+        ${kpi('Active', active)}
+        ${kpi('Inactive', nfList.length - active)}
       </div>
-      ${tableWrap(['Severity', 'Type', 'Message', 'Status', 'When', 'Actions'], rows, 'No alerts')}
+      <div class="card mt-2 branded-panel">
+        <div class="card-header"><h3>Configured alert types</h3>
+          <button type="button" class="btn btn-sm" data-action="refresh-page">Refresh</button>
+        </div>
+        ${tableWrap(['Alert type', 'Account / resource', 'Units', 'Times triggered', 'Status'], nfRows,
+          'No notification rules — link the client account and ensure Hosting notifications exist')}
+      </div>`;
+    }
+
+    if (tab === 'reports') {
+      return `${tabBar}
+      <div class="card mt-2">
+        <div class="card-header"><h3>Alert / event report templates</h3></div>
+        ${tableWrap(['Template', 'Resource', 'ID'], reportRows, 'No matching report templates')}
+      </div>`;
+    }
+
+    return `${tabBar}
+    <div class="kpi-grid mt-2">
+      ${kpi('Open', open)}
+      ${kpi('Open critical', openCrit)}
+      ${kpi('Open warnings', openWarn)}
+      ${kpi('In period', filtered.length)}
     </div>
-    <div class="card mt-2">
-      <div class="card-header"><h3>Wialon notification rules</h3><span class="muted">${nfList.length}</span></div>
-      ${tableWrap(['Rule', 'Status', 'Control', 'Units', 'Triggers'], nfRows, 'No Wialon notification rules (link + verify Wialon)')}
+    <div class="actions mt-1" style="flex-wrap:wrap;gap:.5rem">
+      ${['today', '7d', '14d', '30d'].map((p) =>
+        `<a class="btn btn-sm ${period === p ? '' : 'btn-ghost'}" href="/app/alerts?alertTab=inbox&period=${p}&cat=${esc(cat)}&status=${esc(status)}">${p === 'today' ? 'Today' : p}</a>`
+      ).join('')}
+      <span class="muted">·</span>
+      ${cats.map((c) =>
+        `<a class="btn btn-sm ${cat === c ? '' : 'btn-ghost'}" href="/app/alerts?alertTab=inbox&period=${esc(period)}&cat=${c}&status=${esc(status)}">${c[0].toUpperCase() + c.slice(1)}</a>`
+      ).join('')}
+      <span class="muted">·</span>
+      ${['all', 'open', 'ack'].map((s) =>
+        `<a class="btn btn-sm ${status === s ? '' : 'btn-ghost'}" href="/app/alerts?alertTab=inbox&period=${esc(period)}&cat=${esc(cat)}&status=${s}">${s === 'ack' ? 'Acknowledged' : s[0].toUpperCase() + s.slice(1)}</a>`
+      ).join('')}
+      ${openIds.length ? `<button type="button" class="btn btn-sm" data-action="ack-alerts-bulk" data-ids="${esc(openIds.slice(0, 50).join(','))}">Ack open (${Math.min(openIds.length, 50)})</button>` : ''}
+      <button type="button" class="btn btn-sm btn-ghost" data-action="alerts-sync">Sync now</button>
+    </div>
+    <div class="card mt-2 branded-panel">
+      <div class="card-header"><h3>Inbox</h3><span class="muted">MySQL · harvested events</span></div>
+      ${tableWrap(['Title · unit', 'Type', 'Source', 'Description', 'When', ''], rows,
+        'No alerts in inbox — harvest runs every minute once Wialon is linked')}
     </div>`;
   }
 
   async function renderDrivers() {
+    const params = new URLSearchParams(location.search);
+    let tab = (params.get('tab') || 'roster').toLowerCase();
+    if (!['roster', 'reports'].includes(tab)) tab = 'roster';
+    const tabBar = `<div class="tab-bar branded-tabs">
+      <a class="tab ${tab === 'roster' ? 'active' : ''}" href="/app/drivers?tab=roster">Roster</a>
+      <a class="tab ${tab === 'reports' ? 'active' : ''}" href="/app/drivers?tab=reports">Reports</a>
+    </div>`;
+    if (tab === 'reports') {
+      return tabBar + await moduleReportsHtml('drivers', 'Drivers reports');
+    }
+
     const [drivers, stats] = await Promise.all([
       MamsApi.api('/client/drivers').catch(() => []),
       MamsApi.api('/client/drivers/stats').catch(() => ({})),
@@ -1227,7 +1668,8 @@
       <td><button class="btn btn-sm btn-ghost" data-action="delete-driver" data-id="${esc(d.id)}">Delete</button></td>
     </tr>`).join('');
 
-    return `<div class="kpi-grid">
+    return `${tabBar}
+    <div class="kpi-grid mt-2">
       ${kpi('Total', stats.total ?? list.length)}
       ${kpi('Available', stats.available ?? 0)}
       ${kpi('Driving', stats.driving ?? 0)}
@@ -1255,6 +1697,17 @@
   }
 
   async function renderRoutes() {
+    const params = new URLSearchParams(location.search);
+    let tab = (params.get('tab') || 'routes').toLowerCase();
+    if (!['routes', 'reports'].includes(tab)) tab = 'routes';
+    const tabBar = `<div class="tab-bar branded-tabs">
+      <a class="tab ${tab === 'routes' ? 'active' : ''}" href="/app/routes?tab=routes">Routes</a>
+      <a class="tab ${tab === 'reports' ? 'active' : ''}" href="/app/routes?tab=reports">Reports</a>
+    </div>`;
+    if (tab === 'reports') {
+      return tabBar + await moduleReportsHtml('routes', 'Routes reports');
+    }
+
     const [routes, stats, trips, wialonRoutes] = await Promise.all([
       MamsApi.api('/client/routes').catch(() => []),
       MamsApi.api('/client/routes/stats').catch(() => ({})),
@@ -1286,7 +1739,7 @@
       <td>${t.mileage != null ? esc(t.mileage) + ' km' : '—'}</td>
     </tr>`).join('');
 
-    return `<div class="kpi-grid">
+    return `${tabBar}<div class="kpi-grid mt-2">
       ${kpi('Total routes', stats.total ?? list.length)}
       ${kpi('Scheduled', stats.scheduled ?? 0)}
       ${kpi('In progress', stats.inProgress ?? 0)}
@@ -1307,6 +1760,17 @@
   }
 
   async function renderGeofencing() {
+    const params = new URLSearchParams(location.search);
+    let tab = (params.get('tab') || 'zones').toLowerCase();
+    if (!['zones', 'reports'].includes(tab)) tab = 'zones';
+    const tabBar = `<div class="tab-bar branded-tabs">
+      <a class="tab ${tab === 'zones' ? 'active' : ''}" href="/app/geofencing?tab=zones">Zones</a>
+      <a class="tab ${tab === 'reports' ? 'active' : ''}" href="/app/geofencing?tab=reports">Reports</a>
+    </div>`;
+    if (tab === 'reports') {
+      return tabBar + await moduleReportsHtml('geofencing', 'Geofencing reports');
+    }
+
     const [geofences, liveZones] = await Promise.all([
       MamsApi.api('/client/geofences').catch(() => []),
       MamsApi.api('/client/wialon/geofences').catch(() => ({ geofences: [] })),
@@ -1327,7 +1791,7 @@
       <td class="muted">${g.center ? `${Number(g.center.lat).toFixed(4)}, ${Number(g.center.lng).toFixed(4)}` : '—'}</td>
     </tr>`).join('');
 
-    return `<div class="card">
+    return `${tabBar}<div class="card">
       <div class="card-header"><h3>New geofence</h3></div>
       <form id="geofence-form" class="form-grid">
         <label><span>Name</span><input class="input" name="name" required /></label>
@@ -1352,6 +1816,17 @@
   }
 
   async function renderEmissions() {
+    const params = new URLSearchParams(location.search);
+    let tab = (params.get('tab') || 'overview').toLowerCase();
+    if (!['overview', 'reports'].includes(tab)) tab = 'overview';
+    const tabBar = `<div class="tab-bar branded-tabs">
+      <a class="tab ${tab === 'overview' ? 'active' : ''}" href="/app/emissions?tab=overview">Overview</a>
+      <a class="tab ${tab === 'reports' ? 'active' : ''}" href="/app/emissions?tab=reports">Reports</a>
+    </div>`;
+    if (tab === 'reports') {
+      return tabBar + await moduleReportsHtml('emissions', 'Overview reports');
+    }
+
     const [metrics, violations] = await Promise.all([
       MamsApi.api('/client/emissions/metrics').catch(() => ({})),
       MamsApi.api('/client/emissions/violations').catch(() => []),
@@ -1363,7 +1838,7 @@
       <td>${esc(v.severity || '—')}</td>
       <td class="muted">${fmtDate(v.occurredAt || v.createdAt)}</td>
     </tr>`).join('');
-    return `<div class="kpi-grid">
+    return `${tabBar}<div class="kpi-grid">
       ${kpi('CO₂ estimate', metrics.co2Kg != null ? metrics.co2Kg + ' kg' : '—')}
       ${kpi('Fuel (L)', metrics.totalFuelLiters ?? '—')}
       ${kpi('Mileage (km)', metrics.totalMileageKm ?? '—')}
@@ -1376,6 +1851,17 @@
   }
 
   async function renderCommands() {
+    const params = new URLSearchParams(location.search);
+    let tab = (params.get('tab') || 'commands').toLowerCase();
+    if (!['commands', 'reports'].includes(tab)) tab = 'commands';
+    const tabBar = `<div class="tab-bar branded-tabs">
+      <a class="tab ${tab === 'commands' ? 'active' : ''}" href="/app/commands?tab=commands">Commands</a>
+      <a class="tab ${tab === 'reports' ? 'active' : ''}" href="/app/commands?tab=reports">Reports</a>
+    </div>`;
+    if (tab === 'reports') {
+      return tabBar + await moduleReportsHtml('commands', 'Commands reports');
+    }
+
     const [assets, history, snap] = await Promise.all([
       MamsApi.api('/client/assets').catch(() => []),
       MamsApi.api('/client/commands/history').catch(() => []),
@@ -1393,7 +1879,7 @@
       const wialonSrc = (a.sources || []).find((s) => (s.type || s) === 'wialon');
       const wialonId = wialonSrc?.id || a.wialonId || '';
       const live = byWialon[String(wialonId)] || null;
-      return `<tr>
+      return `${tabBar}<tr>
       <td><strong>${esc(a.name)}</strong></td>
       <td>${esc(a.registrationPlate || '—')}</td>
       <td>${live ? statusBadge(live.status) : '—'}</td>
@@ -1422,23 +1908,200 @@
   }
 
   async function renderSurveillance() {
-    const data = await MamsApi.api('/client/surveillance/units').catch(() => ({ units: [], streaming: false }));
+    const params = new URLSearchParams(location.search);
+    let tab = (params.get('tab') || 'cameras').toLowerCase();
+    const tabs = ['cameras', 'live', 'playback', 'files', 'commands', 'events', 'reports'];
+    if (!tabs.includes(tab)) tab = 'cameras';
+    const unitIdParam = params.get('unitId') || params.get('unit') || '';
+
+    const tabBar = `<div class="tab-bar branded-tabs">
+      <a class="tab ${tab === 'cameras' ? 'active' : ''}" href="/app/surveillance?tab=cameras${unitIdParam ? '&unitId=' + encodeURIComponent(unitIdParam) : ''}">Cameras</a>
+      <a class="tab ${tab === 'live' ? 'active' : ''}" href="/app/surveillance?tab=live${unitIdParam ? '&unitId=' + encodeURIComponent(unitIdParam) : ''}">Live</a>
+      <a class="tab ${tab === 'playback' ? 'active' : ''}" href="/app/surveillance?tab=playback${unitIdParam ? '&unitId=' + encodeURIComponent(unitIdParam) : ''}">Playback</a>
+      <a class="tab ${tab === 'files' ? 'active' : ''}" href="/app/surveillance?tab=files${unitIdParam ? '&unitId=' + encodeURIComponent(unitIdParam) : ''}">Files</a>
+      <a class="tab ${tab === 'commands' ? 'active' : ''}" href="/app/surveillance?tab=commands${unitIdParam ? '&unitId=' + encodeURIComponent(unitIdParam) : ''}">Commands</a>
+      <a class="tab ${tab === 'events' ? 'active' : ''}" href="/app/surveillance?tab=events${unitIdParam ? '&unitId=' + encodeURIComponent(unitIdParam) : ''}">Events</a>
+      <a class="tab ${tab === 'reports' ? 'active' : ''}" href="/app/surveillance?tab=reports${unitIdParam ? '&unitId=' + encodeURIComponent(unitIdParam) : ''}">Reports</a>
+    </div>`;
+
+    if (tab === 'reports') {
+      return tabBar + await moduleReportsHtml('surveillance', 'Cameras reports');
+    }
+
+    const [data, streamsRes] = await Promise.all([
+      MamsApi.api('/client/surveillance/units').catch(() => ({ units: [], streaming: false })),
+      tab === 'cameras' ? MamsApi.api('/client/surveillance/streams').catch(() => ({ streams: [] })) : Promise.resolve({ streams: [] }),
+    ]);
     const list = data.units || [];
-    const rows = list.map((u) => {
-      const id = u.wialonId || u.id;
+    const selectedId = unitIdParam || String((list[0] && (list[0].wialonId || list[0].id)) || '');
+    const selected = list.find((u) => String(u.wialonId || u.id) === String(selectedId)) || list[0] || null;
+    const selId = selected ? String(selected.wialonId || selected.id) : '';
+
+    const unitPicker = `<div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:end;margin:8px 0">
+      <label style="flex:1;min-width:200px"><span class="muted">Video unit</span>
+        <select class="select" id="surv-unit-select" data-action="surv-change-unit">
+          ${list.map((u) => {
+            const id = String(u.wialonId || u.id);
+            return `<option value="${esc(id)}" ${id === selId ? 'selected' : ''}>${esc(u.name)}${u.plate ? ' · ' + esc(u.plate) : ''}</option>`;
+          }).join('') || '<option value="">No video units</option>'}
+        </select>
+      </label>
+    </div>`;
+
+    let panel = '';
+    if (!selected) {
+      panel = emptyState('📹', 'No camera-capable units', data.message || 'Link Wialon and ensure MDVR units are online.');
+    } else if (tab === 'cameras') {
+      const cams = selected.cameras || [];
+      const camRows = cams.map((c) => `<tr>
+        <td><strong>${esc(c.name || ('Cam ' + c.channel))}</strong></td>
+        <td>${esc(c.channel ?? c.index ?? '—')}</td>
+        <td><span class="badge ${c.active !== false ? 'badge-success' : 'badge-inactive'}">${c.active !== false ? 'Active' : 'Off'}</span></td>
+        <td><a class="btn btn-sm" href="/app/surveillance?tab=live&unitId=${encodeURIComponent(selId)}&ch=${encodeURIComponent(c.channel || 1)}">Go Live</a></td>
+      </tr>`).join('');
+      const streams = streamsRes.streams || [];
+      const streamRows = streams.map((s) => `<tr>
+        <td>${esc(s.name)}</td><td class="muted">${esc(s.protocol || '—')}</td>
+        <td>${s.isActive ? statusBadge('moving') : '—'}</td>
+      </tr>`).join('');
+      panel = `<div class="card branded-panel">
+        <div class="card-header"><h3>${esc(selected.name)}</h3><span class="muted">${cams.length} cameras</span></div>
+        ${tableWrap(['Camera', 'Channel', 'Status', ''], camRows, 'No cameras on this unit')}
+      </div>
+      ${streams.length ? `<div class="card mt-2"><div class="card-header"><h3>External streams</h3></div>
+        ${tableWrap(['Name', 'Protocol', 'Status'], streamRows, 'None')}
+      </div>` : ''}`;
+    } else if (tab === 'live') {
+      const cams = selected.cameras || [];
+      const ch = params.get('ch') || (cams[0] && (cams[0].channel || 1)) || 1;
+      const camBtns = cams.map((c) =>
+        `<button type="button" class="btn btn-sm ${(String(c.channel) === String(ch)) ? '' : 'btn-ghost'}" data-action="start-live-stream" data-unit="${esc(selId)}" data-channel="${esc(c.channel)}" data-name="${esc(selected.name)}">${esc(c.name || ('Cam ' + c.channel))}</button>`
+      ).join(' ');
+      panel = `<div class="card branded-panel">
+        <div class="card-header"><h3>Live · ${esc(selected.name)}</h3></div>
+        <div class="actions" style="flex-wrap:wrap;gap:6px">${camBtns || '<span class="muted">No cameras</span>'}</div>
+        <div id="surveillance-video-wrap" class="mt-1">
+          <video id="surveillance-video" controls playsinline style="width:100%;max-height:420px;background:#111;border-radius:8px"></video>
+          <p id="surveillance-stream-msg" class="muted mt-1">Select a camera to start HLS live playback.</p>
+        </div>
+      </div>`;
+    } else if (tab === 'playback') {
+      const now = new Date();
+      const from = new Date(now.getTime() - 3600000);
+      const toLocal = (d) => {
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      };
+      panel = `<div class="card branded-panel">
+        <div class="card-header"><h3>Playback · ${esc(selected.name)}</h3></div>
+        <p class="muted">Request historical video on the device (MDVR playback command), then open Files for clips.</p>
+        <div class="form-row" style="gap:8px;flex-wrap:wrap;align-items:end">
+          <label><span class="muted">From</span><input class="input" type="datetime-local" id="surv-pb-from" value="${toLocal(from)}" /></label>
+          <label><span class="muted">To</span><input class="input" type="datetime-local" id="surv-pb-to" value="${toLocal(now)}" /></label>
+          <label><span class="muted">Camera</span>
+            <select class="select" id="surv-pb-cam">
+              ${(selected.cameras || [{ channel: 1, name: 'Cam 1' }]).map((c) =>
+                `<option value="${esc(c.channel || 1)}">${esc(c.name || ('Cam ' + c.channel))}</option>`
+              ).join('')}
+            </select>
+          </label>
+          <button type="button" class="btn" data-action="surv-request-playback" data-unit="${esc(selId)}">Request playback</button>
+        </div>
+        <div id="surv-playback-msg" class="mt-1"></div>
+        <div id="surveillance-video-wrap" class="mt-1">
+          <video id="surveillance-video" controls playsinline style="width:100%;max-height:360px;background:#111;border-radius:8px"></video>
+        </div>
+      </div>`;
+    } else if (tab === 'files') {
+      let files = [];
+      try {
+        const filesRes = await MamsApi.api(`/client/surveillance/units/${encodeURIComponent(selId)}/files`);
+        files = filesRes.files || [];
+      } catch (_) { files = []; }
+      const fileRows = files.slice(0, 60).map((f) => {
+        const playAttrs = f.source === 'message' && f.messageId
+          ? `data-action="play-video-file" data-unit="${esc(selId)}" data-mid="${esc(f.messageId)}" data-source="message"`
+          : f.path
+            ? `data-action="play-video-file" data-unit="${esc(selId)}" data-path="${esc(f.path)}" data-storage="${esc(f.storageType || 2)}" data-source="storage"`
+            : '';
+        return `<tr>
+          <td><strong>${esc(f.name)}</strong><div class="muted">${esc(f.source || '')}</div></td>
+          <td class="muted">${f.occurredAt ? fmtDate(f.occurredAt) : '—'}</td>
+          <td>${f.sizeBytes ? esc(Math.round(f.sizeBytes / 1024)) + ' KB' : '—'}</td>
+          <td>${playAttrs ? `<button type="button" class="btn btn-sm" ${playAttrs}>Play</button>
+            <button type="button" class="btn btn-sm btn-ghost" data-action="share-video-clip" data-unit="${esc(selId)}" ${f.messageId ? `data-mid="${esc(f.messageId)}"` : ''} ${f.path ? `data-path="${esc(f.path)}" data-storage="${esc(f.storageType || 2)}"` : ''} data-name="${esc(f.name || '')}">Share</button>` : '—'}</td>
+        </tr>`;
+      }).join('');
+      panel = `<div class="card branded-panel">
+        <div class="card-header"><h3>Archive files · ${esc(selected.name)}</h3><span class="muted">${files.length}</span></div>
+        <div id="surveillance-video-wrap" class="mt-1">
+          <video id="surveillance-video" controls playsinline style="width:100%;max-height:320px;background:#111;border-radius:8px"></video>
+          <p id="surveillance-stream-msg" class="muted mt-1">Pick a file to play.</p>
+        </div>
+        ${tableWrap(['File', 'When', 'Size', ''], fileRows, 'No archived clips in the last 30 days')}
+      </div>`;
+    } else if (tab === 'commands') {
+      let cmds = [];
+      try {
+        const cmdRes = await MamsApi.api(`/client/wialon/units/${encodeURIComponent(selId)}/commands`);
+        cmds = cmdRes.commands || [];
+      } catch (_) { cmds = []; }
+      const videoCmds = cmds.filter((c) => /video|live|stream|playback|camera|qlv|qpb|mdvr/i.test(
+        `${c.name || ''} ${c.label || ''} ${c.type || ''}`
+      ));
+      const show = videoCmds.length ? videoCmds : cmds;
+      const cmdRows = show.slice(0, 40).map((c) => `<tr>
+        <td><strong>${esc(c.label || c.name)}</strong><div class="muted">${esc(c.name)}</div></td>
+        <td class="muted">${esc(c.type || c.linkType || '—')}</td>
+        <td><button type="button" class="btn btn-sm" data-action="surv-send-command" data-unit="${esc(selId)}" data-cmd="${esc(c.name)}" data-param="${esc(c.params || c.param || '')}">Send</button></td>
+      </tr>`).join('');
+      panel = `<div class="card branded-panel">
+        <div class="card-header"><h3>Video commands · ${esc(selected.name)}</h3></div>
+        ${tableWrap(['Command', 'Type', ''], cmdRows, 'No commands on this unit')}
+        <div id="surv-cmd-msg" class="mt-1"></div>
+      </div>`;
+    } else if (tab === 'events') {
+      let events = [];
+      try {
+        events = await MamsApi.api(`/client/surveillance/violations?limit=80&unitId=${encodeURIComponent(selId)}`);
+        if (!Array.isArray(events)) events = events.rows || events.data || [];
+      } catch (_) { events = []; }
+      const evRows = events.slice(0, 80).map((v) => {
+        const title = v.violationType || v.title || v.type || 'Event';
+        const clipBtn = v.clip && v.clip.messageId
+          ? `<button type="button" class="btn btn-sm" data-action="play-video-file" data-unit="${esc(v.clip.unitId || selId)}" data-mid="${esc(v.clip.messageId)}" data-source="message">Play</button>`
+          : (v.videoUrl ? `<a class="btn btn-sm" href="${esc(v.videoUrl)}" target="_blank" rel="noopener">Open</a>` : '—');
+        return `<tr>
+          <td><strong>${esc(title)}</strong><div class="muted">${esc(v.category || v.source || '')}</div></td>
+          <td>${esc(v.unitName || selected.name || '—')}</td>
+          <td class="muted">${v.occurredAt ? fmtDate(v.occurredAt) : '—'}</td>
+          <td>${clipBtn}</td>
+        </tr>`;
+      }).join('');
+      panel = `<div class="card branded-panel">
+        <div class="card-header"><h3>Events · ${esc(selected.name)}</h3></div>
+        <div id="surveillance-video-wrap" class="mb-1">
+          <video id="surveillance-video" controls playsinline style="width:100%;max-height:280px;background:#111;border-radius:8px"></video>
+          <p id="surveillance-stream-msg" class="muted mt-1"></p>
+        </div>
+        ${tableWrap(['Event', 'Unit', 'When', ''], evRows, 'No video / eco events for this unit')}
+      </div>`;
+    }
+
+    const listRows = list.map((u) => {
+      const id = String(u.wialonId || u.id);
       const cams = (u.cameras || []).length || u.cameraCount || 0;
-      return `<tr class="row-clickable" data-action="open-surveillance-unit" data-id="${esc(id)}" data-name="${esc(u.name)}">
-      <td><strong>${esc(u.name)}</strong>${u.plate ? `<div class="muted">${esc(u.plate)}</div>` : ''}</td>
-      <td>${u.status ? statusBadge(u.status) : (u.connected ? statusBadge('moving') : '—')}</td>
-      <td class="muted">${esc(u.hwType || u.hwName || '—')}</td>
-      <td>${cams} cam${cams === 1 ? '' : 's'}</td>
-      <td><span class="badge ${u.streamAvailable !== false ? 'badge-success' : 'badge-inactive'}">${u.streamAvailable !== false ? 'Ready' : 'N/A'}</span></td>
-    </tr>`;
+      return `<tr class="row-clickable ${id === selId ? 'row-selected' : ''}" data-action="surv-select-unit" data-id="${esc(id)}">
+        <td><strong>${esc(u.name)}</strong>${u.plate ? `<div class="muted">${esc(u.plate)}</div>` : ''}</td>
+        <td>${u.status ? statusBadge(u.status) : (u.connected ? statusBadge('moving') : '—')}</td>
+        <td>${cams}</td>
+      </tr>`;
     }).join('');
 
-    return `<div class="integration-panel mt-1">
+    return `${tabBar}
+    <div class="integration-panel mt-1">
       <h3>Surveillance & video</h3>
-      <p>${esc(data.message || 'Select a unit to inspect cameras and start live HLS playback.')}</p>
+      <p>${esc(data.message || 'Cameras · Live · Playback · Files · Commands · Events · Reports')}</p>
       <p class="mt-1"><span class="badge badge-brand">Wialon Video</span>
         <span class="badge ${data.live ? 'badge-success' : 'badge-inactive'}">${data.live ? 'Live discovery' : 'Offline'}</span>
         <span class="badge ${data.streaming ? 'badge-success' : 'badge-info'}">${data.streaming ? 'HLS proxy on' : 'Discovery only'}</span>
@@ -1448,19 +2111,28 @@
       ${kpi('Video units', data.count ?? list.length)}
       ${kpi('Source', data.live ? 'Live Wialon' : 'Fallback')}
     </div>
+    ${unitPicker}
     <div class="grid-main-side mt-2">
       <div class="card">
-        <div class="card-header"><h3>Camera-capable units</h3><span class="muted">${list.length}</span></div>
-        ${tableWrap(['Unit', 'Status', 'Hardware', 'Cameras', 'Stream'], rows, 'No camera-capable units detected')}
+        <div class="card-header"><h3>Units</h3><span class="muted">${list.length}</span></div>
+        ${tableWrap(['Unit', 'Status', 'Cams'], listRows, 'No camera-capable units')}
       </div>
-      <div class="card" id="surveillance-player-root">
-        <div class="card-header"><h3>Live player</h3></div>
-        ${emptyState('📹', 'No camera selected', 'Click a unit to load cameras and Go Live.')}
-      </div>
+      <div id="surveillance-player-root">${panel}</div>
     </div>`;
   }
 
   async function renderSensors() {
+    const params = new URLSearchParams(location.search);
+    let tab = (params.get('tab') || 'live').toLowerCase();
+    if (!['live', 'reports'].includes(tab)) tab = 'live';
+    const tabBar = `<div class="tab-bar branded-tabs">
+      <a class="tab ${tab === 'live' ? 'active' : ''}" href="/app/sensors?tab=live">Live</a>
+      <a class="tab ${tab === 'reports' ? 'active' : ''}" href="/app/sensors?tab=reports">Reports</a>
+    </div>`;
+    if (tab === 'reports') {
+      return tabBar + await moduleReportsHtml('sensors', 'Live reports');
+    }
+
     const snap = await MamsApi.api('/client/fleet/snapshot').catch(() => ({ units: [] }));
     const units = snap.units || [];
     const rows = units.map((u) => {
@@ -1479,7 +2151,7 @@
     </tr>`;
     }).join('');
 
-    return `<div class="kpi-grid">
+    return `${tabBar}<div class="kpi-grid">
       ${kpi('Units', units.length)}
       ${kpi('With fuel', units.filter((u) => u.fuelLevel != null).length)}
       ${kpi('With battery', units.filter((u) => unitParam(u, 'battery') != null).length)}
@@ -1493,6 +2165,17 @@
   }
 
   async function renderTrailers() {
+    const params = new URLSearchParams(location.search);
+    let tab = (params.get('tab') || 'trailers').toLowerCase();
+    if (!['trailers', 'reports'].includes(tab)) tab = 'trailers';
+    const tabBar = `<div class="tab-bar branded-tabs">
+      <a class="tab ${tab === 'trailers' ? 'active' : ''}" href="/app/trailers?tab=trailers">Trailers</a>
+      <a class="tab ${tab === 'reports' ? 'active' : ''}" href="/app/trailers?tab=reports">Reports</a>
+    </div>`;
+    if (tab === 'reports') {
+      return tabBar + await moduleReportsHtml('trailers', 'Trailers reports');
+    }
+
     const assets = await MamsApi.api('/client/assets').catch(() => []);
     const list = (Array.isArray(assets) ? assets : []).filter((a) =>
       /trailer|semi|caravan/i.test(a.name || '') || a.category === 'trailer'
@@ -1504,7 +2187,7 @@
       <td>—</td>
     </tr>`).join('');
 
-    return `<div class="card">
+    return `${tabBar}<div class="card">
       ${tableWrap(['Trailer', 'Plate', 'Make / model', 'Coupled to'], rows, 'No trailer assets found')}
     </div>`;
   }
@@ -1723,6 +2406,30 @@
   let currentTenantName = 'MAMS';
   let alertsPollId = null;
   let statusPollId = null;
+  let lastFleetFetchedAt = null;
+
+  function formatLiveAge(fetchedAt) {
+    if (!fetchedAt) return '';
+    const t = typeof fetchedAt === 'number'
+      ? (fetchedAt < 1e12 ? fetchedAt * 1000 : fetchedAt)
+      : Date.parse(fetchedAt);
+    if (!Number.isFinite(t)) return '';
+    const sec = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (sec < 5) return 'Live · just now';
+    if (sec < 60) return `Live · ${sec}s ago`;
+    const m = Math.floor(sec / 60);
+    return `Live · ${m}m ago`;
+  }
+
+  function updateLiveAge(fetchedAt) {
+    if (fetchedAt) lastFleetFetchedAt = fetchedAt;
+    const el = document.getElementById('live-age');
+    if (!el) return;
+    const label = formatLiveAge(lastFleetFetchedAt);
+    if (!label) { el.hidden = true; return; }
+    el.hidden = false;
+    el.textContent = label;
+  }
 
   /** Sets static topbar/menu icons from MamsIcons — parity with React ICON_MAP. */
   function initTopbarIcons() {
@@ -1740,6 +2447,7 @@
 
   document.getElementById('logout-btn')?.addEventListener('click', () => {
     MamsApi.clearAuth();
+    if (typeof MamsBranding !== 'undefined') MamsBranding.reset();
     if (alertsPollId) clearInterval(alertsPollId);
     if (statusPollId) clearInterval(statusPollId);
     location.href = '/auth/login';
@@ -1844,11 +2552,15 @@
 
   async function refreshStatusPill() {
     try {
-      const integrations = await MamsApi.api('/client/integrations/status');
+      const [integrations, snap] = await Promise.all([
+        MamsApi.api('/client/integrations/status'),
+        MamsApi.api('/client/fleet/snapshot').catch(() => null),
+      ]);
       const list = Array.isArray(integrations) ? integrations : [];
       const pill = document.getElementById('status-pill');
       const text = document.getElementById('status-pill-text');
       updateFooter(list);
+      if (snap) updateLiveAge(snap.fetchedAt || snap.fetched_at || Date.now());
       if (!pill || !text || !list.length) { if (pill) pill.hidden = true; return; }
       const allConnected = list.every((i) => i.connected);
       const anyConnected = list.some((i) => i.connected);
@@ -1885,8 +2597,11 @@
     }
 
     if (mod === 'monitoring') {
-      const snap = await MamsApi.api('/client/fleet/snapshot').catch(() => ({ units: [] }));
-      loadLeaflet(() => initFleetMap(snap.units || []));
+      const view = (new URLSearchParams(location.search).get('view') || 'map').toLowerCase();
+      if (view === 'map' || view === 'list') {
+        const snap = await MamsApi.api('/client/fleet/snapshot').catch(() => ({ units: [] }));
+        if (view === 'map') loadLeaflet(() => initFleetMap(snap.units || []));
+      }
     }
 
     if (mod === 'fuel' && document.getElementById('fuel-page-trend')) {
@@ -1939,14 +2654,202 @@
       return;
     }
 
-    if (action === 'ack-alerts-bulk') {
-      const ids = String(btn.dataset.ids || '').split(',').filter(Boolean);
-      if (!ids.length) return;
+    if (action === 'refresh-page') {
+      await loadModule();
+      return;
+    }
+
+    if (action === 'load-monitoring-track') {
+      const unitId = document.getElementById('track-unit')?.value;
+      const secs = Number(document.getElementById('track-range')?.value || 86400);
+      const meta = document.getElementById('track-meta');
+      if (!unitId) return;
+      btn.disabled = true;
+      if (meta) meta.textContent = 'Loading track…';
+      try {
+        const to = Math.floor(Date.now() / 1000);
+        const from = to - (Number.isFinite(secs) ? secs : 86400);
+        const data = await MamsApi.api(`/client/wialon/units/${encodeURIComponent(unitId)}/track?from=${from}&to=${to}`);
+        const points = data.points || data.track || [];
+        if (meta) meta.textContent = `${points.length} points`;
+        loadLeaflet(() => {
+          const el = document.getElementById('track-map');
+          if (!el || typeof L === 'undefined') return;
+          if (el._map) { try { el._map.remove(); } catch (_) {} el._map = null; }
+          const latlngs = points
+            .map((p) => [Number(p.lat ?? p.y), Number(p.lng ?? p.x)])
+            .filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]));
+          const center = latlngs[0] || [-1.2921, 36.8219];
+          const map = L.map(el).setView(center, 12);
+          el._map = map;
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+          if (latlngs.length) {
+            L.polyline(latlngs, { color: '#004225', weight: 3 }).addTo(map);
+            map.fitBounds(latlngs, { padding: [24, 24] });
+          }
+          setTimeout(() => map.invalidateSize(), 200);
+        });
+      } catch (ex) {
+        if (meta) meta.textContent = ex.message || 'Track failed';
+      } finally {
+        btn.disabled = false;
+      }
+      return;
+    }
+
+    if (action === 'exec-module-report') {
+      const root = document.getElementById('module-report-result');
+      const resourceId = Number(btn.dataset.resource || 0);
+      const templateId = Number(btn.dataset.template || 0);
+      if (!resourceId || !templateId) return;
+      const objectSel = document.getElementById('module-report-object');
+      const daysSel = document.getElementById('module-report-days');
+      const objectId = Number(objectSel?.value || 0);
+      const days = Math.max(1, Number(daysSel?.value || 7));
+      btn.disabled = true;
+      if (root) root.innerHTML = `<div class="banner banner-info">Running ${esc(btn.dataset.name || 'report')}…</div>`;
+      try {
+        const to = Math.floor(Date.now() / 1000);
+        const from = to - 86400 * days;
+        const body = { resourceId, templateId, from, to };
+        if (objectId > 0) body.objectId = objectId;
+        const data = await MamsApi.api('/client/wialon/reports/exec', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        const tables = data.tables || [];
+        const charts = data.charts || data.images || [];
+        const imgs = charts.map((c) => {
+          const src = c.dataUrl || c.url || (c.data && c.data.image) || '';
+          if (!src) return '';
+          return `<figure class="report-chart"><figcaption class="muted">${esc(c.name || 'Chart')}</figcaption>
+            <img src="${esc(src)}" alt="${esc(c.name || 'chart')}" style="max-width:100%;margin:.5rem 0;border-radius:8px" /></figure>`;
+        }).join('');
+        const tableHtml = tables.slice(0, 3).map((t) => {
+          const sample = t.sample || [];
+          const headers = Array.isArray(t.header) ? t.header : (sample[0] ? Object.keys(sample[0]).slice(0, 8) : []);
+          const headCells = headers.length
+            ? headers.map((h) => `<th>${esc(typeof h === 'object' ? (h.n || h.name || JSON.stringify(h)) : h)}</th>`).join('')
+            : '<th>Row</th>';
+          const bodyRows = sample.slice(0, 25).map((row) => {
+            if (Array.isArray(row)) {
+              return `<tr>${row.slice(0, 12).map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`;
+            }
+            if (row && typeof row === 'object') {
+              const cells = headers.length
+                ? headers.map((h) => {
+                    const key = typeof h === 'object' ? (h.n || h.name) : h;
+                    return `<td>${esc(row[key] ?? row.c?.[key] ?? '—')}</td>`;
+                  }).join('')
+                : `<td><pre class="muted">${esc(JSON.stringify(row).slice(0, 200))}</pre></td>`;
+              return `<tr>${cells}</tr>`;
+            }
+            return `<tr><td>${esc(row)}</td></tr>`;
+          }).join('');
+          return `<div class="mt-1"><h4>${esc(t.name || 'Table')} <span class="muted">(${t.rows || 0} rows)</span></h4>
+            <div class="table-wrap"><table><thead><tr>${headCells}</tr></thead><tbody>${bodyRows || '<tr><td class="muted">Empty</td></tr>'}</tbody></table></div></div>`;
+        }).join('');
+        if (root) {
+          root.innerHTML = `<div class="banner banner-success">${esc(tables.length)} tables · ${charts.length} charts</div>${imgs}${tableHtml}`;
+        }
+        const printAct = document.getElementById('module-report-print-actions');
+        if (printAct) printAct.hidden = false;
+      } catch (ex) {
+        if (root) root.innerHTML = `<div class="banner banner-error">${esc(ex.message || 'Report failed')}</div>`;
+      } finally {
+        btn.disabled = false;
+      }
+      return;
+    }
+
+    if (action === 'print-module-report') {
+      const root = document.getElementById('module-report-result');
+      printReportElement(root, 'Module report');
+      return;
+    }
+
+    if (action === 'surv-select-unit') {
+      const p = new URLSearchParams(location.search);
+      const tab = p.get('tab') || 'cameras';
+      location.href = `/app/surveillance?tab=${encodeURIComponent(tab)}&unitId=${encodeURIComponent(id)}`;
+      return;
+    }
+
+    if (action === 'surv-request-playback') {
+      const unitId = btn.dataset.unit;
+      const msg = document.getElementById('surv-playback-msg');
+      const fromEl = document.getElementById('surv-pb-from');
+      const toEl = document.getElementById('surv-pb-to');
+      const camEl = document.getElementById('surv-pb-cam');
+      if (!unitId) return;
+      btn.disabled = true;
+      if (msg) msg.innerHTML = '<div class="banner banner-info">Requesting playback…</div>';
+      try {
+        const cmdsRes = await MamsApi.api(`/client/wialon/units/${encodeURIComponent(unitId)}/commands`);
+        const cmds = cmdsRes.commands || [];
+        const pb = cmds.find((c) => /playback|qpb|play.?back|history.?video/i.test(`${c.name || ''} ${c.label || ''}`))
+          || cmds.find((c) => /live|stream|qlv|video/i.test(`${c.name || ''} ${c.label || ''}`));
+        if (!pb) throw new Error('No playback/live video command on this unit');
+        const fromSec = fromEl?.value ? Math.floor(new Date(fromEl.value).getTime() / 1000) : Math.floor(Date.now() / 1000) - 3600;
+        const toSec = toEl?.value ? Math.floor(new Date(toEl.value).getTime() / 1000) : Math.floor(Date.now() / 1000);
+        const cam = camEl?.value || '1';
+        let param = String(pb.params || pb.param || '').trim();
+        if (param.includes('{') || param.includes(',')) {
+          param = param
+            .replace(/\{from\}/gi, String(fromSec))
+            .replace(/\{to\}/gi, String(toSec))
+            .replace(/\{camera\}/gi, cam);
+        } else {
+          param = [fromSec, toSec, Number(cam)].join(',');
+        }
+        await MamsApi.api('/client/wialon/commands', {
+          method: 'POST',
+          body: JSON.stringify({ unitId: Number(unitId), command: pb.name, param }),
+        });
+        if (msg) {
+          msg.innerHTML = `<div class="banner banner-success">Playback requested (${esc(pb.label || pb.name)}). Check Files in a minute for clips.</div>
+            <a class="btn btn-sm mt-1" href="/app/surveillance?tab=files&unitId=${encodeURIComponent(unitId)}">Open Files</a>`;
+        }
+      } catch (ex) {
+        if (msg) msg.innerHTML = `<div class="banner banner-error">${esc(ex.message || 'Playback failed')}</div>`;
+      } finally {
+        btn.disabled = false;
+      }
+      return;
+    }
+
+    if (action === 'surv-send-command') {
+      const unitId = btn.dataset.unit;
+      const command = btn.dataset.cmd;
+      const msg = document.getElementById('surv-cmd-msg');
+      if (!unitId || !command) return;
       btn.disabled = true;
       try {
-        for (const alertId of ids) {
-          await MamsApi.api(`/client/alerts/${encodeURIComponent(alertId)}/acknowledge`, { method: 'POST' }).catch(() => null);
-        }
+        await MamsApi.api('/client/wialon/commands', {
+          method: 'POST',
+          body: JSON.stringify({
+            unitId: Number(unitId),
+            command,
+            param: btn.dataset.param || '',
+          }),
+        });
+        if (msg) msg.innerHTML = `<div class="banner banner-success">Sent ${esc(command)}</div>`;
+      } catch (ex) {
+        if (msg) msg.innerHTML = `<div class="banner banner-error">${esc(ex.message || 'Command failed')}</div>`;
+      } finally {
+        btn.disabled = false;
+      }
+      return;
+    }
+
+    if (action === 'ack-alerts-bulk') {
+      const ids = String(btn.dataset.ids || '').split(',').filter(Boolean);
+      btn.disabled = true;
+      try {
+        await MamsApi.api('/client/alerts/acknowledge-bulk', {
+          method: 'POST',
+          body: JSON.stringify(ids.length ? { ids } : {}),
+        });
         await loadModule();
       } catch (ex) {
         alert(ex.message || 'Bulk acknowledge failed');
@@ -1955,16 +2858,115 @@
       return;
     }
 
+    if (action === 'alerts-sync') {
+      btn.disabled = true;
+      try {
+        const res = await MamsApi.api('/client/alerts/sync', { method: 'POST', body: '{}' });
+        alert(`Synced · inserted ${res.inserted ?? 0}`);
+        await loadModule();
+      } catch (ex) {
+        alert(ex.message || 'Sync failed');
+        btn.disabled = false;
+      }
+      return;
+    }
+
+    if (action === 'fuel-analytics-warm') {
+      btn.disabled = true;
+      try {
+        await MamsApi.api('/client/wialon/fuel/analytics/warm', { method: 'POST', body: '{}' });
+        await loadModule();
+      } catch (ex) {
+        alert(ex.message || 'Warm failed');
+        btn.disabled = false;
+      }
+      return;
+    }
+
+    if (action === 'open-fuel-unit') {
+      const root = document.getElementById('fuel-report-msg') || document.getElementById('surveillance-player-root');
+      const wrap = document.createElement('div');
+      wrap.className = 'card mt-2 branded-panel';
+      wrap.id = 'fuel-unit-detail';
+      wrap.innerHTML = `<div class="card-header"><h3>${esc(btn.dataset.name || id)}</h3></div><p class="muted">Loading level series…</p>`;
+      const host = document.querySelector('.tab-bar')?.parentElement || document.getElementById('module-content');
+      const existing = document.getElementById('fuel-unit-detail');
+      if (existing) existing.remove();
+      (host || document.body).appendChild(wrap);
+      try {
+        const to = Math.floor(Date.now() / 1000);
+        const from = to - 7 * 86400;
+        const series = await MamsApi.api(`/client/wialon/fuel/level-series?unitId=${encodeURIComponent(id)}&from=${from}&to=${to}`).catch(() => ({ points: [] }));
+        const analytics = await MamsApi.api(`/client/wialon/fuel/analytics?period=30&unitId=${encodeURIComponent(id)}`).catch(() => null);
+        const pts = series.points || series.series || [];
+        wrap.innerHTML = `<div class="card-header"><h3>${esc(btn.dataset.name || id)}</h3>
+          <button type="button" class="btn btn-sm" data-action="fuel-level-series" data-id="${esc(id)}" data-name="${esc(btn.dataset.name || '')}">Refresh series</button></div>
+          <div class="kpi-grid">
+            ${kpi('Filled', (analytics?.kpis?.totalFilled ?? '—') + ' L')}
+            ${kpi('Consumed', (analytics?.kpis?.totalConsumed ?? '—') + ' L')}
+            ${kpi('Points', pts.length)}
+          </div>
+          <p class="muted mt-1">${pts.length ? 'Level series loaded — open Monitoring unit for map.' : 'No level series in range.'}</p>
+          <div id="fuel-unit-series-root"></div>`;
+      } catch (ex) {
+        wrap.innerHTML = `<div class="banner banner-error">${esc(ex.message || 'Failed')}</div>`;
+      }
+      return;
+    }
+
+    if (action === 'share-video-clip') {
+      const unitId = btn.dataset.unit;
+      const mid = btn.dataset.mid;
+      const path = btn.dataset.path;
+      btn.disabled = true;
+      try {
+        const body = mid
+          ? { unitId: Number(unitId), source: 'message', messageId: Number(mid), label: btn.dataset.name || 'Clip' }
+          : { unitId: Number(unitId), source: 'storage', path, storageType: Number(btn.dataset.storage || 2), label: btn.dataset.name || 'Clip' };
+        const link = await MamsApi.api('/client/surveillance/clips/share', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        const url = link.shareUrl || '';
+        if (url && navigator.clipboard) {
+          try { await navigator.clipboard.writeText(url); } catch (_) {}
+        }
+        alert(url ? `Share link copied:\n${url}` : 'Share link created');
+      } catch (ex) {
+        alert(ex.message || 'Share failed');
+      } finally {
+        btn.disabled = false;
+      }
+      return;
+    }
+
     if (action === 'open-unit') {
       const root = document.getElementById('unit-detail-root');
       if (!root) return;
-      root.innerHTML = `<div class="card mt-2">${typeof loader === 'function' ? loader() : 'Loading…'}</div>`;
+      root.innerHTML = `<div class="card mt-2 branded-panel">${typeof loader === 'function' ? loader() : 'Loading…'}</div>`;
       try {
         const detail = await MamsApi.api(`/client/wialon/units/${encodeURIComponent(id)}`);
         const u = detail.unit || {};
         const h = detail.health || {};
         const uid = u.wialonId || u.id || id;
-        root.innerHTML = `<div class="card mt-2">
+        const sensors = detail.sensors || [];
+        const cmds = detail.commands || [];
+        const tanks = detail.tanks || [];
+        const sensRows = sensors.slice(0, 40).map((s) => {
+          const val = s.value != null ? s.value : (s.val != null ? s.val : (s.m != null ? s.m : '—'));
+          return `<tr><td>${esc(s.name || s.n || '—')}</td><td>${esc(s.type || s.t || '—')}</td><td>${esc(typeof val === 'object' ? JSON.stringify(val) : val)}</td></tr>`;
+        }).join('');
+        const tankRows = tanks.map((t) => `<tr>
+          <td>${esc(t.name || 'Tank')}</td>
+          <td>${t.percent != null ? esc(Math.round(t.percent)) + '%' : '—'}</td>
+          <td>${t.liters != null ? esc(t.liters) + ' L' : '—'}</td>
+        </tr>`).join('');
+        const cmdBtns = cmds.slice(0, 12).map((c) => {
+          const name = c.name || c.n || '';
+          const dangerous = /block|lock|engine_stop|immobil/i.test(name);
+          return `<button type="button" class="btn btn-sm ${dangerous ? 'btn-ghost' : ''}" data-action="send-command" data-unit="${esc(uid)}" data-name="${esc(u.name || '')}" data-cmd="${esc(name)}">${esc(c.label || name)}</button>`;
+        }).join(' ');
+        root.innerHTML = `<div class="card mt-2 branded-panel">
           <div class="card-header">
             <h3>${esc(u.name || 'Unit')}</h3>
             <div class="actions">
@@ -1973,21 +2975,25 @@
               <button type="button" class="btn btn-sm btn-ghost" data-action="close-unit-detail">Close</button>
             </div>
           </div>
+          <p class="muted">${esc(detail.address || (u.position ? `${Number(u.position.lat).toFixed(5)}, ${Number(u.position.lng).toFixed(5)}` : 'No position'))}</p>
           <div class="settings-grid">
             <div><span class="muted">Status</span><div>${statusBadge(u.status)}</div></div>
             <div><span class="muted">Plate</span><div>${esc(u.plate || '—')}</div></div>
-            <div><span class="muted">Fuel</span><div>${h.fuelLevel != null ? esc(Math.round(h.fuelLevel)) + '%' : '—'}</div></div>
+            <div><span class="muted">Fuel</span><div>${h.fuelLevel != null ? esc(Math.round(h.fuelLevel)) + '%' : '—'}${h.fuelLiters != null ? ' · ' + esc(h.fuelLiters) + ' L' : ''}</div></div>
             <div><span class="muted">Mileage</span><div>${h.mileage != null ? esc(Math.round(h.mileage)).toLocaleString() + ' km' : '—'}</div></div>
             <div><span class="muted">Battery</span><div>${h.battery != null ? esc(Math.round(h.battery)) + '%' : '—'}</div></div>
             <div><span class="muted">Voltage</span><div>${h.voltage != null ? esc(Math.round(h.voltage * 10) / 10) + ' V' : '—'}</div></div>
             <div><span class="muted">Engine hours</span><div>${h.engineHours != null ? esc(Math.round(h.engineHours)) : '—'}</div></div>
-            <div><span class="muted">Position</span><div>${u.position ? `${Number(u.position.lat).toFixed(5)}, ${Number(u.position.lng).toFixed(5)}` : '—'}</div></div>
+            <div><span class="muted">Speed</span><div>${u.position ? Number(u.position.speed || 0).toFixed(0) + ' km/h' : '—'}</div></div>
           </div>
+          ${tanks.length ? `<div class="mt-1"><h4>Fuel tanks</h4>${tableWrap(['Tank', '%', 'Liters'], tankRows, '')}</div>` : ''}
+          <div class="mt-1"><h4>Commands</h4><div class="actions" style="flex-wrap:wrap;gap:6px">${cmdBtns || '<span class="muted">No commands on unit</span>'}</div></div>
+          <div class="mt-1"><h4>Sensors</h4>${tableWrap(['Sensor', 'Type', 'Value'], sensRows, 'No live sensors')}</div>
           <div id="unit-track-map" class="map-panel mt-1" style="min-height:220px">Track map idle — click Load 24h track</div>
           <div id="unit-trips-root" class="mt-1 muted">Trips idle — click Load 24h trips</div>
         </div>`;
       } catch (ex) {
-        root.innerHTML = `<div class="banner banner-error mt-2">${esc(ex.message || 'Unit detail unavailable (live Wialon required)')}</div>`;
+        root.innerHTML = `<div class="banner banner-error mt-2">${esc(ex.message || 'Unit detail unavailable (live fleet required)')}</div>`;
       }
       return;
     }
@@ -2267,7 +3273,8 @@
             <td><strong>${esc(f.name)}</strong><div class="muted">${esc(f.source || '')}</div></td>
             <td class="muted">${f.occurredAt ? fmtDate(f.occurredAt) : '—'}</td>
             <td>${f.sizeBytes ? esc(Math.round(f.sizeBytes / 1024)) + ' KB' : '—'}</td>
-            <td>${playAttrs ? `<button type="button" class="btn btn-sm" ${playAttrs}>Play</button>` : '—'}</td>
+            <td>${playAttrs ? `<button type="button" class="btn btn-sm" ${playAttrs}>Play</button>
+            <button type="button" class="btn btn-sm btn-ghost" data-action="share-video-clip" data-unit="${esc(selId)}" ${f.messageId ? `data-mid="${esc(f.messageId)}"` : ''} ${f.path ? `data-path="${esc(f.path)}" data-storage="${esc(f.storageType || 2)}"` : ''} data-name="${esc(f.name || '')}">Share</button>` : '—'}</td>
           </tr>`;
         }).join('');
         root.innerHTML = `<div class="card-header"><h3>${esc(detail.name || id)}</h3><span class="muted">${cams.length} cameras · ${files.length} files</span></div>
@@ -2455,6 +3462,13 @@
       toEl.value = String(now);
       fromEl.value = String(now - secs);
     }
+    if (el && el.id === 'surv-unit-select') {
+      const p = new URLSearchParams(location.search);
+      const tab = p.get('tab') || 'cameras';
+      const unitId = el.value;
+      if (!unitId) return;
+      location.href = `/app/surveillance?tab=${encodeURIComponent(tab)}&unitId=${encodeURIComponent(unitId)}`;
+    }
   });
 
   content.addEventListener('submit', async (e) => {
@@ -2519,12 +3533,56 @@
             maintenanceType: fd.get('maintenanceType'),
             mechanicName: fd.get('mechanicName') || 'Unassigned',
             description: fd.get('description'),
+            assetCategory: fd.get('assetCategory') || 'vehicle',
+            totalCost: fd.get('totalCost') ? Number(fd.get('totalCost')) : undefined,
           }),
         });
         form.reset();
         await loadModule();
       } catch (ex) {
         if (errEl) { errEl.textContent = ex.message || 'Failed to save maintenance'; errEl.hidden = false; }
+      }
+      return;
+    }
+
+    if (form.id === 'inspection-form') {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const errEl = document.getElementById('inspection-error');
+      if (errEl) errEl.hidden = true;
+      const bySection = {};
+      form.querySelectorAll('input[type="checkbox"][data-item]').forEach((cb) => {
+        const sid = cb.dataset.section || 'main';
+        if (!bySection[sid]) bySection[sid] = { id: sid, title: sid, items: [] };
+        bySection[sid].items.push({
+          name: cb.dataset.item,
+          status: cb.checked ? 'ok' : 'unchecked',
+        });
+      });
+      form.querySelectorAll('.checklist-section').forEach((secEl, i) => {
+        const title = secEl.querySelector('h4')?.textContent || '';
+        const sid = Object.keys(bySection)[i];
+        if (sid && bySection[sid] && title) bySection[sid].title = title;
+      });
+      try {
+        await MamsApi.api('/client/workshop/inspections', {
+          method: 'POST',
+          body: JSON.stringify({
+            vehicleName: fd.get('vehicleName'),
+            vehiclePlate: fd.get('vehiclePlate') || '',
+            inspectorName: fd.get('inspectorName') || '',
+            overallStatus: fd.get('overallStatus') || 'pass',
+            notes: fd.get('notes') || '',
+            assetCategory: fd.get('assetCategory') || form.dataset.category || 'vehicle',
+            engineHours: fd.get('engineHours') ? Number(fd.get('engineHours')) : null,
+            odometerReading: fd.get('odometerReading') ? Number(fd.get('odometerReading')) : 0,
+            checklistSections: Object.values(bySection),
+          }),
+        });
+        form.reset();
+        await loadModule();
+      } catch (ex) {
+        if (errEl) { errEl.textContent = ex.message || 'Failed to save inspection'; errEl.hidden = false; }
       }
       return;
     }
@@ -2772,8 +3830,11 @@
       await initClientNav(isAdmin);
       refreshAlertsBell();
       refreshStatusPill();
-      alertsPollId = setInterval(refreshAlertsBell, 60000);
-      statusPollId = setInterval(refreshStatusPill, 60000);
+      alertsPollId = setInterval(refreshAlertsBell, 20000);
+      statusPollId = setInterval(() => {
+        refreshStatusPill();
+        updateLiveAge();
+      }, 8000);
 
       await loadModule();
     } catch (e) {

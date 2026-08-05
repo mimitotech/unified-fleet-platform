@@ -657,6 +657,34 @@ class DomainController
         Response::success(self::camelRows($rows));
     }
 
+    /** GET /client/fuel/variance — station sheets vs FLS (fuel_transactions fills) */
+    public static function fuelVariance(): void
+    {
+        $tenantId = self::requireTenantId();
+        $fromDate = isset($_GET['from']) ? trim((string) $_GET['from']) : (isset($_GET['fromDate']) ? trim((string) $_GET['fromDate']) : null);
+        $toDate = isset($_GET['to']) ? trim((string) $_GET['to']) : (isset($_GET['toDate']) ? trim((string) $_GET['toDate']) : null);
+        if ($fromDate === '') {
+            $fromDate = null;
+        }
+        if ($toDate === '') {
+            $toDate = null;
+        }
+
+        require_once __DIR__ . '/../../lib/FuelVariance.php';
+        try {
+            Response::success(FuelVariance::report($tenantId, $fromDate, $toDate));
+        } catch (Throwable $e) {
+            error_log('DomainController fuelVariance: ' . $e->getMessage());
+            Response::success([
+                'configured' => false,
+                'rows' => [],
+                'assets' => [],
+                'summary' => ['stationLiters' => 0, 'flsLiters' => 0, 'variance' => 0, 'assets' => 0, 'stationFills' => 0],
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
     /** GET /client/reports/data/:type */
     public static function reportsData(?string $type = null): void
     {
@@ -1063,5 +1091,373 @@ class DomainController
         }
         $rows = self::safeQuery('SELECT * FROM breakdown_reports WHERE id = ? LIMIT 1', [$id], 'breakdown_created');
         Response::success($rows ? self::camelCase($rows[0]) : ['id' => $id], 201);
+    }
+
+    /** GET /client/workshop/checklist-templates?assetCategory=generator */
+    public static function workshopChecklistTemplates(): void
+    {
+        $tenantId = self::requireTenantId();
+        require_once __DIR__ . '/../../lib/WorkshopSchema.php';
+        require_once __DIR__ . '/../../lib/WorkshopChecklistTemplates.php';
+        WorkshopSchema::ensure();
+
+        $category = isset($_GET['assetCategory'])
+            ? WorkshopChecklistTemplates::sanitizeCategory($_GET['assetCategory'])
+            : null;
+
+        try {
+            $params = [$tenantId];
+            $sql = 'SELECT id, asset_category, name, description, sections, is_system, is_active
+                    FROM workshop_checklist_templates
+                    WHERE is_active = 1 AND (tenant_id IS NULL OR tenant_id = ?)';
+            if ($category) {
+                $sql .= ' AND asset_category = ?';
+                $params[] = $category;
+            }
+            $sql .= ' ORDER BY asset_category, is_system DESC, name';
+            $rows = Database::query($sql, $params);
+            $out = [];
+            foreach ($rows as $row) {
+                $sections = $row['sections'] ?? [];
+                if (is_string($sections)) {
+                    $decoded = json_decode($sections, true);
+                    $sections = is_array($decoded) ? $decoded : [];
+                }
+                $out[] = [
+                    'id' => $row['id'],
+                    'assetCategory' => $row['asset_category'],
+                    'name' => $row['name'],
+                    'description' => $row['description'],
+                    'sections' => $sections,
+                    'isSystem' => (bool) ((int) ($row['is_system'] ?? 0)),
+                    'isActive' => (bool) ((int) ($row['is_active'] ?? 1)),
+                ];
+            }
+            if ($out) {
+                Response::success($out);
+                return;
+            }
+        } catch (Throwable $e) {
+            error_log('workshopChecklistTemplates db: ' . $e->getMessage());
+        }
+
+        // Fallback to in-code templates
+        $all = WorkshopChecklistTemplates::allTemplates();
+        if ($category) {
+            $all = array_values(array_filter(
+                $all,
+                static fn(array $t): bool => $t['assetCategory'] === $category
+            ));
+        }
+        Response::success($all);
+    }
+
+    /** POST /client/workshop/inspections */
+    public static function workshopInspectionCreate(): void
+    {
+        $tenantId = self::requireTenantId();
+        require_once __DIR__ . '/../../lib/WorkshopSchema.php';
+        require_once __DIR__ . '/../../lib/WorkshopChecklistTemplates.php';
+        WorkshopSchema::ensure();
+
+        $body = Auth::jsonBody();
+        $vehicleName = trim((string) ($body['vehicleName'] ?? $body['assetName'] ?? ''));
+        $vehiclePlate = trim((string) ($body['vehiclePlate'] ?? $body['plate'] ?? ''));
+        $vehicleId = trim((string) ($body['vehicleId'] ?? $body['assetId'] ?? $vehicleName));
+        $assetCategory = WorkshopChecklistTemplates::sanitizeCategory($body['assetCategory'] ?? 'vehicle');
+        $inspectionType = trim((string) ($body['inspectionType'] ?? 'routine'));
+        $overallStatus = trim((string) ($body['overallStatus'] ?? 'pass'));
+        $notes = trim((string) ($body['notes'] ?? ''));
+        $inspector = trim((string) ($body['inspectorName'] ?? ''));
+        $engineHours = isset($body['engineHours']) && is_numeric($body['engineHours'])
+            ? (float) $body['engineHours'] : null;
+        $odometer = isset($body['odometerReading']) && is_numeric($body['odometerReading'])
+            ? (float) $body['odometerReading'] : 0.0;
+        $sections = $body['checklistSections'] ?? $body['sections'] ?? null;
+        if (!is_array($sections)) {
+            $sections = WorkshopChecklistTemplates::sectionsFor($assetCategory);
+        }
+
+        if ($vehicleName === '') {
+            Response::error('vehicleName required', 400);
+            return;
+        }
+        if ($vehicleId === '') {
+            $vehicleId = $vehicleName;
+        }
+
+        $id = self::uuid();
+        $sectionsJson = json_encode($sections);
+        try {
+            // Prefer full schema with checklist_sections
+            Database::execute(
+                'INSERT INTO vehicle_inspections
+                   (id, tenant_id, vehicle_id, vehicle_name, vehicle_plate, inspection_type,
+                    inspection_date, odometer_reading, overall_status, notes, inspector_name,
+                    asset_category, engine_hours, checklist_sections, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, NOW(3), ?, ?, ?, ?, ?, ?, ?, NOW(3), NOW(3))',
+                [
+                    $id, $tenantId, $vehicleId, $vehicleName, $vehiclePlate, $inspectionType,
+                    $odometer, $overallStatus, $notes !== '' ? $notes : null,
+                    $inspector !== '' ? $inspector : null,
+                    $assetCategory, $engineHours, $sectionsJson,
+                ]
+            );
+        } catch (Throwable $e) {
+            // Fallback without optional columns
+            try {
+                Database::execute(
+                    'INSERT INTO vehicle_inspections
+                       (id, tenant_id, vehicle_id, vehicle_name, vehicle_plate, inspection_type,
+                        inspection_date, odometer_reading, overall_status, notes, inspector_name,
+                        created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, NOW(3), ?, ?, ?, ?, NOW(3), NOW(3))',
+                    [
+                        $id, $tenantId, $vehicleId, $vehicleName, $vehiclePlate, $inspectionType,
+                        $odometer, $overallStatus, $notes !== '' ? $notes : null,
+                        $inspector !== '' ? $inspector : null,
+                    ]
+                );
+            } catch (Throwable $e2) {
+                error_log('workshopInspectionCreate: ' . $e2->getMessage());
+                Response::error('Failed to create inspection', 500);
+                return;
+            }
+        }
+
+        $rows = self::safeQuery('SELECT * FROM vehicle_inspections WHERE id = ? LIMIT 1', [$id], 'insp_created');
+        Response::success($rows ? self::camelCase($rows[0]) : ['id' => $id], 201);
+    }
+
+    /** PATCH /client/workshop/inspections/:id */
+    public static function workshopInspectionPatch(?string $id = null): void
+    {
+        self::workshopSoftPatch('vehicle_inspections', $id, [
+            'vehicleName' => 'vehicle_name', 'vehiclePlate' => 'vehicle_plate', 'vehicleId' => 'vehicle_id',
+            'driverName' => 'driver_name', 'inspectionType' => 'inspection_type', 'overallStatus' => 'overall_status',
+            'notes' => 'notes', 'inspectorName' => 'inspector_name', 'assetCategory' => 'asset_category',
+            'odometerReading' => 'odometer_reading', 'engineHours' => 'engine_hours',
+        ], 'checklist_sections', 'checklistSections');
+    }
+
+    /** DELETE /client/workshop/inspections/:id */
+    public static function workshopInspectionDelete(?string $id = null): void
+    {
+        self::workshopSoftDelete('vehicle_inspections', $id);
+    }
+
+    /** PATCH /client/workshop/maintenance/:id */
+    public static function workshopMaintenancePatch(?string $id = null): void
+    {
+        self::workshopSoftPatch('maintenance_logs', $id, [
+            'vehicleName' => 'vehicle_name', 'vehiclePlate' => 'vehicle_plate', 'vehicleId' => 'vehicle_id',
+            'maintenanceType' => 'maintenance_type', 'priority' => 'priority', 'description' => 'description',
+            'mechanicName' => 'mechanic_name', 'status' => 'status', 'assetCategory' => 'asset_category',
+            'odometer' => 'odometer', 'engineHours' => 'engine_hours', 'partsUsed' => 'parts_used',
+        ]);
+    }
+
+    /** DELETE /client/workshop/maintenance/:id */
+    public static function workshopMaintenanceDelete(?string $id = null): void
+    {
+        self::workshopSoftDelete('maintenance_logs', $id);
+    }
+
+    /** PATCH /client/workshop/breakdowns/:id */
+    public static function workshopBreakdownPatch(?string $id = null): void
+    {
+        self::workshopSoftPatch('breakdown_reports', $id, [
+            'vehicleName' => 'vehicle_name', 'vehiclePlate' => 'vehicle_plate', 'vehicleId' => 'vehicle_id',
+            'severity' => 'severity', 'description' => 'description', 'cause' => 'cause',
+            'resolution' => 'resolution', 'assetCategory' => 'asset_category', 'failureSystem' => 'failure_system',
+        ]);
+    }
+
+    /** DELETE /client/workshop/breakdowns/:id */
+    public static function workshopBreakdownDelete(?string $id = null): void
+    {
+        self::workshopSoftDelete('breakdown_reports', $id);
+    }
+
+    /** POST /client/routes */
+    public static function routesCreate(): void
+    {
+        $tenantId = self::requireTenantId();
+        if (!self::tableExists('fleet_routes')) {
+            Response::error('fleet_routes table missing', 500);
+            return;
+        }
+        $body = Auth::jsonBody();
+        $name = trim((string) ($body['name'] ?? ''));
+        if ($name === '') {
+            Response::error('name required', 400);
+            return;
+        }
+        $id = self::uuid();
+        $waypoints = $body['waypoints'] ?? [];
+        Database::execute(
+            'INSERT INTO fleet_routes
+               (id, tenant_id, name, status, asset_id, asset_name, asset_plate, driver_id, driver_name,
+                start_time, distance, waypoints, eta, color, estimated_duration, notes, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(3), NOW(3))',
+            [
+                $id,
+                $tenantId,
+                $name,
+                (string) ($body['status'] ?? 'scheduled'),
+                $body['assetId'] ?? null,
+                $body['assetName'] ?? null,
+                $body['assetPlate'] ?? null,
+                $body['driverId'] ?? null,
+                $body['driverName'] ?? null,
+                !empty($body['startTime']) ? date('Y-m-d H:i:s', strtotime((string) $body['startTime']) ?: time()) : gmdate('Y-m-d H:i:s'),
+                (float) ($body['distance'] ?? 0),
+                json_encode(is_array($waypoints) ? $waypoints : []),
+                !empty($body['eta']) ? date('Y-m-d H:i:s', strtotime((string) $body['eta']) ?: time()) : null,
+                (string) ($body['color'] ?? 'blue'),
+                (int) ($body['estimatedDuration'] ?? 0),
+                $body['notes'] ?? null,
+            ]
+        );
+        $rows = self::safeQuery('SELECT * FROM fleet_routes WHERE id = ? LIMIT 1', [$id], 'route_created');
+        Response::success($rows ? self::camelCase($rows[0]) : ['id' => $id], 201);
+    }
+
+    /** PATCH /client/routes/:id */
+    public static function routesPatch(?string $id = null): void
+    {
+        $tenantId = self::requireTenantId();
+        $routeId = $id ?? '';
+        if ($routeId === '') {
+            Response::error('id required', 400);
+            return;
+        }
+        $body = Auth::jsonBody();
+        $fields = [];
+        $params = [];
+        $map = [
+            'status' => 'status', 'notes' => 'notes', 'fuelUsage' => 'fuel_usage',
+            'actualDuration' => 'actual_duration',
+        ];
+        foreach ($map as $js => $col) {
+            if (array_key_exists($js, $body)) {
+                $fields[] = "{$col} = ?";
+                $params[] = $body[$js];
+            }
+        }
+        if (array_key_exists('endTime', $body)) {
+            $fields[] = 'end_time = ?';
+            $params[] = $body['endTime'] ? date('Y-m-d H:i:s', strtotime((string) $body['endTime']) ?: time()) : null;
+        }
+        if (array_key_exists('actualStartTime', $body)) {
+            $fields[] = 'actual_start_time = ?';
+            $params[] = $body['actualStartTime'] ? date('Y-m-d H:i:s', strtotime((string) $body['actualStartTime']) ?: time()) : null;
+        }
+        if (!$fields) {
+            Response::error('No fields to update', 400);
+            return;
+        }
+        $fields[] = 'updated_at = NOW(3)';
+        $params[] = $tenantId;
+        $params[] = $routeId;
+        $n = Database::execute(
+            'UPDATE fleet_routes SET ' . implode(', ', $fields) . ' WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL',
+            $params
+        );
+        if ($n === 0) {
+            Response::error('Route not found', 404);
+            return;
+        }
+        $rows = self::safeQuery('SELECT * FROM fleet_routes WHERE id = ? LIMIT 1', [$routeId], 'route_patched');
+        Response::success($rows ? self::camelCase($rows[0]) : ['id' => $routeId]);
+    }
+
+    /** DELETE /client/routes/:id */
+    public static function routesDelete(?string $id = null): void
+    {
+        $tenantId = self::requireTenantId();
+        $routeId = $id ?? '';
+        $n = Database::execute(
+            'UPDATE fleet_routes SET deleted_at = NOW(3) WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL',
+            [$tenantId, $routeId]
+        );
+        if ($n === 0) {
+            Response::error('Route not found', 404);
+            return;
+        }
+        Response::success(['deleted' => true]);
+    }
+
+    /** POST /client/fuel/sync — force fuel harvest */
+    public static function fuelSync(): void
+    {
+        $tenantId = self::requireTenantId();
+        require_once __DIR__ . '/../../lib/FuelHarvest.php';
+        $to = time();
+        $from = $to - 7 * 86400;
+        try {
+            $res = FuelHarvest::harvestTenant($tenantId, $from, $to, 20);
+            Response::success(['ok' => true, 'inserted' => (int) ($res['inserted'] ?? 0), 'attempted' => (int) ($res['attempted'] ?? 0)]);
+        } catch (Throwable $e) {
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * @param array<string,string> $map js=>col
+     */
+    private static function workshopSoftPatch(string $table, ?string $id, array $map, ?string $jsonCol = null, ?string $jsonKey = null): void
+    {
+        $tenantId = self::requireTenantId();
+        $rowId = $id ?? '';
+        if ($rowId === '' || !self::tableExists($table)) {
+            Response::error('Not found', 404);
+            return;
+        }
+        $body = Auth::jsonBody();
+        $fields = [];
+        $params = [];
+        foreach ($map as $js => $col) {
+            if (array_key_exists($js, $body)) {
+                $fields[] = "{$col} = ?";
+                $params[] = is_array($body[$js]) ? json_encode($body[$js]) : $body[$js];
+            }
+        }
+        if ($jsonCol && $jsonKey && array_key_exists($jsonKey, $body)) {
+            $fields[] = "{$jsonCol} = ?";
+            $params[] = json_encode($body[$jsonKey]);
+        }
+        if (!$fields) {
+            Response::error('No fields to update', 400);
+            return;
+        }
+        $fields[] = 'updated_at = NOW(3)';
+        $params[] = $tenantId;
+        $params[] = $rowId;
+        $n = Database::execute(
+            "UPDATE {$table} SET " . implode(', ', $fields) . ' WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL',
+            $params
+        );
+        if ($n === 0) {
+            Response::error('Not found', 404);
+            return;
+        }
+        $rows = self::safeQuery("SELECT * FROM {$table} WHERE id = ? LIMIT 1", [$rowId], 'ws_patch');
+        Response::success($rows ? self::camelCase($rows[0]) : ['id' => $rowId]);
+    }
+
+    private static function workshopSoftDelete(string $table, ?string $id): void
+    {
+        $tenantId = self::requireTenantId();
+        $rowId = $id ?? '';
+        $n = Database::execute(
+            "UPDATE {$table} SET deleted_at = NOW(3) WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL",
+            [$tenantId, $rowId]
+        );
+        if ($n === 0) {
+            Response::error('Not found', 404);
+            return;
+        }
+        Response::success(['deleted' => true]);
     }
 }

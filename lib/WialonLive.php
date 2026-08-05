@@ -506,6 +506,77 @@ final class WialonLive
                 ];
             }
 
+            // Chart attachments → PNG (data URL) via report/get_result_chart
+            $chartsOut = [];
+            $attachments = $result['reportResult']['attachments'] ?? ($result['attachments'] ?? []);
+            if (!is_array($attachments) || !$attachments) {
+                try {
+                    $applied = $client->call('report/apply_report_result', []);
+                    $attachments = $applied['reportResult']['attachments'] ?? ($applied['attachments'] ?? []);
+                } catch (Throwable $e) {
+                    $attachments = [];
+                }
+            }
+            if (is_array($attachments)) {
+                foreach (array_values($attachments) as $attIndex => $att) {
+                    if (!is_array($att)) {
+                        $att = [];
+                    }
+                    $chartName = (string) ($att['name'] ?? $att['nm'] ?? $att['label'] ?? $att['n'] ?? ('Chart ' . ($attIndex + 1)));
+                    $imageData = null;
+                    $jsonData = null;
+                    try {
+                        $rendered = $client->call('report/render_json', [
+                            'attachmentIndex' => $attIndex,
+                            'width' => 1100,
+                            'useCrop' => 0,
+                        ]);
+                        if (is_array($rendered) && (isset($rendered['datasets']) || isset($rendered['markers']))) {
+                            $jsonData = $rendered;
+                        }
+                    } catch (Throwable $e) {
+                    }
+                    try {
+                        $png = $client->requestBinary('report/get_result_chart', [
+                            'attachmentIndex' => $attIndex,
+                            'action' => 0,
+                            'width' => 1100,
+                            'height' => 420,
+                            'autoScaleY' => 1,
+                            'pixelFrom' => 0,
+                            'pixelTo' => 1100,
+                            'flags' => 0x01 | 0x200,
+                        ]);
+                        if (strlen($png) > 64) {
+                            $isPng = strlen($png) >= 4
+                                && ord($png[0]) === 0x89
+                                && $png[1] === 'P'
+                                && $png[2] === 'N'
+                                && $png[3] === 'G';
+                            if ($isPng || strlen($png) > 200) {
+                                $imageData = 'data:image/png;base64,' . base64_encode($png);
+                            }
+                        }
+                    } catch (Throwable $e) {
+                    }
+                    if ($imageData === null && $jsonData === null) {
+                        continue;
+                    }
+                    $chartsOut[] = [
+                        'index' => $attIndex,
+                        'name' => $chartName,
+                        'dataUrl' => $imageData,
+                        'url' => $imageData,
+                        'data' => array_filter([
+                            'image' => $imageData,
+                            'name' => $chartName,
+                            'datasets' => $jsonData['datasets'] ?? null,
+                            'markers' => $jsonData['markers'] ?? null,
+                        ], static fn($v) => $v !== null),
+                    ];
+                }
+            }
+
             try {
                 $client->call('report/cleanup_result', []);
             } catch (Throwable $e) {
@@ -514,6 +585,14 @@ final class WialonLive
             return [
                 'tables' => $outTables,
                 'tableCount' => count($outTables),
+                'charts' => $chartsOut,
+                'chartCount' => count($chartsOut),
+                'images' => array_values(array_filter(array_map(
+                    static fn(array $c): ?array => ($c['dataUrl'] ?? null)
+                        ? ['dataUrl' => $c['dataUrl'], 'name' => $c['name'], 'url' => $c['dataUrl']]
+                        : null,
+                    $chartsOut
+                ))),
                 'from' => $from,
                 'to' => $to,
             ];

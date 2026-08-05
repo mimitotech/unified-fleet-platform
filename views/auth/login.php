@@ -118,5 +118,7 @@
     </div>
   </div>
 </div>
-<script src="/assets/js/api.js?v=20260805e"></script>
-<script src="/assets/js/auth.js?v=20260805e"></script>
+<script src="/assets/js/api.js?v=20260806a"></script>
+<script src="/assets/js/branding.js?v=20260806a"></script>
+<script src="/assets/js/auth.js?v=20260806a"></script>
+<script>if (window.MamsBranding) MamsBranding.reset();</script>

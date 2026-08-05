@@ -1,4 +1,8 @@
 <?php
+/**
+ * API response envelope — matches platform/backend utils/response.ts
+ * { success: true, data } | { success: false, error, data: null }
+ */
 final class Response
 {
     public static function json(mixed $data, int $code = 200): void
@@ -11,11 +15,11 @@ final class Response
 
     public static function success(mixed $data, int $code = 200): void
     {
-        self::json(['data' => $data, 'error' => null], $code);
+        self::json(['success' => true, 'data' => $data, 'error' => null], $code);
     }
 
     public static function error(string $message, int $code = 400): void
     {
-        self::json(['data' => null, 'error' => $message], $code);
+        self::json(['success' => false, 'data' => null, 'error' => $message], $code);
     }
 }

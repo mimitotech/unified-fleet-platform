@@ -157,10 +157,15 @@ const MamsBranding = (() => {
       customCss: null,
       name: 'MAMS',
     });
+    try {
+      document.title = 'MAMS — Mimito Asset Management System';
+    } catch { /* ignore */ }
   }
 
   function hydrateFromCache() {
     try {
+      // Spec: tenant theme ONLY under /app — never on /admin (MAMS chrome) or public
+      if (!location.pathname.startsWith('/app')) return;
       const slug = localStorage.getItem('ufp_tenant_slug');
       if (!slug) return;
       const raw = localStorage.getItem(`ufp_tenant_branding:${slug}`);
@@ -172,7 +177,14 @@ const MamsBranding = (() => {
   return { apply, reset, resolve, hydrateFromCache, DEFAULTS, darken, lighten };
 })();
 
-// Avoid flash of wrong theme on app/admin pages
-if (location.pathname.startsWith('/app') || location.pathname.startsWith('/admin')) {
+// Public pages: always MAMS green. App pages: hydrate tenant theme from cache.
+if (location.pathname.startsWith('/app')) {
   MamsBranding.hydrateFromCache();
+} else if (
+  location.pathname.startsWith('/auth')
+  || location.pathname === '/'
+  || location.pathname.startsWith('/terms')
+  || location.pathname.startsWith('/privacy')
+) {
+  MamsBranding.reset();
 }

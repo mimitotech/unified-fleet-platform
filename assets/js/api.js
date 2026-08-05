@@ -143,6 +143,13 @@ const MamsApi = (() => {
       throw err;
     }
 
+    // Contract: { success: true, data } — tolerate legacy { data } without success
+    if (json.success === false) {
+      const err = new Error(json.error || 'Request failed');
+      err.status = res.status || 400;
+      throw err;
+    }
+
     return json.data !== undefined ? json.data : json;
   }
 

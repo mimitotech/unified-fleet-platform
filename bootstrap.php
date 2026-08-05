@@ -17,6 +17,14 @@ Env::load(SITE_ROOT . '/.env');
 
 date_default_timezone_set('UTC');
 
+// Soft-ensure workshop schema (columns + seeded checklist templates)
+try {
+    require_once SITE_ROOT . '/lib/WorkshopSchema.php';
+    WorkshopSchema::ensure();
+} catch (Throwable $e) {
+    error_log('bootstrap WorkshopSchema: ' . $e->getMessage());
+}
+
 header('X-Content-Type-Options: nosniff');
 
 $origin = Env::get('FRONTEND_URL', Env::get('API_PUBLIC_URL', 'https://mams.mimitotracking.co.ug'));

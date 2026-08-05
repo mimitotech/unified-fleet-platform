@@ -104,13 +104,40 @@ final class WialonClient
         $this->videoServiceUrl = null;
     }
 
+    /**
+     * Binary Wialon response (e.g. report/get_result_chart PNG).
+     * @param array<string, mixed> $params
+     */
+    public function requestBinary(string $svc, array $params = [], bool $withSid = true): string
+    {
+        $query = [
+            'svc' => $svc,
+            'params' => json_encode($params, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+        ];
+        if ($withSid && $this->sid) {
+            $query['sid'] = $this->sid;
+        }
+        $url = $this->baseUrl . (str_contains($this->baseUrl, '?') ? '&' : '?') . http_build_query($query);
+        $body = $this->httpGet($url);
+        // JSON error envelope instead of binary
+        if ($body !== '' && ($body[0] === '{' || $body[0] === '[')) {
+            $data = json_decode($body, true);
+            if (is_array($data) && isset($data['error']) && (int) $data['error'] !== 0) {
+                $code = (int) $data['error'];
+                $reason = isset($data['reason']) ? (string) $data['reason'] : '';
+                throw new RuntimeException($this->errorMessage($code, $reason));
+            }
+        }
+        return $body;
+    }
+
     private function httpGet(string $url): string
     {
         if (function_exists('curl_init')) {
             $ch = curl_init($url);
             curl_setopt_array($ch, [
                 CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_TIMEOUT => 45,
+                CURLOPT_TIMEOUT => 90,
                 CURLOPT_CONNECTTIMEOUT => 15,
                 CURLOPT_FOLLOWLOCATION => true,
                 CURLOPT_SSL_VERIFYPEER => true,
@@ -132,7 +159,7 @@ final class WialonClient
         $ctx = stream_context_create([
             'http' => [
                 'method' => 'GET',
-                'timeout' => 45,
+                'timeout' => 90,
                 'header' => "User-Agent: MAMS-PHP-WialonClient/1.0\r\n",
             ],
         ]);

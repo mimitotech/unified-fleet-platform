@@ -62,4 +62,50 @@ class PublicController
             Response::error($e->getMessage(), 500);
         }
     }
+
+    /** GET /public/video/:token — stream shared surveillance clip (no auth) */
+    public static function videoShare(?string $token = null): void
+    {
+        $token = trim((string) ($token ?? ''));
+        if ($token === '') {
+            http_response_code(400);
+            header('Content-Type: text/plain');
+            echo 'token required';
+            exit;
+        }
+        require_once __DIR__ . '/../../lib/VideoShare.php';
+        require_once __DIR__ . '/../../lib/WialonVideo.php';
+        $link = VideoShare::resolve($token);
+        if (!$link) {
+            http_response_code(404);
+            header('Content-Type: text/plain');
+            echo 'Link expired or not found';
+            exit;
+        }
+        $ref = $link['clipRef'];
+        $tenantId = $link['tenantId'];
+        $unitId = (int) ($ref['unitId'] ?? 0);
+        try {
+            if (($ref['source'] ?? '') === 'message') {
+                $mid = (int) ($ref['messageId'] ?? 0);
+                $file = WialonVideo::readMessageVideoFile($tenantId, $unitId, $mid);
+            } else {
+                $path = (string) ($ref['path'] ?? '');
+                $storage = (int) ($ref['storageType'] ?? 2);
+                $file = WialonVideo::readStorageFile($tenantId, $unitId, $storage, $path);
+            }
+            http_response_code(200);
+            header('Content-Type: ' . ($file['contentType'] ?? 'video/mp4'));
+            header('Content-Length: ' . strlen($file['data']));
+            header('Cache-Control: private, max-age=60');
+            header('Content-Disposition: inline; filename="' . str_replace('"', '', $file['fileName'] ?? 'clip.mp4') . '"');
+            echo $file['data'];
+            exit;
+        } catch (Throwable $e) {
+            http_response_code(502);
+            header('Content-Type: text/plain');
+            echo $e->getMessage();
+            exit;
+        }
+    }
 }

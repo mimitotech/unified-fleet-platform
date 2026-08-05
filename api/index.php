@@ -71,6 +71,47 @@ try {
     if ($apiPath === '/public/login-trust-logos' && $method === 'GET') {
         PublicController::loginTrustLogos();
     }
+    if (route_match('/public/video/:token', $apiPath, $p) && $method === 'GET') {
+        PublicController::videoShare($p['token']);
+    }
+
+    // Webhooks (no auth — HMAC verified inside)
+    if (route_match('/webhooks/loconav/:slug', $apiPath, $p) && $method === 'POST') {
+        require_once dirname(__DIR__) . '/lib/WebhookHandler.php';
+        $raw = file_get_contents('php://input') ?: '';
+        $body = json_decode($raw, true);
+        if (!is_array($body)) {
+            $body = [];
+        }
+        $sig = $_SERVER['HTTP_X_LOCONAV_SIGNATURE'] ?? $_SERVER['HTTP_X_SIGNATURE'] ?? '';
+        $secret = (string) (Env::get('LOCONAV_WEBHOOK_SECRET', '') ?: '');
+        if (!WebhookHandler::verifySignature((string) $sig, $secret, $raw)) {
+            Response::error('Invalid signature', 401);
+        }
+        $tenantId = WebhookHandler::tenantIdBySlug((string) $p['slug']);
+        if (!$tenantId) {
+            Response::error('Unknown tenant', 404);
+        }
+        Response::success(WebhookHandler::handleLocoNav($tenantId, $body));
+    }
+    if (route_match('/webhooks/tracksolid/:slug', $apiPath, $p) && $method === 'POST') {
+        require_once dirname(__DIR__) . '/lib/WebhookHandler.php';
+        $raw = file_get_contents('php://input') ?: '';
+        $body = json_decode($raw, true);
+        if (!is_array($body)) {
+            $body = [];
+        }
+        $sig = $_SERVER['HTTP_X_TRACKSOLID_SIGNATURE'] ?? $_SERVER['HTTP_X_SIGNATURE'] ?? '';
+        $secret = (string) (Env::get('TRACKSOLID_WEBHOOK_SECRET', '') ?: '');
+        if (!WebhookHandler::verifySignature((string) $sig, $secret, $raw)) {
+            Response::error('Invalid signature', 401);
+        }
+        $tenantId = WebhookHandler::tenantIdBySlug((string) $p['slug']);
+        if (!$tenantId) {
+            Response::error('Unknown tenant', 404);
+        }
+        Response::success(WebhookHandler::handleTrackSolid($tenantId, $body));
+    }
 
     // Client — core
     if ($apiPath === '/client/tenant' && $method === 'GET') {
@@ -90,6 +131,12 @@ try {
     }
     if ($apiPath === '/client/alerts' && $method === 'GET') {
         ClientController::alerts();
+    }
+    if ($apiPath === '/client/alerts/acknowledge-bulk' && $method === 'POST') {
+        ClientController::alertsAcknowledgeBulk();
+    }
+    if ($apiPath === '/client/alerts/sync' && $method === 'POST') {
+        ClientController::alertsSync();
     }
     if (route_match('/client/alerts/:id/acknowledge', $apiPath, $p) && $method === 'POST') {
         ClientController::alertAcknowledge($p['id']);
@@ -136,11 +183,29 @@ try {
     if ($apiPath === '/client/wialon/reports/exec' && $method === 'POST') {
         ClientController::wialonReportExec();
     }
+    if ($apiPath === '/client/wialon/reports/run' && $method === 'POST') {
+        ClientController::wialonReportRun();
+    }
     if ($apiPath === '/client/wialon/fuel/live' && $method === 'GET') {
         ClientController::wialonFuelLive();
     }
     if ($apiPath === '/client/wialon/fuel/assets' && $method === 'GET') {
         ClientController::wialonFuelAssets();
+    }
+    if ($apiPath === '/client/wialon/fuel/dashboard' && $method === 'GET') {
+        ClientController::wialonFuelDashboard();
+    }
+    if ($apiPath === '/client/wialon/fuel/analytics' && $method === 'GET') {
+        ClientController::wialonFuelAnalytics();
+    }
+    if ($apiPath === '/client/wialon/fuel/analytics/warm' && $method === 'POST') {
+        ClientController::wialonFuelAnalyticsWarm();
+    }
+    if ($apiPath === '/client/wialon/fuel/module-config' && $method === 'GET') {
+        ClientController::wialonFuelModuleConfig();
+    }
+    if ($apiPath === '/client/wialon/fuel/generator-engine-hours' && $method === 'GET') {
+        ClientController::wialonFuelGeneratorEngineHours();
     }
     if ($apiPath === '/client/wialon/fuel/overview' && $method === 'GET') {
         ClientController::wialonFuelOverview();
@@ -168,6 +233,18 @@ try {
     }
     if ($apiPath === '/client/surveillance/units' && $method === 'GET') {
         ClientController::surveillanceUnits();
+    }
+    if ($apiPath === '/client/surveillance/streams' && $method === 'GET') {
+        ClientController::surveillanceStreams();
+    }
+    if ($apiPath === '/client/surveillance/violations' && $method === 'GET') {
+        ClientController::surveillanceViolations();
+    }
+    if ($apiPath === '/client/surveillance/clips/share' && $method === 'POST') {
+        ClientController::surveillanceClipsShare();
+    }
+    if ($apiPath === '/client/surveillance/embed-session' && $method === 'GET') {
+        ClientController::surveillanceEmbedSession();
     }
     if (route_match('/client/surveillance/units/:id/cameras/:ch/live/start', $apiPath, $p) && $method === 'POST') {
         ClientController::surveillanceLiveStart($p['id'], $p['ch']);
@@ -210,6 +287,9 @@ try {
     if (route_match('/client/users/:id', $apiPath, $p) && $method === 'PATCH') {
         ClientController::clientUsersPatch($p['id']);
     }
+    if (route_match('/client/users/:id', $apiPath, $p) && $method === 'DELETE') {
+        ClientController::clientUsersDelete($p['id']);
+    }
     if (route_match('/client/users/:id/reset-password', $apiPath, $p) && $method === 'POST') {
         ClientController::clientUsersResetPassword($p['id']);
     }
@@ -233,11 +313,20 @@ try {
     if ($apiPath === '/client/routes' && $method === 'GET') {
         DomainController::routes();
     }
+    if ($apiPath === '/client/routes' && $method === 'POST') {
+        DomainController::routesCreate();
+    }
     if ($apiPath === '/client/routes/stats' && $method === 'GET') {
         DomainController::routesStats();
     }
     if ($apiPath === '/client/routes/trips' && $method === 'GET') {
         DomainController::routesTrips();
+    }
+    if (route_match('/client/routes/:id', $apiPath, $p) && $method === 'PATCH') {
+        DomainController::routesPatch($p['id']);
+    }
+    if (route_match('/client/routes/:id', $apiPath, $p) && $method === 'DELETE') {
+        DomainController::routesDelete($p['id']);
     }
     if ($apiPath === '/client/fuel/transactions' && $method === 'GET') {
         DomainController::fuelTransactions();
@@ -251,11 +340,26 @@ try {
     if ($apiPath === '/client/fuel/sync-status' && $method === 'GET') {
         DomainController::fuelSyncStatus();
     }
+    if ($apiPath === '/client/fuel/sync' && $method === 'POST') {
+        DomainController::fuelSync();
+    }
+    if ($apiPath === '/client/fuel/variance' && $method === 'GET') {
+        DomainController::fuelVariance();
+    }
     if ($apiPath === '/client/workshop/kpis' && $method === 'GET') {
         DomainController::workshopKpis();
     }
     if ($apiPath === '/client/workshop/inspections' && $method === 'GET') {
         DomainController::workshopInspections();
+    }
+    if ($apiPath === '/client/workshop/inspections' && $method === 'POST') {
+        DomainController::workshopInspectionCreate();
+    }
+    if (route_match('/client/workshop/inspections/:id', $apiPath, $p) && $method === 'PATCH') {
+        DomainController::workshopInspectionPatch($p['id']);
+    }
+    if (route_match('/client/workshop/inspections/:id', $apiPath, $p) && $method === 'DELETE') {
+        DomainController::workshopInspectionDelete($p['id']);
     }
     if ($apiPath === '/client/workshop/maintenance' && $method === 'GET') {
         DomainController::workshopMaintenance();
@@ -269,8 +373,23 @@ try {
     if ($apiPath === '/client/workshop/maintenance' && $method === 'POST') {
         DomainController::workshopMaintenanceCreate();
     }
+    if (route_match('/client/workshop/maintenance/:id', $apiPath, $p) && $method === 'PATCH') {
+        DomainController::workshopMaintenancePatch($p['id']);
+    }
+    if (route_match('/client/workshop/maintenance/:id', $apiPath, $p) && $method === 'DELETE') {
+        DomainController::workshopMaintenanceDelete($p['id']);
+    }
     if ($apiPath === '/client/workshop/breakdowns' && $method === 'POST') {
         DomainController::workshopBreakdownCreate();
+    }
+    if (route_match('/client/workshop/breakdowns/:id', $apiPath, $p) && $method === 'PATCH') {
+        DomainController::workshopBreakdownPatch($p['id']);
+    }
+    if (route_match('/client/workshop/breakdowns/:id', $apiPath, $p) && $method === 'DELETE') {
+        DomainController::workshopBreakdownDelete($p['id']);
+    }
+    if ($apiPath === '/client/workshop/checklist-templates' && $method === 'GET') {
+        DomainController::workshopChecklistTemplates();
     }
     if ($apiPath === '/client/geofences' && $method === 'GET') {
         DomainController::geofences();
@@ -345,6 +464,39 @@ try {
     }
     if (route_match('/admin/tenants/:id/integrations', $apiPath, $p) && $method === 'GET') {
         AdminController::tenantIntegrations($p['id']);
+    }
+    if (route_match('/admin/tenants/:id/integrations/:sourceType', $apiPath, $p) && $method === 'PUT') {
+        AdminController::tenantIntegrationsPut($p['id'], $p['sourceType']);
+    }
+    if (route_match('/admin/tenants/:id/integrations/:sourceType/test', $apiPath, $p) && $method === 'POST') {
+        AdminController::tenantIntegrationsTest($p['id'], $p['sourceType']);
+    }
+    if (route_match('/admin/tenants/:id/integrations/:sourceType/sync', $apiPath, $p) && $method === 'POST') {
+        AdminController::tenantIntegrationsSync($p['id'], $p['sourceType']);
+    }
+    if (route_match('/admin/tenants/:id/wialon/link-account', $apiPath, $p) && $method === 'POST') {
+        AdminController::wialonLinkAccount($p['id']);
+    }
+    if (route_match('/admin/tenants/:id/upload', $apiPath, $p) && $method === 'POST') {
+        AdminController::tenantUpload($p['id']);
+    }
+    if (route_match('/admin/tenants/:id/wialon/report-templates', $apiPath, $p) && $method === 'GET') {
+        AdminController::tenantWialonReportTemplates($p['id']);
+    }
+    if (route_match('/admin/tenants/:id/fuel-module-config', $apiPath, $p) && $method === 'GET') {
+        AdminController::fuelModuleConfigGet($p['id']);
+    }
+    if (route_match('/admin/tenants/:id/fuel-module-config', $apiPath, $p) && $method === 'PUT') {
+        AdminController::fuelModuleConfigPut($p['id']);
+    }
+    if (route_match('/admin/tenants/:id/fuel-station-sheets', $apiPath, $p) && $method === 'GET') {
+        AdminController::fuelStationSheetsList($p['id']);
+    }
+    if (route_match('/admin/tenants/:id/fuel-station-sheets', $apiPath, $p) && $method === 'POST') {
+        AdminController::fuelStationSheetsUpload($p['id']);
+    }
+    if (route_match('/admin/tenants/:id/fuel-station-sheets/:uploadId', $apiPath, $p) && $method === 'DELETE') {
+        AdminController::fuelStationSheetsDelete($p['id'], $p['uploadId']);
     }
     if ($apiPath === '/admin/users' && $method === 'GET') {
         AdminController::users();

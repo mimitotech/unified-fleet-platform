@@ -545,6 +545,21 @@ class ClientController
             $params[] = $ack;
         }
 
+        if (!empty($_GET['from'])) {
+            $from = strtotime((string) $_GET['from']);
+            if ($from) {
+                $sql .= ' AND COALESCE(occurred_at, created_at) >= ?';
+                $params[] = date('Y-m-d H:i:s', $from);
+            }
+        }
+        if (!empty($_GET['to'])) {
+            $to = strtotime((string) $_GET['to']);
+            if ($to) {
+                $sql .= ' AND COALESCE(occurred_at, created_at) <= ?';
+                $params[] = date('Y-m-d H:i:s', $to);
+            }
+        }
+
         $sql .= ' ORDER BY COALESCE(occurred_at, created_at) DESC LIMIT ?';
         $params[] = $limit;
 
@@ -744,6 +759,47 @@ class ClientController
             'pwr_int'
         );
 
+        $unitIdInt = (int) ($found['wialonId'] ?? $found['id'] ?? $unitId);
+        $sensors = [];
+        $commands = [];
+        $address = null;
+        require_once __DIR__ . '/../../lib/WialonLive.php';
+        try {
+            if ($unitIdInt > 0) {
+                $sensors = WialonLive::unitSensors($tenantId, $unitIdInt);
+            }
+        } catch (Throwable $e) {
+            $sensors = [];
+        }
+        try {
+            if ($unitIdInt > 0) {
+                $commands = WialonLive::getUnitCommands($tenantId, $unitIdInt);
+            }
+        } catch (Throwable $e) {
+            $commands = [];
+        }
+        try {
+            $lat = $found['position']['lat'] ?? null;
+            $lng = $found['position']['lng'] ?? null;
+            if ($lat !== null && $lng !== null) {
+                // Best-effort reverse geocode via public API if Wialon geocode unavailable
+                $address = sprintf('%.5f, %.5f', (float) $lat, (float) $lng);
+            }
+        } catch (Throwable $e) {
+            $address = null;
+        }
+
+        // Calibrated fuel tanks from sensors / unit fields
+        $tanks = [];
+        $liters = WialonFleet::extractFuelLiters($found);
+        if ($liters !== null || isset($found['fuelLevel'])) {
+            $tanks[] = [
+                'name' => 'Main',
+                'percent' => $found['fuelLevel'] ?? null,
+                'liters' => $liters,
+            ];
+        }
+
         Response::success([
             'unit' => $found,
             'health' => [
@@ -752,7 +808,13 @@ class ClientController
                 'mileage' => $found['mileage'] ?? null,
                 'engineHours' => $found['engineHours'] ?? null,
                 'fuelLevel' => $found['fuelLevel'] ?? null,
+                'fuelLiters' => $liters,
             ],
+            'sensors' => $sensors,
+            'commands' => is_array($commands) ? $commands : [],
+            'tanks' => $tanks,
+            'address' => $address,
+            'params' => $found['prms'] ?? $found['params'] ?? [],
         ]);
     }
 
@@ -1624,163 +1686,24 @@ class ClientController
         $to = (int) ($body['to'] ?? time());
         $persist = array_key_exists('persist', $body) ? !empty($body['persist']) : true;
         $cap = max(1, min(20, (int) ($body['cap'] ?? 20)));
-        require_once __DIR__ . '/../../lib/WialonLive.php';
-        require_once __DIR__ . '/../../lib/FuelReportParser.php';
-        require_once __DIR__ . '/../../lib/WialonFleet.php';
+        require_once __DIR__ . '/../../lib/FuelHarvest.php';
 
-        @set_time_limit(300);
-
-        $resourceId = (int) ($body['resourceId'] ?? 0);
-        $templateId = (int) ($body['templateId'] ?? 0);
-        if ($resourceId <= 0 || $templateId <= 0) {
-            $picked = self::pickFuelUnitTemplate($tenantId);
-            if (!$picked) {
-                Response::error('No fuel unit report template found on this Wialon account', 404);
-                return;
-            }
-            $resourceId = (int) $picked['resourceId'];
-            $templateId = (int) $picked['id'];
+        try {
+            $result = FuelHarvest::harvestTenant(
+                $tenantId,
+                $from,
+                $to,
+                $cap,
+                $persist,
+                !empty($body['resourceId']) ? (int) $body['resourceId'] : null,
+                !empty($body['templateId']) ? (int) $body['templateId'] : null
+            );
+            Response::success($result);
+        } catch (Throwable $e) {
+            error_log('ClientController wialonFuelHarvest: ' . $e->getMessage());
+            $code = str_contains($e->getMessage(), 'No ') ? 404 : 500;
+            Response::error($e->getMessage(), $code);
         }
-
-        $unitIds = [];
-        if (!empty($body['unitIds']) && is_array($body['unitIds'])) {
-            foreach ($body['unitIds'] as $uid) {
-                $n = (int) $uid;
-                if ($n > 0) {
-                    $unitIds[] = $n;
-                }
-            }
-        }
-        $nameById = [];
-        $live = WialonFleet::tryLiveSnapshot($tenantId);
-        if ($live) {
-            foreach ($live['units'] ?? [] as $u) {
-                $id = (int) ($u['wialonId'] ?? $u['id'] ?? 0);
-                if ($id > 0) {
-                    $nameById[$id] = (string) ($u['name'] ?? ('Unit ' . $id));
-                }
-            }
-        }
-        if (!$unitIds) {
-            $unitIds = array_slice(array_keys($nameById), 0, $cap);
-        } else {
-            $unitIds = array_slice(array_values(array_unique($unitIds)), 0, $cap);
-        }
-        if (!$unitIds) {
-            Response::error('No units available to harvest', 404);
-            return;
-        }
-
-        $results = [];
-        $ok = 0;
-        $failed = 0;
-        $insertedTotal = 0;
-        foreach ($unitIds as $unitId) {
-            $unitName = $nameById[$unitId] ?? ('Unit ' . $unitId);
-            try {
-                $raw = WialonLive::execReport($tenantId, $resourceId, $templateId, $unitId, $from, $to, 300);
-                $txs = FuelReportParser::tablesToTransactions($raw['tables'] ?? [], $unitId, $unitName);
-                $inserted = 0;
-                if ($persist && $txs) {
-                    $inserted = self::persistFuelTransactions($tenantId, $unitId, $unitName, $txs);
-                }
-                $insertedTotal += $inserted;
-                $ok++;
-                $results[] = [
-                    'unitId' => $unitId,
-                    'unitName' => $unitName,
-                    'count' => count($txs),
-                    'inserted' => $inserted,
-                ];
-            } catch (Throwable $e) {
-                $failed++;
-                $results[] = [
-                    'unitId' => $unitId,
-                    'unitName' => $unitName,
-                    'count' => 0,
-                    'inserted' => 0,
-                    'error' => $e->getMessage(),
-                ];
-            }
-        }
-
-        Response::success([
-            'resourceId' => $resourceId,
-            'templateId' => $templateId,
-            'from' => $from,
-            'to' => $to,
-            'attempted' => count($unitIds),
-            'ok' => $ok,
-            'failed' => $failed,
-            'inserted' => $insertedTotal,
-            'units' => $results,
-            'fetchedAt' => gmdate('c'),
-        ]);
-    }
-
-    /**
-     * @return array{resourceId:int,id:int,name?:string}|null
-     */
-    private static function pickFuelUnitTemplate(string $tenantId): ?array
-    {
-        require_once __DIR__ . '/../../lib/WialonLive.php';
-        $catalog = WialonLive::reportCatalog($tenantId);
-        $picked = null;
-        foreach ($catalog['templates'] ?? [] as $t) {
-            if (($t['module'] ?? '') !== 'fuel') {
-                continue;
-            }
-            $name = strtolower((string) ($t['name'] ?? ''));
-            if (preg_match('/group|gensets?\b/', $name) && !str_contains($name, 'unit')) {
-                continue;
-            }
-            if (str_contains($name, 'unit') || str_contains($name, 'fill')) {
-                return $t;
-            }
-            if ($picked === null) {
-                $picked = $t;
-            }
-        }
-        return $picked;
-    }
-
-    /**
-     * @param array<int, array<string, mixed>> $txs
-     */
-    private static function persistFuelTransactions(string $tenantId, int $unitId, string $unitName, array $txs): int
-    {
-        $inserted = 0;
-        foreach ($txs as $tx) {
-            try {
-                $id = self::uuid();
-                Database::execute(
-                    'INSERT INTO fuel_transactions
-                       (id, tenant_id, unit_id, unit_name, section, tank, timestamp, time_str,
-                        location, initial_level, final_level, filled, fuel_used, sudden_fuel_drop, mileage, sensor, created_at, updated_at)
-                     VALUES (?, ?, ?, ?, ?, \'main\', ?, ?, ?, ?, ?, ?, ?, ?, ?, \'wialon_unit_report\', NOW(), NOW())
-                     ON DUPLICATE KEY UPDATE updated_at = NOW()',
-                    [
-                        $id,
-                        $tenantId,
-                        (string) $unitId,
-                        $unitName,
-                        $tx['section'],
-                        $tx['timestamp'],
-                        $tx['timeStr'],
-                        $tx['location'],
-                        $tx['initialLevel'],
-                        $tx['finalLevel'],
-                        $tx['filled'],
-                        $tx['fuelUsed'],
-                        $tx['suddenFuelDrop'],
-                        $tx['mileage'],
-                    ]
-                );
-                $inserted++;
-            } catch (Throwable $e) {
-            }
-        }
-        return $inserted;
     }
 
     /** GET /client/surveillance/units/:id/files */
@@ -1892,9 +1815,27 @@ class ClientController
         $from = (int) ($body['from'] ?? (time() - 86400));
         $to = (int) ($body['to'] ?? time());
         $maxRows = (int) ($body['maxRows'] ?? 200);
-        if ($resourceId <= 0 || $templateId <= 0 || $objectId <= 0) {
-            Response::error('reportResourceId, reportTemplateId, and reportObjectId required', 400);
+        if ($resourceId <= 0 || $templateId <= 0) {
+            Response::error('reportResourceId and reportTemplateId required', 400);
             return;
+        }
+        // Default object: explicit body → first fleet unit → report resource (group/account reports)
+        if ($objectId <= 0) {
+            try {
+                require_once __DIR__ . '/../../lib/WialonFleet.php';
+                $snap = WialonFleet::tryLiveSnapshot($tenantId);
+                foreach ($snap['units'] ?? [] as $u) {
+                    $uid = (int) ($u['wialonId'] ?? $u['id'] ?? 0);
+                    if ($uid > 0) {
+                        $objectId = $uid;
+                        break;
+                    }
+                }
+            } catch (Throwable $e) {
+            }
+            if ($objectId <= 0) {
+                $objectId = $resourceId;
+            }
         }
         require_once __DIR__ . '/../../lib/WialonLive.php';
         try {
@@ -1904,6 +1845,166 @@ class ClientController
             error_log('ClientController wialonReportExec: ' . $e->getMessage());
             Response::error($e->getMessage(), 500);
         }
+    }
+
+    /** GET /client/surveillance/streams — external / configured streams (optional table) */
+    public static function surveillanceStreams(): void
+    {
+        $tenantId = self::requireTenantId();
+        $streams = [];
+        try {
+            $exists = Database::query(
+                "SELECT 1 FROM information_schema.tables
+                 WHERE table_schema = DATABASE() AND table_name = 'video_streams' LIMIT 1"
+            );
+            if ($exists) {
+                $rows = Database::query(
+                    'SELECT id, name, url, protocol, unit_id, is_active, created_at
+                     FROM video_streams WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 100',
+                    [$tenantId]
+                );
+                foreach ($rows as $r) {
+                    $streams[] = [
+                        'id' => $r['id'],
+                        'name' => $r['name'],
+                        'url' => $r['url'],
+                        'protocol' => $r['protocol'] ?? null,
+                        'unitId' => $r['unit_id'] ?? null,
+                        'isActive' => (bool) ((int) ($r['is_active'] ?? 1)),
+                        'createdAt' => $r['created_at'] ?? null,
+                    ];
+                }
+            }
+        } catch (Throwable $e) {
+        }
+        Response::success(['streams' => $streams, 'count' => count($streams)]);
+    }
+
+    /** GET /client/surveillance/violations — eco + video alerts (+ optional unit clips) */
+    public static function surveillanceViolations(): void
+    {
+        $tenantId = self::requireTenantId();
+        $limit = max(1, min(200, (int) ($_GET['limit'] ?? 50)));
+        $unitIdFilter = isset($_GET['unitId']) ? (int) $_GET['unitId'] : 0;
+        $includeClips = !isset($_GET['includeClips']) || $_GET['includeClips'] !== '0';
+        $combined = [];
+
+        try {
+            $ecoExists = Database::query(
+                "SELECT 1 FROM information_schema.tables
+                 WHERE table_schema = DATABASE() AND table_name = 'eco_driving_violations' LIMIT 1"
+            );
+            if ($ecoExists) {
+                $rows = Database::query(
+                    "SELECT id, unit_id, unit_name, violation_type AS type, severity, occurred_at, driver_name, 'eco' AS source
+                     FROM eco_driving_violations WHERE tenant_id = ?
+                     ORDER BY occurred_at DESC LIMIT ?",
+                    [$tenantId, $limit]
+                );
+                foreach ($rows as $r) {
+                    $combined[] = [
+                        'id' => $r['id'],
+                        'unitId' => $r['unit_id'] ?? null,
+                        'unitName' => $r['unit_name'] ?? null,
+                        'type' => $r['type'] ?? null,
+                        'violationType' => $r['type'] ?? null,
+                        'severity' => $r['severity'] ?? null,
+                        'occurredAt' => $r['occurred_at'] ?? null,
+                        'driverName' => $r['driver_name'] ?? null,
+                        'source' => 'eco',
+                        'category' => 'driving',
+                    ];
+                }
+            }
+        } catch (Throwable $e) {
+        }
+
+        try {
+            $alertExists = Database::query(
+                "SELECT 1 FROM information_schema.tables
+                 WHERE table_schema = DATABASE() AND table_name = 'alerts' LIMIT 1"
+            );
+            if ($alertExists) {
+                $hasVideo = false;
+                try {
+                    $col = Database::query(
+                        "SELECT 1 FROM information_schema.columns
+                         WHERE table_schema = DATABASE() AND table_name = 'alerts' AND column_name = 'video_url' LIMIT 1"
+                    );
+                    $hasVideo = (bool) $col;
+                } catch (Throwable $e) {
+                }
+                $sql = $hasVideo
+                    ? "SELECT id, title, type, severity, occurred_at, video_url, source_type AS source
+                       FROM alerts WHERE tenant_id = ?
+                       ORDER BY occurred_at DESC LIMIT ?"
+                    : "SELECT id, title, type, severity, occurred_at, NULL AS video_url, source_type AS source
+                       FROM alerts WHERE tenant_id = ?
+                       ORDER BY occurred_at DESC LIMIT ?";
+                $rows = Database::query($sql, [$tenantId, $limit]);
+                foreach ($rows as $r) {
+                    $videoUrl = $r['video_url'] ?? null;
+                    $combined[] = [
+                        'id' => $r['id'],
+                        'title' => $r['title'] ?? null,
+                        'type' => $r['type'] ?? null,
+                        'severity' => $r['severity'] ?? null,
+                        'occurredAt' => $r['occurred_at'] ?? null,
+                        'videoUrl' => $videoUrl,
+                        'source' => $r['source'] ?? 'alert',
+                        'category' => $videoUrl ? 'video' : 'alert',
+                    ];
+                }
+            }
+        } catch (Throwable $e) {
+        }
+
+        if ($includeClips && $unitIdFilter > 0) {
+            try {
+                require_once __DIR__ . '/../../lib/WialonVideo.php';
+                $toMs = (int) (microtime(true) * 1000);
+                $fromMs = $toMs - 30 * 24 * 3600 * 1000;
+                // list files via existing API helper if available
+                $files = [];
+                if (method_exists('WialonVideo', 'listVideoFiles')) {
+                    $files = WialonVideo::listVideoFiles($tenantId, $unitIdFilter, $fromMs, $toMs);
+                }
+                foreach ($files as $f) {
+                    if (($f['source'] ?? '') !== 'message' || empty($f['messageId'])) {
+                        continue;
+                    }
+                    $combined[] = [
+                        'id' => $f['id'] ?? ('clip-' . $f['messageId']),
+                        'title' => $f['eventType'] ?? $f['name'] ?? 'Video clip',
+                        'type' => 'video_clip',
+                        'severity' => 'info',
+                        'occurredAt' => $f['occurredAt'] ?? null,
+                        'unitId' => $unitIdFilter,
+                        'source' => 'wialon',
+                        'category' => 'video',
+                        'clip' => [
+                            'unitId' => $unitIdFilter,
+                            'source' => 'message',
+                            'messageId' => $f['messageId'],
+                        ],
+                    ];
+                }
+            } catch (Throwable $e) {
+            }
+        }
+
+        if ($unitIdFilter > 0) {
+            $combined = array_values(array_filter(
+                $combined,
+                static fn(array $r): bool => (string) ($r['unitId'] ?? '') === (string) $unitIdFilter
+            ));
+        }
+
+        usort($combined, static function (array $a, array $b): int {
+            return strtotime((string) ($b['occurredAt'] ?? '0')) <=> strtotime((string) ($a['occurredAt'] ?? '0'));
+        });
+
+        Response::success(array_slice($combined, 0, $limit));
     }
 
     /** GET /client/integrations/status */
@@ -1991,6 +2092,300 @@ class ClientController
         } catch (Throwable $e) {
             error_log('ClientController alertAcknowledge: ' . $e->getMessage());
             Response::error('Failed to acknowledge alert', 500);
+        }
+    }
+
+    /** POST /client/alerts/acknowledge-bulk */
+    public static function alertsAcknowledgeBulk(): void
+    {
+        $tenantId = self::requireTenantId();
+        $body = Auth::jsonBody();
+        $ids = $body['ids'] ?? null;
+        try {
+            if (is_array($ids) && count($ids) > 0) {
+                $placeholders = implode(',', array_fill(0, count($ids), '?'));
+                $params = array_merge([$tenantId], array_map('strval', $ids));
+                $n = Database::execute(
+                    "UPDATE alerts SET acknowledged = 1
+                     WHERE tenant_id = ? AND acknowledged = 0 AND id IN ({$placeholders})",
+                    $params
+                );
+            } else {
+                $n = Database::execute(
+                    'UPDATE alerts SET acknowledged = 1 WHERE tenant_id = ? AND acknowledged = 0',
+                    [$tenantId]
+                );
+            }
+            Response::success(['acknowledged' => (int) $n]);
+        } catch (Throwable $e) {
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /** POST /client/alerts/sync */
+    public static function alertsSync(): void
+    {
+        $tenantId = self::requireTenantId();
+        require_once __DIR__ . '/../../lib/AlertHarvest.php';
+        try {
+            $inserted = AlertHarvest::harvestTenant($tenantId);
+            Response::success(['inserted' => $inserted]);
+        } catch (Throwable $e) {
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /** GET /client/wialon/fuel/analytics */
+    public static function wialonFuelAnalytics(): void
+    {
+        $tenantId = self::requireTenantId();
+        require_once __DIR__ . '/../../lib/FuelAnalytics.php';
+        $from = isset($_GET['from']) ? trim((string) $_GET['from']) : (isset($_GET['fromDate']) ? trim((string) $_GET['fromDate']) : null);
+        $to = isset($_GET['to']) ? trim((string) $_GET['to']) : (isset($_GET['toDate']) ? trim((string) $_GET['toDate']) : null);
+        $unitId = isset($_GET['unitId']) ? trim((string) $_GET['unitId']) : null;
+        if (isset($_GET['period']) && is_numeric($_GET['period'])) {
+            $days = max(1, min(90, (int) $_GET['period']));
+            $to = date('Y-m-d');
+            $from = date('Y-m-d', strtotime("-{$days} days"));
+        }
+        Response::success(FuelAnalytics::getAnalytics($tenantId, $from ?: null, $to ?: null, $unitId));
+    }
+
+    /** POST /client/wialon/fuel/analytics/warm */
+    public static function wialonFuelAnalyticsWarm(): void
+    {
+        $tenantId = self::requireTenantId();
+        require_once __DIR__ . '/../../lib/FuelHarvest.php';
+        try {
+            $to = time();
+            $from = $to - 7 * 86400;
+            $res = FuelHarvest::harvestTenant($tenantId, $from, $to, 20);
+            Response::success(['started' => true, 'inserted' => (int) ($res['inserted'] ?? 0)]);
+        } catch (Throwable $e) {
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /** GET /client/wialon/fuel/dashboard — alias of assets */
+    public static function wialonFuelDashboard(): void
+    {
+        self::wialonFuelAssets();
+    }
+
+    /** GET /client/wialon/fuel/module-config */
+    public static function wialonFuelModuleConfig(): void
+    {
+        $tenantId = self::requireTenantId();
+        require_once __DIR__ . '/../../lib/FuelModuleConfig.php';
+        Response::success(FuelModuleConfig::get($tenantId));
+    }
+
+    /** GET /client/wialon/fuel/generator-engine-hours */
+    public static function wialonFuelGeneratorEngineHours(): void
+    {
+        $tenantId = self::requireTenantId();
+        require_once __DIR__ . '/../../lib/WialonFleet.php';
+        $live = WialonFleet::tryLiveSnapshot($tenantId);
+        $rows = [];
+        foreach ($live['units'] ?? [] as $u) {
+            if (WialonFleet::classifyAsset($u) !== 'generator') {
+                continue;
+            }
+            $hours = WialonFleet::unitParam($u, 'engine_hours', 'enginehours', 'moto', 'can_engine_hours');
+            $rows[] = [
+                'unitId' => $u['wialonId'] ?? $u['id'] ?? null,
+                'name' => $u['name'] ?? null,
+                'engineHours' => $hours,
+                'fuelPercent' => $u['fuelLevel'] ?? null,
+                'fuelLiters' => WialonFleet::extractFuelLiters($u),
+                'status' => $u['status'] ?? null,
+            ];
+        }
+        Response::success(['data' => $rows, 'count' => count($rows), 'fetchedAt' => gmdate('c')]);
+    }
+
+    /** POST /client/wialon/reports/run — resolver-assisted report */
+    public static function wialonReportRun(): void
+    {
+        $tenantId = self::requireTenantId();
+        $body = Auth::jsonBody();
+        $objectId = (int) ($body['objectId'] ?? $body['reportObjectId'] ?? 0);
+        $from = (int) ($body['from'] ?? (time() - 86400));
+        $to = (int) ($body['to'] ?? time());
+        $module = strtolower(trim((string) ($body['module'] ?? '')));
+        $resourceId = (int) ($body['resourceId'] ?? $body['reportResourceId'] ?? 0);
+        $templateId = (int) ($body['templateId'] ?? $body['reportTemplateId'] ?? 0);
+        $maxRows = (int) ($body['maxRows'] ?? $body['maxRowsPerTable'] ?? 200);
+
+        require_once __DIR__ . '/../../lib/WialonLive.php';
+        if ($resourceId <= 0 || $templateId <= 0) {
+            try {
+                $templates = WialonLive::listReportTemplates($tenantId, 400);
+                $keywords = match ($module) {
+                    'fuel' => '/fuel/i',
+                    'drivers', 'emissions' => '/eco|driver|violation|safety/i',
+                    'surveillance' => '/video|camera|media/i',
+                    'workshop' => '/service|maintenance/i',
+                    default => '/trip|unit|event|mileage|fleet/i',
+                };
+                foreach ($templates as $t) {
+                    $name = (string) ($t['name'] ?? $t['n'] ?? '');
+                    if (preg_match($keywords, $name)) {
+                        $resourceId = (int) ($t['resourceId'] ?? 0);
+                        $templateId = (int) ($t['id'] ?? 0);
+                        break;
+                    }
+                }
+            } catch (Throwable $e) {
+            }
+        }
+        if ($resourceId <= 0 || $templateId <= 0) {
+            Response::error('Could not resolve report template — pass resourceId + templateId or a known module', 400);
+            return;
+        }
+        if ($objectId <= 0) {
+            try {
+                require_once __DIR__ . '/../../lib/WialonFleet.php';
+                $snap = WialonFleet::tryLiveSnapshot($tenantId);
+                foreach ($snap['units'] ?? [] as $u) {
+                    $uid = (int) ($u['wialonId'] ?? $u['id'] ?? 0);
+                    if ($uid > 0) {
+                        $objectId = $uid;
+                        break;
+                    }
+                }
+            } catch (Throwable $e) {
+            }
+            if ($objectId <= 0) {
+                $objectId = $resourceId;
+            }
+        }
+        try {
+            $result = WialonLive::execReport($tenantId, $resourceId, $templateId, $objectId, $from, $to, max(50, min(500, $maxRows)));
+            $result['template'] = [
+                'resourceId' => $resourceId,
+                'templateId' => $templateId,
+                'module' => $module !== '' ? $module : null,
+                'objectId' => $objectId,
+            ];
+            Response::success($result);
+        } catch (Throwable $e) {
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /** POST /client/surveillance/clips/share */
+    public static function surveillanceClipsShare(): void
+    {
+        $user = self::currentUser();
+        $tenantId = self::requireTenantId();
+        $body = Auth::jsonBody();
+        $unitId = (int) ($body['unitId'] ?? 0);
+        $source = (string) ($body['source'] ?? 'message');
+        if ($unitId <= 0 || !in_array($source, ['storage', 'message'], true)) {
+            Response::error('unitId and source (storage|message) required', 400);
+            return;
+        }
+        $clipRef = ['unitId' => $unitId, 'source' => $source];
+        if ($source === 'message') {
+            $mid = (int) ($body['messageId'] ?? 0);
+            if ($mid <= 0) {
+                Response::error('messageId required for message clips', 400);
+                return;
+            }
+            $clipRef['messageId'] = $mid;
+        } else {
+            $path = trim((string) ($body['path'] ?? ''));
+            if ($path === '') {
+                Response::error('path required for storage clips', 400);
+                return;
+            }
+            $clipRef['path'] = $path;
+            $clipRef['storageType'] = (int) ($body['storageType'] ?? 2);
+        }
+        require_once __DIR__ . '/../../lib/VideoShare.php';
+        try {
+            $link = VideoShare::create(
+                $tenantId,
+                $clipRef,
+                isset($body['label']) ? (string) $body['label'] : null,
+                (int) ($body['expiresInHours'] ?? 72),
+                isset($user['id']) ? (string) $user['id'] : null
+            );
+            Response::success($link);
+        } catch (Throwable $e) {
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /** GET /client/surveillance/embed-session */
+    public static function surveillanceEmbedSession(): void
+    {
+        $tenantId = self::requireTenantId();
+        $unitId = isset($_GET['unitId']) ? (int) $_GET['unitId'] : 0;
+        $channel = isset($_GET['channel']) ? (int) $_GET['channel'] : 1;
+        require_once __DIR__ . '/../../lib/TenantWialon.php';
+        require_once __DIR__ . '/../../lib/WialonClient.php';
+        try {
+            $creds = TenantWialon::loadCreds($tenantId);
+            $client = new WialonClient($creds['baseUrl']);
+            $client->login($creds['token'], $creds['operateAs']);
+            $authHash = null;
+            try {
+                $hashRes = $client->call('core/create_auth_hash', []);
+                $authHash = $hashRes['authHash'] ?? $hashRes['hash'] ?? null;
+            } catch (Throwable $e) {
+            }
+            $apiHost = parse_url($creds['baseUrl'] ?: 'https://hst-api.wialon.com', PHP_URL_HOST) ?: 'hst-api.wialon.com';
+            $hostingUrl = 'https://hosting.wialon.com';
+            $client->logout();
+            Response::success([
+                'hostingUrl' => $hostingUrl,
+                'apiHost' => $apiHost,
+                'authHash' => $authHash,
+                'accessToken' => $creds['token'],
+                'loginUrl' => $authHash ? "{$hostingUrl}/?authHash={$authHash}" : $hostingUrl,
+                'videoUrl' => $unitId > 0
+                    ? "{$hostingUrl}/#video/{$unitId}" . ($channel ? "/{$channel}" : '')
+                    : "{$hostingUrl}/#video",
+                'unitId' => $unitId ?: null,
+                'channel' => $channel,
+                'expiresInSec' => 120,
+                'videoModuleHint' => 'Open hosting URL while auth is fresh',
+            ]);
+        } catch (Throwable $e) {
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /** DELETE /client/users/:id — soft deactivate */
+    public static function clientUsersDelete(?string $id = null): void
+    {
+        $me = self::currentUser();
+        $tenantId = self::requireTenantId();
+        $userId = $id ?? '';
+        $role = (string) ($me['role'] ?? '');
+        if (!in_array($role, ['tenant_admin', 'platform_admin', 'super_admin', 'admin'], true)) {
+            Response::error('Forbidden', 403);
+            return;
+        }
+        if ($userId === '' || $userId === (string) ($me['id'] ?? '')) {
+            Response::error('Cannot deactivate yourself or missing id', 400);
+            return;
+        }
+        try {
+            $n = Database::execute(
+                "UPDATE users SET is_active = 0, updated_at = NOW()
+                 WHERE id = ? AND tenant_id = ? AND role NOT IN ('platform_admin', 'super_admin')",
+                [$userId, $tenantId]
+            );
+            if ($n === 0) {
+                Response::error('User not found', 404);
+                return;
+            }
+            Response::success(['deactivated' => true]);
+        } catch (Throwable $e) {
+            Response::error($e->getMessage(), 500);
         }
     }
 

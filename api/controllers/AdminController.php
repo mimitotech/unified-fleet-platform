@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../../lib/Database.php';
 require_once __DIR__ . '/../../lib/Auth.php';
 require_once __DIR__ . '/../../lib/Response.php';
+require_once __DIR__ . '/../../lib/Env.php';
 
 class AdminController
 {
@@ -635,24 +636,79 @@ class AdminController
         }
 
         $body = Auth::jsonBody();
+        $sets = [];
+        $params = [];
+
+        // Status / activation
         $status = isset($body['status']) ? trim((string) $body['status']) : null;
         $isActive = array_key_exists('isActive', $body) ? (bool) $body['isActive'] : null;
-
-        if ($status === null && $isActive === null) {
-            Response::error('status or isActive required', 400);
-            return;
-        }
-
         if ($status !== null && $isActive === null) {
             $isActive = in_array($status, ['active', 'warning'], true);
         }
         if ($isActive !== null && $status === null) {
             $status = $isActive ? 'active' : 'inactive';
         }
+        if ($status !== null) {
+            $sets[] = 'status = ?';
+            $params[] = $status;
+        }
+        if ($isActive !== null) {
+            $sets[] = 'is_active = ?';
+            $params[] = $isActive ? 1 : 0;
+        }
+
+        // Branding + profile fields
+        $map = [
+            'name' => 'name',
+            'contactEmail' => 'contact_email',
+            'phone' => 'phone',
+            'address' => 'address',
+            'country' => 'country',
+            'timezone' => 'timezone',
+            'language' => 'language',
+            'primaryColor' => 'primary_color',
+            'secondaryColor' => 'secondary_color',
+            'accentColor' => 'accent_color',
+            'logoUrl' => 'logo_url',
+            'faviconUrl' => 'favicon_url',
+            'customCss' => 'custom_css',
+            'maxVehicles' => 'max_vehicles',
+            'maxUsers' => 'max_users',
+        ];
+        foreach ($map as $js => $col) {
+            if (!array_key_exists($js, $body)) {
+                continue;
+            }
+            $val = $body[$js];
+            if (in_array($js, ['logoUrl', 'faviconUrl'], true) && is_string($val)) {
+                $val = self::normalizeUploadPath($val);
+            }
+            if (in_array($js, ['maxVehicles', 'maxUsers'], true)) {
+                $val = (int) $val;
+            } elseif ($val !== null) {
+                $val = is_string($val) ? trim($val) : $val;
+            }
+            $sets[] = "`{$col}` = ?";
+            $params[] = $val;
+        }
+
+        if (array_key_exists('assignedManagerId', $body) && self::columnExists('tenants', 'assigned_manager_id')) {
+            $sets[] = 'assigned_manager_id = ?';
+            $params[] = $body['assignedManagerId'] !== null && $body['assignedManagerId'] !== ''
+                ? (string) $body['assignedManagerId'] : null;
+        }
+
+        if (!$sets) {
+            Response::error('No updatable fields provided', 400);
+            return;
+        }
+
+        $sets[] = 'updated_at = NOW()';
+        $params[] = $tenantId;
 
         $updated = Database::execute(
-            'UPDATE tenants SET status = ?, is_active = ?, updated_at = NOW() WHERE id = ?',
-            [$status, $isActive ? 1 : 0, $tenantId]
+            'UPDATE tenants SET ' . implode(', ', $sets) . ' WHERE id = ?',
+            $params
         );
 
         if ($updated === 0) {
@@ -1025,16 +1081,30 @@ class AdminController
             return;
         }
 
+        $slug = '';
+        try {
+            $t = Database::query('SELECT slug FROM tenants WHERE id = ? LIMIT 1', [$tenantId]);
+            $slug = (string) ($t[0]['slug'] ?? '');
+        } catch (Throwable $e) {
+        }
+        $base = rtrim((string) (Env::get('PUBLIC_BASE_URL', '') ?: ''), '/');
+
         $result = [];
         foreach ($rows as $row) {
+            $src = (string) ($row['source_type'] ?? '');
+            $webhookUrl = null;
+            if ($slug !== '' && in_array($src, ['loconav', 'tracksolid'], true)) {
+                $webhookUrl = ($base !== '' ? $base : '') . '/api/webhooks/' . $src . '/' . $slug;
+            }
             $result[] = [
-                'sourceType' => $row['source_type'],
+                'sourceType' => $src,
                 'isActive' => (bool) ((int) ($row['is_active'] ?? 0)),
                 'lastSyncAt' => $row['last_sync_at'] ?? null,
                 'lastError' => $row['last_error'] ?? null,
                 'verified' => !empty($row['connection_verified_at']),
                 'hasCredentials' => !empty($row['credentials_encrypted']),
                 'hasWebhookSecret' => !empty($row['webhook_secret']),
+                'webhookUrl' => $webhookUrl,
                 'syncIntervalMinutes' => isset($row['sync_interval_minutes']) ? (int) $row['sync_interval_minutes'] : null,
                 'wialonAccountName' => $row['wialon_account_name'] ?? null,
                 'wialonResourceId' => isset($row['wialon_resource_id']) ? (int) $row['wialon_resource_id'] : null,
@@ -1043,6 +1113,248 @@ class AdminController
         }
 
         Response::success($result);
+    }
+
+    /** PUT /admin/tenants/:id/integrations/:sourceType */
+    public static function tenantIntegrationsPut(?string $id = null, ?string $sourceType = null): void
+    {
+        self::currentUser();
+        $tenantId = $id ?? '';
+        $sourceType = strtolower(trim((string) $sourceType));
+        if ($tenantId === '' || !in_array($sourceType, ['wialon', 'loconav', 'tracksolid'], true)) {
+            Response::error('tenant id and sourceType (wialon|loconav|tracksolid) required', 400);
+            return;
+        }
+        require_once __DIR__ . '/../../lib/Crypto.php';
+        $body = Auth::jsonBody();
+        $incoming = is_array($body['credentials'] ?? null) ? $body['credentials'] : $body;
+        unset($incoming['credentials'], $incoming['syncIntervalMinutes']);
+        $syncInterval = (int) ($body['syncIntervalMinutes'] ?? 5);
+        if ($syncInterval < 1) {
+            $syncInterval = 5;
+        }
+
+        $prev = [];
+        try {
+            $rows = Database::query(
+                'SELECT credentials_encrypted, webhook_secret FROM data_sources WHERE tenant_id = ? AND source_type = ? LIMIT 1',
+                [$tenantId, $sourceType]
+            );
+            if ($rows && !empty($rows[0]['credentials_encrypted'])) {
+                try {
+                    $prev = Crypto::decrypt((string) $rows[0]['credentials_encrypted']);
+                } catch (Throwable $e) {
+                    $prev = [];
+                }
+            }
+            $webhookSecret = (string) ($rows[0]['webhook_secret'] ?? '');
+        } catch (Throwable $e) {
+            $webhookSecret = '';
+        }
+        if ($webhookSecret === '') {
+            $webhookSecret = bin2hex(random_bytes(16));
+        }
+
+        $credentials = array_merge($prev, array_filter(
+            $incoming,
+            static fn($v) => $v !== null && $v !== ''
+        ));
+
+        if ($sourceType === 'tracksolid') {
+            if (empty($credentials['passwordMd5']) && !empty($credentials['password'])) {
+                $credentials['passwordMd5'] = md5((string) $credentials['password']);
+            }
+            unset($credentials['password']);
+            if (!empty($credentials['apiKey']) && empty($credentials['appKey'])) {
+                $credentials['appKey'] = $credentials['apiKey'];
+            }
+            if (!empty($credentials['secretKey']) && empty($credentials['appSecret'])) {
+                $credentials['appSecret'] = $credentials['secretKey'];
+            }
+            if (!empty($credentials['userId']) && empty($credentials['account'])) {
+                $credentials['account'] = $credentials['userId'];
+            }
+        }
+        if ($sourceType === 'loconav') {
+            if (empty($credentials['token']) && !empty($credentials['apiToken'])) {
+                $credentials['token'] = $credentials['apiToken'];
+            }
+        }
+        if ($sourceType === 'wialon' && !empty($credentials['token'])) {
+            $credentials['token'] = trim((string) $credentials['token']);
+        }
+
+        $enc = Crypto::encrypt($credentials);
+        try {
+            Database::execute(
+                'INSERT INTO data_sources
+                   (tenant_id, source_type, credentials_encrypted, is_active, sync_interval_minutes, webhook_secret, created_at, updated_at)
+                 VALUES (?, ?, ?, 1, ?, ?, NOW(3), NOW(3))
+                 ON DUPLICATE KEY UPDATE
+                   credentials_encrypted = VALUES(credentials_encrypted),
+                   is_active = 1,
+                   sync_interval_minutes = VALUES(sync_interval_minutes),
+                   webhook_secret = COALESCE(webhook_secret, VALUES(webhook_secret)),
+                   updated_at = NOW(3)',
+                [$tenantId, $sourceType, $enc, $syncInterval, $webhookSecret]
+            );
+            Database::execute(
+                'UPDATE data_sources SET connection_verified_at = NOW(3), last_error = NULL, updated_at = NOW(3)
+                 WHERE tenant_id = ? AND source_type = ?',
+                [$tenantId, $sourceType]
+            );
+        } catch (Throwable $e) {
+            Response::error($e->getMessage(), 500);
+            return;
+        }
+
+        $slug = '';
+        try {
+            $t = Database::query('SELECT slug FROM tenants WHERE id = ? LIMIT 1', [$tenantId]);
+            $slug = (string) ($t[0]['slug'] ?? '');
+        } catch (Throwable $e) {
+        }
+        $base = rtrim((string) (Env::get('PUBLIC_BASE_URL', '') ?: ''), '/');
+        $webhookUrl = null;
+        if ($slug !== '' && in_array($sourceType, ['loconav', 'tracksolid'], true)) {
+            $webhookUrl = ($base !== '' ? $base : '') . '/api/webhooks/' . $sourceType . '/' . $slug;
+        }
+
+        Response::success([
+            'sourceType' => $sourceType,
+            'isActive' => true,
+            'verified' => true,
+            'hasCredentials' => true,
+            'syncIntervalMinutes' => $syncInterval,
+            'webhookUrl' => $webhookUrl,
+            'message' => 'Integration saved',
+        ]);
+    }
+
+    /** POST /admin/tenants/:id/integrations/:sourceType/test */
+    public static function tenantIntegrationsTest(?string $id = null, ?string $sourceType = null): void
+    {
+        self::currentUser();
+        $tenantId = $id ?? '';
+        $sourceType = strtolower(trim((string) $sourceType));
+        if ($tenantId === '' || $sourceType === '') {
+            Response::error('tenant id and sourceType required', 400);
+            return;
+        }
+        $assetCount = 0;
+        $sample = [];
+        $connected = false;
+        $error = null;
+        try {
+            if ($sourceType === 'wialon') {
+                require_once __DIR__ . '/../../lib/WialonFleet.php';
+                $live = WialonFleet::tryLiveSnapshot($tenantId);
+                if ($live) {
+                    $connected = true;
+                    $units = $live['units'] ?? [];
+                    $assetCount = count($units);
+                    foreach (array_slice($units, 0, 10) as $u) {
+                        $sample[] = ['id' => $u['wialonId'] ?? $u['id'] ?? null, 'name' => $u['name'] ?? null];
+                    }
+                } else {
+                    $error = 'Could not fetch live fleet — check token / link-account';
+                }
+            } else {
+                require_once __DIR__ . '/../../lib/Crypto.php';
+                $rows = Database::query(
+                    'SELECT credentials_encrypted FROM data_sources WHERE tenant_id = ? AND source_type = ? LIMIT 1',
+                    [$tenantId, $sourceType]
+                );
+                if (!$rows || empty($rows[0]['credentials_encrypted'])) {
+                    $error = 'No credentials stored';
+                } else {
+                    $creds = Crypto::decrypt((string) $rows[0]['credentials_encrypted']);
+                    $connected = !empty($creds['token']) || !empty($creds['appKey']) || !empty($creds['account']);
+                    if (!$connected) {
+                        $error = 'Credentials incomplete';
+                    } else {
+                        $assetCount = 0;
+                        $sample = [];
+                    }
+                }
+            }
+            if ($connected) {
+                Database::execute(
+                    'UPDATE data_sources SET connection_verified_at = NOW(3), preview_asset_count = ?, last_error = NULL, updated_at = NOW(3)
+                     WHERE tenant_id = ? AND source_type = ?',
+                    [$assetCount, $tenantId, $sourceType]
+                );
+            } elseif ($error) {
+                Database::execute(
+                    'UPDATE data_sources SET last_error = ?, updated_at = NOW(3) WHERE tenant_id = ? AND source_type = ?',
+                    [$error, $tenantId, $sourceType]
+                );
+            }
+        } catch (Throwable $e) {
+            $error = $e->getMessage();
+        }
+        Response::success([
+            'connected' => $connected,
+            'sourceType' => $sourceType,
+            'assetCount' => $assetCount,
+            'sampleAssets' => $sample,
+            'capabilities' => [
+                'gps' => true,
+                'video' => $sourceType === 'wialon' || $sourceType === 'loconav',
+                'fuel' => $sourceType === 'wialon',
+            ],
+            'error' => $error,
+        ]);
+    }
+
+    /** POST /admin/tenants/:id/integrations/:sourceType/sync */
+    public static function tenantIntegrationsSync(?string $id = null, ?string $sourceType = null): void
+    {
+        self::currentUser();
+        $tenantId = $id ?? '';
+        $sourceType = strtolower(trim((string) $sourceType));
+        if ($tenantId === '' || $sourceType === '') {
+            Response::error('tenant id and sourceType required', 400);
+            return;
+        }
+        $startedAt = gmdate('c');
+        $synced = 0;
+        try {
+            if ($sourceType === 'wialon') {
+                require_once __DIR__ . '/../../lib/WialonFleet.php';
+                require_once __DIR__ . '/../../lib/FuelHarvest.php';
+                require_once __DIR__ . '/../../lib/AlertHarvest.php';
+                $live = WialonFleet::getCachedLiveFleet($tenantId);
+                $synced = count($live['units'] ?? []);
+                try {
+                    $to = time();
+                    FuelHarvest::harvestTenant($tenantId, $to - 7 * 86400, $to, 10);
+                } catch (Throwable $e) {
+                }
+                try {
+                    AlertHarvest::harvestTenant($tenantId);
+                } catch (Throwable $e) {
+                }
+            }
+            Database::execute(
+                'UPDATE data_sources SET last_sync_at = NOW(3), last_error = NULL, updated_at = NOW(3)
+                 WHERE tenant_id = ? AND source_type = ?',
+                [$tenantId, $sourceType]
+            );
+        } catch (Throwable $e) {
+            Database::execute(
+                'UPDATE data_sources SET last_error = ?, updated_at = NOW(3) WHERE tenant_id = ? AND source_type = ?',
+                [$e->getMessage(), $tenantId, $sourceType]
+            );
+            Response::error($e->getMessage(), 500);
+            return;
+        }
+        Response::success([
+            'success' => true,
+            'vehiclesSynced' => $synced,
+            'startedAt' => $startedAt,
+            'message' => "{$synced} vehicles synced",
+        ]);
     }
 
     /** PATCH /admin/users/:id */
@@ -1814,5 +2126,376 @@ class AdminController
             error_log('AdminController wialonAccount: ' . $e->getMessage());
             Response::error($e->getMessage(), 500);
         }
+    }
+
+    /**
+     * POST /admin/tenants/:id/wialon/link-account
+     * Body: { accountId, accountName?, motherAccountId?, userIds? }
+     */
+    public static function wialonLinkAccount(?string $id = null): void
+    {
+        self::currentUser();
+        $tenantId = $id ?? '';
+        if ($tenantId === '') {
+            Response::error('Tenant id required', 400);
+            return;
+        }
+
+        $body = Auth::jsonBody();
+        $accountId = (int) ($body['accountId'] ?? 0);
+        if ($accountId <= 0) {
+            Response::error('accountId required', 400);
+            return;
+        }
+        $accountName = trim((string) ($body['accountName'] ?? ''));
+        $motherAccountId = trim((string) ($body['motherAccountId'] ?? ''));
+
+        require_once __DIR__ . '/../../lib/Crypto.php';
+        require_once __DIR__ . '/../../lib/WialonHierarchy.php';
+
+        try {
+            // One account → one tenant
+            $claimed = Database::query(
+                "SELECT tenant_id FROM data_sources
+                 WHERE source_type = 'wialon' AND wialon_resource_id = ?
+                   AND tenant_id <> ?
+                 LIMIT 1",
+                [$accountId, $tenantId]
+            );
+            if ($claimed) {
+                Response::error('This Wialon account is already linked to another client', 409);
+                return;
+            }
+
+            if ($motherAccountId === '') {
+                $defaults = Database::query(
+                    'SELECT id FROM wialon_mother_accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1'
+                );
+                $motherAccountId = (string) ($defaults[0]['id'] ?? '');
+            }
+            if ($motherAccountId === '') {
+                Response::error('Select a Wialon mother account before linking', 400);
+                return;
+            }
+
+            $creds = self::loadMotherCreds($motherAccountId);
+            $probe = WialonHierarchy::probe($creds['token'], $creds['baseUrl']);
+            if ($accountName === '') {
+                foreach ($probe['accounts'] ?? [] as $a) {
+                    if ((int) ($a['id'] ?? 0) === $accountId) {
+                        $accountName = (string) ($a['name'] ?? '');
+                        break;
+                    }
+                }
+            }
+            if ($accountName === '') {
+                $accountName = (string) $accountId;
+            }
+
+            $units = WialonHierarchy::unitsForAccount($creds['token'], (string) $accountId, $creds['baseUrl']);
+            $encrypted = Crypto::encrypt(['accountId' => (string) $accountId]);
+            $webhookSecret = bin2hex(random_bytes(16));
+            $meta = [
+                'scopedAccountId' => $accountId,
+                'scopedAccountName' => $accountName,
+                'motherAccountId' => $motherAccountId,
+                'linkedAt' => gmdate('c'),
+                'source' => 'wialon_center',
+                'counts' => ['units' => count($units)],
+                'baseUrl' => $creds['baseUrl'] ?: 'https://hst-api.wialon.com/wialon/ajax.html',
+            ];
+
+            $existing = Database::query(
+                "SELECT id FROM data_sources WHERE tenant_id = ? AND source_type = 'wialon' LIMIT 1",
+                [$tenantId]
+            );
+
+            if ($existing) {
+                Database::execute(
+                    "UPDATE data_sources SET
+                       credentials_encrypted = ?,
+                       is_active = 1,
+                       inherits_platform_credentials = 1,
+                       wialon_resource_id = ?,
+                       wialon_account_name = ?,
+                       wialon_operate_as = NULL,
+                       wialon_mother_account_id = ?,
+                       wialon_session_meta = ?,
+                       preview_asset_count = ?,
+                       connection_verified_at = NOW(3),
+                       last_error = NULL,
+                       last_sync_at = NOW(3),
+                       webhook_secret = COALESCE(webhook_secret, ?),
+                       updated_at = NOW(3)
+                     WHERE tenant_id = ? AND source_type = 'wialon'",
+                    [
+                        $encrypted,
+                        $accountId,
+                        $accountName,
+                        $motherAccountId,
+                        json_encode($meta),
+                        count($units),
+                        $webhookSecret,
+                        $tenantId,
+                    ]
+                );
+            } else {
+                Database::execute(
+                    "INSERT INTO data_sources
+                       (id, tenant_id, source_type, credentials_encrypted, is_active, sync_interval_minutes,
+                        webhook_secret, inherits_platform_credentials, wialon_resource_id, wialon_account_name,
+                        wialon_mother_account_id, wialon_session_meta, preview_asset_count,
+                        connection_verified_at, last_sync_at, created_at, updated_at)
+                     VALUES (?, ?, 'wialon', ?, 1, 5, ?, 1, ?, ?, ?, ?, ?, NOW(3), NOW(3), NOW(3), NOW(3))",
+                    [
+                        self::uuid(),
+                        $tenantId,
+                        $encrypted,
+                        $webhookSecret,
+                        $accountId,
+                        $accountName,
+                        $motherAccountId,
+                        json_encode($meta),
+                        count($units),
+                    ]
+                );
+            }
+
+            $synced = self::syncLinkedUnits($tenantId, $units);
+
+            Response::success([
+                'accountId' => $accountId,
+                'accountName' => $accountName,
+                'motherAccountId' => $motherAccountId,
+                'unitCount' => count($units),
+                'assetsSynced' => $synced,
+                'linked' => true,
+            ]);
+        } catch (Throwable $e) {
+            error_log('AdminController wialonLinkAccount: ' . $e->getMessage());
+            Response::error($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Upsert assets + asset_mappings for linked Wialon units.
+     * @param array<int, array<string, mixed>> $units
+     */
+    private static function syncLinkedUnits(string $tenantId, array $units): int
+    {
+        $n = 0;
+        $hasTenantOnMap = self::columnExists('asset_mappings', 'tenant_id');
+        foreach ($units as $u) {
+            $extId = (string) ($u['id'] ?? '');
+            $name = (string) ($u['nm'] ?? $u['name'] ?? ('Unit ' . $extId));
+            if ($extId === '') {
+                continue;
+            }
+            try {
+                $mapSql = $hasTenantOnMap
+                    ? "SELECT am.asset_id FROM asset_mappings am
+                       JOIN assets a ON a.id = am.asset_id
+                       WHERE a.tenant_id = ? AND am.source_type = 'wialon' AND am.external_id = ?
+                       LIMIT 1"
+                    : "SELECT am.asset_id FROM asset_mappings am
+                       JOIN assets a ON a.id = am.asset_id
+                       WHERE a.tenant_id = ? AND am.source_type = 'wialon' AND am.external_id = ?
+                       LIMIT 1";
+                $map = Database::query($mapSql, [$tenantId, $extId]);
+                if ($map) {
+                    Database::execute(
+                        'UPDATE assets SET name = ?, updated_at = NOW(3) WHERE id = ? AND tenant_id = ?',
+                        [$name, $map[0]['asset_id'], $tenantId]
+                    );
+                    $n++;
+                    continue;
+                }
+                $assetId = self::uuid();
+                Database::execute(
+                    'INSERT INTO assets (id, tenant_id, name, created_at, updated_at)
+                     VALUES (?, ?, ?, NOW(3), NOW(3))',
+                    [$assetId, $tenantId, $name]
+                );
+                if ($hasTenantOnMap) {
+                    Database::execute(
+                        "INSERT INTO asset_mappings (id, tenant_id, asset_id, source_type, external_id, created_at)
+                         VALUES (?, ?, ?, 'wialon', ?, NOW(3))",
+                        [self::uuid(), $tenantId, $assetId, $extId]
+                    );
+                } else {
+                    Database::execute(
+                        "INSERT INTO asset_mappings (id, asset_id, source_type, external_id, created_at)
+                         VALUES (?, ?, 'wialon', ?, NOW(3))",
+                        [self::uuid(), $assetId, $extId]
+                    );
+                }
+                $n++;
+            } catch (Throwable $e) {
+                // continue other units
+            }
+        }
+        return $n;
+    }
+
+    /** GET /admin/tenants/:id/wialon/report-templates — fuel template picker */
+    public static function tenantWialonReportTemplates(?string $id = null): void
+    {
+        self::currentUser();
+        $tenantId = $id ?? '';
+        if ($tenantId === '') {
+            Response::error('Tenant id required', 400);
+            return;
+        }
+        require_once __DIR__ . '/../../lib/WialonLive.php';
+        try {
+            $templates = WialonLive::listReportTemplates($tenantId);
+            Response::success(['templates' => $templates, 'count' => count($templates)]);
+        } catch (Throwable $e) {
+            Response::success(['templates' => [], 'count' => 0, 'error' => $e->getMessage()]);
+        }
+    }
+
+    /** POST /admin/tenants/:id/upload — logo/favicon base64 */
+    public static function tenantUpload(?string $id = null): void
+    {
+        self::currentUser();
+        $tenantId = $id ?? '';
+        if ($tenantId === '') {
+            Response::error('Tenant id required', 400);
+            return;
+        }
+        $body = Auth::jsonBody();
+        $fileName = trim((string) ($body['fileName'] ?? ''));
+        $data = (string) ($body['data'] ?? '');
+        $fileType = trim((string) ($body['fileType'] ?? 'logo'));
+        $mimeType = isset($body['mimeType']) ? (string) $body['mimeType'] : null;
+        if ($fileName === '' || $data === '') {
+            Response::error('fileName and data required', 400);
+            return;
+        }
+        require_once __DIR__ . '/../../lib/UploadService.php';
+        try {
+            $base64 = str_contains($data, ',') ? explode(',', $data, 2)[1] : $data;
+            $binary = base64_decode($base64, true);
+            if ($binary === false || $binary === '') {
+                Response::error('Invalid base64 data', 400);
+                return;
+            }
+            $mime = UploadService::resolveMime($fileName, $mimeType);
+            $result = UploadService::saveTenantFile($tenantId, $fileType, $fileName, $mime, $binary);
+            Response::success(array_merge($result, [
+                'persisted' => true,
+                'message' => $fileType === 'favicon'
+                    ? 'Uploaded and saved to tenant favicon'
+                    : 'Uploaded and saved to tenant branding',
+            ]));
+        } catch (Throwable $e) {
+            Response::error($e->getMessage(), 400);
+        }
+    }
+
+    /** GET /admin/tenants/:id/fuel-module-config */
+    public static function fuelModuleConfigGet(?string $id = null): void
+    {
+        self::currentUser();
+        $tenantId = $id ?? '';
+        if ($tenantId === '') {
+            Response::error('Tenant id required', 400);
+            return;
+        }
+        require_once __DIR__ . '/../../lib/FuelModuleConfig.php';
+        Response::success(FuelModuleConfig::get($tenantId));
+    }
+
+    /** PUT /admin/tenants/:id/fuel-module-config */
+    public static function fuelModuleConfigPut(?string $id = null): void
+    {
+        self::currentUser();
+        $tenantId = $id ?? '';
+        if ($tenantId === '') {
+            Response::error('Tenant id required', 400);
+            return;
+        }
+        require_once __DIR__ . '/../../lib/FuelModuleConfig.php';
+        try {
+            Response::success(FuelModuleConfig::save($tenantId, Auth::jsonBody()));
+        } catch (Throwable $e) {
+            Response::error($e->getMessage(), 400);
+        }
+    }
+
+    /** GET /admin/tenants/:id/fuel-station-sheets */
+    public static function fuelStationSheetsList(?string $id = null): void
+    {
+        self::currentUser();
+        $tenantId = $id ?? '';
+        if ($tenantId === '') {
+            Response::error('Tenant id required', 400);
+            return;
+        }
+        require_once __DIR__ . '/../../lib/FuelModuleConfig.php';
+        Response::success(['uploads' => FuelModuleConfig::listStationUploads($tenantId)]);
+    }
+
+    /** POST /admin/tenants/:id/fuel-station-sheets — CSV base64 */
+    public static function fuelStationSheetsUpload(?string $id = null): void
+    {
+        $user = self::currentUser();
+        $tenantId = $id ?? '';
+        if ($tenantId === '') {
+            Response::error('Tenant id required', 400);
+            return;
+        }
+        $body = Auth::jsonBody();
+        $fileName = trim((string) ($body['fileName'] ?? ''));
+        $data = (string) ($body['data'] ?? '');
+        $notes = isset($body['notes']) ? trim((string) $body['notes']) : null;
+        if ($fileName === '' || $data === '') {
+            Response::error('fileName and data (base64) required', 400);
+            return;
+        }
+        require_once __DIR__ . '/../../lib/FuelModuleConfig.php';
+        try {
+            $base64 = str_contains($data, ',') ? explode(',', $data, 2)[1] : $data;
+            $binary = base64_decode($base64, true);
+            if ($binary === false || $binary === '') {
+                Response::error('Invalid base64 data', 400);
+                return;
+            }
+            $ext = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+            if (!in_array($ext, ['csv', 'txt', 'xlsx'], true)) {
+                Response::error('Upload a station sheet as .xlsx or .csv', 400);
+                return;
+            }
+            $result = FuelModuleConfig::importStationSheet(
+                $tenantId,
+                $fileName,
+                $binary,
+                isset($user['id']) ? (string) $user['id'] : null,
+                $notes
+            );
+            Response::success($result);
+        } catch (Throwable $e) {
+            Response::error($e->getMessage(), 400);
+        }
+    }
+
+    /** DELETE /admin/tenants/:id/fuel-station-sheets/:uploadId */
+    public static function fuelStationSheetsDelete(?string $id = null, ?string $uploadId = null): void
+    {
+        self::currentUser();
+        $tenantId = $id ?? '';
+        $uid = $uploadId ?? '';
+        if ($tenantId === '' || $uid === '') {
+            Response::error('Tenant id and upload id required', 400);
+            return;
+        }
+        require_once __DIR__ . '/../../lib/FuelModuleConfig.php';
+        $ok = FuelModuleConfig::deleteStationUpload($tenantId, $uid);
+        if (!$ok) {
+            Response::error('Upload not found', 404);
+            return;
+        }
+        Response::success(['deleted' => true]);
     }
 }

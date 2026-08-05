@@ -31,6 +31,7 @@
         <span class="status-pill" id="status-pill" hidden>
           <span class="status-dot" id="status-dot"></span><span id="status-pill-text">Live</span>
         </span>
+        <span class="live-age muted" id="live-age" hidden></span>
         <button type="button" class="icon-btn" id="refresh-btn" title="Refresh" aria-label="Refresh"></button>
         <div class="bell-wrap">
           <button type="button" class="icon-btn" id="alerts-bell" aria-label="Alerts">
@@ -61,8 +62,8 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script src="/assets/js/api.js?v=20260805t"></script>
-  <script src="/assets/js/icons.js?v=20260805t"></script>
-  <script src="/assets/js/branding.js?v=20260805t"></script>
-  <script src="/assets/js/charts.js?v=20260805t"></script>
-  <script src="/assets/js/app.js?v=20260805t"></script>
+<script src="/assets/js/api.js?v=20260806e"></script>
+  <script src="/assets/js/icons.js?v=20260806e"></script>
+  <script src="/assets/js/branding.js?v=20260806e"></script>
+  <script src="/assets/js/charts.js?v=20260806e"></script>
+  <script src="/assets/js/app.js?v=20260806e"></script>

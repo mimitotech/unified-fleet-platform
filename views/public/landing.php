@@ -174,6 +174,8 @@
   </div>
 </footer>
 </div>
+<script src="/assets/js/branding.js?v=20260806a"></script>
+<script>if (window.MamsBranding) MamsBranding.reset();</script>
 <script>
   document.getElementById('site-nav-toggle')?.addEventListener('click', () => {
     const m = document.getElementById('site-nav-mobile');

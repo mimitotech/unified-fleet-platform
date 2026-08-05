@@ -327,6 +327,11 @@ label > span { display: block; margin-bottom: 0.35rem; font-size: 0.8125rem; fon
 .status-pill.is-partial { border-color: rgba(0,66,37,0.3); background: var(--brand-light); color: var(--brand); }
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
 .status-pill.is-live .status-dot { animation: status-pulse 1.6s ease-in-out infinite; }
+.live-age {
+  font-size: 0.75rem;
+  white-space: nowrap;
+  color: var(--muted, #64748b);
+}
 @keyframes status-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
 .icon-btn {
@@ -893,6 +898,7 @@ label > span { display: block; margin-bottom: 0.35rem; font-size: 0.8125rem; fon
   box-shadow: var(--shadow-lg); width: min(640px, 100%);
   padding: 1.5rem; max-height: calc(100vh - 6rem); overflow-y: auto;
 }
+.modal-panel-wide { width: min(920px, 100%); }
 .modal-panel .modal-header {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 1.25rem; gap: 1rem;
@@ -903,6 +909,32 @@ label > span { display: block; margin-bottom: 0.35rem; font-size: 0.8125rem; fon
   color: var(--muted); cursor: pointer; padding: 0.25rem;
 }
 .modal-close:hover { color: var(--ink); }
+
+.checklist-section {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem 1rem;
+  border-top: 3px solid var(--brand-primary, #004225);
+  background: var(--brand-primary-soft, #eef6f1);
+  border-radius: 0 0 8px 8px;
+}
+.checklist-section h4 {
+  margin: 0 0 0.75rem;
+  color: var(--brand-dark, #003018);
+  font-size: 0.95rem;
+}
+.checklist-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 0.35rem 1rem;
+}
+.checklist-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+.checklist-item input { margin-top: 0.2rem; }
 
 /* Settings form */
 .settings-grid {
