@@ -30,7 +30,7 @@ import {
 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AlertsModuleReports } from '@/components/reports/moduleReportPanels';
-import { WialonNotificationsPanel } from '@/components/app/WialonLivePanels';
+import { AlertTypesPanel } from '@/components/app/AlertTypesPanel';
 import { useModules } from '@/hooks/useModules';
 import { cn } from '@/lib/utils';
 import { clientFacingText } from '@/lib/clientFacingText';
@@ -495,7 +495,7 @@ export default function AlertsPage() {
         </TabsContent>
 
         <TabsContent value="types" className="mt-0">
-          <WialonNotificationsPanel />
+          <AlertTypesPanel />
         </TabsContent>
 
         <TabsContent value="reports" className="mt-0">

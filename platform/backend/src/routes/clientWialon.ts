@@ -29,10 +29,6 @@ import {
 } from '../services/wialonConnectionStatus.js';
 import { WialonMotherAccountService } from '../services/WialonMotherAccountService.js';
 import { TenantFuelModuleConfigService } from '../services/TenantFuelModuleConfigService.js';
-import {
-  filterNotificationRowsForUser,
-  loadUserAllowedAlertTypes,
-} from '../services/userAlertAccess.js';
 
 const router = Router();
 
@@ -222,13 +218,6 @@ router.get('/wialon/notifications', requireTenant, async (req: TenantRequest, re
   try {
     const creds = await requireWialonCreds(req.tenantId!);
     const notifications = await WialonLiveService.listNotifications(creds);
-    // Tenant admins always see the full catalog (needed to assign ACL).
-    // Other users only see alert types enabled for them.
-    if (req.user?.id) {
-      const access = await loadUserAllowedAlertTypes(req.user.id);
-      const filtered = filterNotificationRowsForUser(notifications, access);
-      return success(res, { notifications: filtered, count: filtered.length });
-    }
     return success(res, { notifications, count: notifications.length });
   } catch (e) {
     return error(res, (e as Error).message);

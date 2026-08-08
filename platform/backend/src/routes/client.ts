@@ -27,6 +27,8 @@ import { normalizeUploadPath } from '../utils/normalizeUploadPath.js';
 import {
   ensureUserAlertAccessSchema,
   filterAlertsForUser,
+  filterAlertTypeRowsForUser,
+  listTenantAlertTypes,
   loadUserAllowedAlertTypes,
   parseAllowedAlertTypes,
   roleBypassesAlertAcl,
@@ -541,6 +543,23 @@ router.get('/assets/statuses', requireTenant, async (req: TenantRequest, res) =>
 // Alerts — sync from Wialon when requested (throttled per tenant), then read inbox
 const alertSyncAt = new Map<string, number>();
 const ALERT_SYNC_MIN_MS = 20_000;
+
+/** Distinct alert types for this client, grouped from Inbox events. */
+router.get('/alert-types', requireTenant, async (req: TenantRequest, res) => {
+  const types = await listTenantAlertTypes(req.tenantId!);
+  const wantCatalog = req.query.catalog === '1' || req.query.catalog === 'true';
+  if (wantCatalog) {
+    if (!isTenantAdmin(req)) return error(res, 'Forbidden', 403);
+    return success(res, { types, count: types.length });
+  }
+  if (!req.user?.id) return success(res, { types, count: types.length });
+  const access = await loadUserAllowedAlertTypes(req.user.id);
+  if (roleBypassesAlertAcl(access.role)) {
+    return success(res, { types, count: types.length });
+  }
+  const filtered = filterAlertTypeRowsForUser(types, access);
+  return success(res, { types: filtered, count: filtered.length });
+});
 
 router.get('/alerts', requireTenant, async (req: TenantRequest, res) => {
   const limit = parseInt(String(req.query.limit || '50'), 10);

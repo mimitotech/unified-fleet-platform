@@ -538,6 +538,22 @@ export const clientApi = {
     if (opts?.to) q.set('to', opts.to);
     return api<unknown[]>(`/api/client/alerts?${q}`).then((d) => safeArray(d));
   },
+  getAlertTypes: (opts?: { catalog?: boolean }) => {
+    const q = new URLSearchParams();
+    if (opts?.catalog) q.set('catalog', '1');
+    const qs = q.toString();
+    return api<{
+      types: Array<{
+        key: string;
+        name: string;
+        type: string;
+        category: string;
+        eventCount: number;
+        lastSeen: string | null;
+      }>;
+      count: number;
+    }>(`/api/client/alert-types${qs ? `?${qs}` : ''}`);
+  },
   acknowledgeAlert: (id: string) =>
     api(`/api/client/alerts/${id}/acknowledge`, { method: 'POST' }),
   acknowledgeAlertsBulk: (ids?: string[]) =>

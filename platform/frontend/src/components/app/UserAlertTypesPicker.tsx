@@ -2,7 +2,8 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useWialonNotifications } from '@/hooks/useWialon';
+import { useQuery } from '@tanstack/react-query';
+import { clientApi, getTenantSlug } from '@/lib/api';
 import { ROLE_LABELS } from '@/lib/systemRoles';
 
 export type AlertTypeSelection = { key: string; name: string };
@@ -21,8 +22,12 @@ type Props = {
 };
 
 export function UserAlertTypesPicker({ role, selected, onChange, disabled }: Props) {
-  const { data, isLoading, isError, refetch, isFetching } = useWialonNotifications(true);
-  const notifications = data?.notifications ?? [];
+  const { data, isLoading, isError, refetch, isFetching } = useQuery({
+    queryKey: ['alert-types-catalog', getTenantSlug() || 'default'],
+    queryFn: () => clientApi.getAlertTypes({ catalog: true }),
+    staleTime: 15_000,
+  });
+  const types = data?.types ?? [];
   const selectedKeys = new Set(selected.map((s) => s.key));
   const bypass = roleBypassesAlertAcl(role);
 
@@ -36,12 +41,7 @@ export function UserAlertTypesPicker({ role, selected, onChange, disabled }: Pro
   };
 
   const selectAll = () => {
-    onChange(
-      notifications.map((n) => ({
-        key: `${n.resourceId}:${n.id}`,
-        name: n.name,
-      })),
-    );
+    onChange(types.map((t) => ({ key: t.key, name: t.name })));
   };
 
   if (bypass) {
@@ -59,7 +59,8 @@ export function UserAlertTypesPicker({ role, selected, onChange, disabled }: Pro
         <div>
           <Label>Alert types this user can see</Label>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Tick only the Wialon notifications this user is allowed to view in Inbox and Alert types.
+            These are the alert kinds already appearing in Inbox for this client. Tick only what this
+            user is allowed to view.
           </p>
         </div>
         <div className="flex gap-1">
@@ -67,7 +68,7 @@ export function UserAlertTypesPicker({ role, selected, onChange, disabled }: Pro
             type="button"
             size="sm"
             variant="outline"
-            disabled={disabled || isLoading || !notifications.length}
+            disabled={disabled || isLoading || !types.length}
             onClick={selectAll}
           >
             Select all
@@ -88,37 +89,36 @@ export function UserAlertTypesPicker({ role, selected, onChange, disabled }: Pro
         <Skeleton className="h-28 w-full" />
       ) : isError ? (
         <div className="space-y-2 rounded-md border border-destructive/30 px-3 py-2">
-          <p className="text-sm text-destructive">Could not load alert types from Wialon.</p>
+          <p className="text-sm text-destructive">Could not load alert types.</p>
           <Button type="button" size="sm" variant="outline" disabled={isFetching} onClick={() => void refetch()}>
             Retry
           </Button>
         </div>
-      ) : !notifications.length ? (
+      ) : !types.length ? (
         <p className="text-sm text-muted-foreground rounded-md border px-3 py-2">
-          No alert types are configured for this client in Wialon yet. Connect the account and add
-          notifications there first.
+          No alerts in Inbox yet for this client. After live events appear, their types show up here
+          for you to assign.
         </p>
       ) : (
         <div className="max-h-52 overflow-y-auto rounded-md border divide-y">
-          {notifications.map((n) => {
-            const key = `${n.resourceId}:${n.id}`;
-            const checked = selectedKeys.has(key);
+          {types.map((t) => {
+            const checked = selectedKeys.has(t.key);
             return (
               <label
-                key={key}
+                key={t.key}
                 className="flex items-start gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-muted/40"
               >
                 <Checkbox
                   checked={checked}
                   disabled={disabled}
-                  onCheckedChange={(v) => toggle({ key, name: n.name }, v === true)}
+                  onCheckedChange={(v) => toggle({ key: t.key, name: t.name }, v === true)}
                   className="mt-0.5"
                 />
                 <span className="min-w-0">
-                  <span className="font-medium block truncate">{n.name}</span>
+                  <span className="font-medium block truncate">{t.name}</span>
                   <span className="text-xs text-muted-foreground">
-                    {n.resourceName}
-                    {n.active === false ? ' · inactive' : ''}
+                    {t.eventCount} event{t.eventCount === 1 ? '' : 's'}
+                    {t.category && t.category !== 'other' ? ` · ${t.category}` : ''}
                   </span>
                 </span>
               </label>
