@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { AppLayout } from '@/components/app/AppLayout';
 import { useAlerts, useAcknowledgeAlert, useBulkAcknowledge } from '@/hooks/useAlerts';
 import { Button } from '@/components/ui/button';
@@ -121,6 +122,21 @@ function prettySource(sourceType?: string) {
   return sourceType!.replace(/_/g, ' ');
 }
 
+function bareAlertTitle(title?: string) {
+  return String(title || '')
+    .replace(/\s*·\s*[^·]+$/u, '')
+    .trim();
+}
+
+function normalizeAlertTypeKey(raw: string) {
+  return String(raw || '')
+    .toLowerCase()
+    .replace(/[!?.]+$/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_|_$/g, '')
+    .trim();
+}
+
 /** Drop clocks that have not happened yet (stale period-end stamps). */
 function isPastOrNow(iso: string): boolean {
   const t = new Date(iso).getTime();
@@ -131,6 +147,13 @@ function isPastOrNow(iso: string): boolean {
 const todayStr = () => localDateIso();
 
 export default function AlertsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const activeTab =
+    tabParam === 'types' || tabParam === 'reports' || tabParam === 'inbox' ? tabParam : 'inbox';
+  const alertTypeKey = searchParams.get('alertType') || '';
+  const alertTypeName = searchParams.get('alertTypeName') || '';
+
   const [fromDate, setFromDate] = useState(() => shiftDays(todayStr(), -6));
   const [toDate, setToDate] = useState(() => todayStr());
   const [category, setCategory] = useState('all');
@@ -181,13 +204,36 @@ export default function AlertsPage() {
   const activeCategory = availableCategories.some((c) => c.id === category) ? category : 'all';
 
   const filtered = useMemo(() => {
+    const typeKey = normalizeAlertTypeKey(alertTypeKey);
     return list.filter((a) => {
+      if (typeKey) {
+        const bare = normalizeAlertTypeKey(bareAlertTitle(a.title));
+        if (bare !== typeKey) return false;
+      }
       if (activeCategory !== 'all' && categoryOf(a.type) !== activeCategory) return false;
       if (statusFilter === 'open' && a.acknowledged) return false;
       if (statusFilter === 'acked' && !a.acknowledged) return false;
       return true;
     });
-  }, [list, activeCategory, statusFilter]);
+  }, [list, activeCategory, statusFilter, alertTypeKey]);
+
+  const clearAlertTypeFilter = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('alertType');
+    next.delete('alertTypeName');
+    next.set('tab', 'inbox');
+    setSearchParams(next, { replace: true });
+  };
+
+  const setTab = (value: string) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', value);
+    if (value !== 'inbox') {
+      next.delete('alertType');
+      next.delete('alertTypeName');
+    }
+    setSearchParams(next, { replace: true });
+  };
 
   const counts = useMemo(() => {
     const byCat: Record<string, number> = { all: list.length };
@@ -253,7 +299,7 @@ export default function AlertsPage() {
       {isError && (
         <QueryErrorBanner message="Could not load alerts." onRetry={() => refetch()} className="mb-4" />
       )}
-      <Tabs defaultValue="inbox" className="space-y-3">
+      <Tabs value={activeTab} onValueChange={setTab} className="space-y-3">
         <TabsList className="branded-tabs h-auto flex-wrap w-full sm:w-auto">
           <TabsTrigger value="inbox">Inbox</TabsTrigger>
           <TabsTrigger value="types">Alert types</TabsTrigger>
@@ -261,6 +307,15 @@ export default function AlertsPage() {
         </TabsList>
 
         <TabsContent value="inbox" className="mt-0 space-y-3">
+          {alertTypeKey && (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+              <span className="text-muted-foreground">Showing only:</span>
+              <Badge variant="secondary">{alertTypeName || alertTypeKey}</Badge>
+              <Button type="button" size="sm" variant="ghost" className="h-7" onClick={clearAlertTypeFilter}>
+                Clear
+              </Button>
+            </div>
+          )}
           {/* Open-first KPIs — acknowledging clears critical/warning tiles. */}
           <div className="grid gap-2 grid-cols-2 md:grid-cols-4">
             <div className="branded-panel px-3 py-2">

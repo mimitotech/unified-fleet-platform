@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Bell } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -47,13 +48,14 @@ function LiveHeader({
   );
 }
 
-/** Alert types tab — one row per classified Inbox type (same badges as Inbox). */
+/** Alert types tab — click a type to open Inbox filtered to that type only. */
 export function AlertTypesPanel() {
+  const navigate = useNavigate();
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['alert-types', getTenantSlug() || 'default'],
     queryFn: () => clientApi.getAlertTypes(),
-    staleTime: 15_000,
-    refetchOnMount: 'always',
+    staleTime: 30_000,
+    refetchOnMount: true,
   });
 
   const types = data?.types ?? [];
@@ -66,12 +68,21 @@ export function AlertTypesPanel() {
     [types],
   );
 
+  const openType = (key: string, name: string) => {
+    const q = new URLSearchParams({
+      tab: 'inbox',
+      alertType: key,
+      alertTypeName: name,
+    });
+    navigate(`/app/alerts?${q.toString()}`);
+  };
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <LiveHeader
           title="Alert types"
-          description="Every alert this client receives, listed by name and grouped like Inbox. Assign these to users in Settings."
+          description="Every alert this client receives, listed by name and grouped like Inbox. Click a type to view only those alerts."
           count={data?.count}
           icon={Bell}
         />
@@ -133,8 +144,14 @@ export function AlertTypesPanel() {
               </TableHeader>
               <TableBody>
                 {types.map((t) => (
-                  <TableRow key={t.key}>
-                    <TableCell className="font-medium capitalize">{t.name}</TableCell>
+                  <TableRow
+                    key={t.key}
+                    className="cursor-pointer hover:bg-muted/40"
+                    onClick={() => openType(t.key, t.name)}
+                  >
+                    <TableCell className="font-medium text-primary underline-offset-2 hover:underline">
+                      {t.name}
+                    </TableCell>
                     <TableCell className="text-muted-foreground">
                       {t.categoryLabel || categoryLabel(t.category)}
                     </TableCell>

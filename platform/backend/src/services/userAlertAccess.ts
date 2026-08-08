@@ -141,21 +141,22 @@ export function sanitizeAllowedAlertTypesInput(
 }
 
 /**
- * Match when the allowed key is the classified type OR the bare event name.
- * Selecting "fuel filling" (type) or "FUEL FILLING ALERT" (event name) both work.
+ * Strict ACL: only the exact alert names enabled for the user.
+ * Never match on classified type alone — that incorrectly pulls in other
+ * same-group alerts (e.g. enabling "Fuel filling" must not show "GENSET LOW FUEL").
  */
 export function alertMatchesAllowedTypes(
   alert: FleetAlert,
   allowed: AllowedAlertType[],
 ): boolean {
   if (!allowed.length) return false;
-  const type = normalizeAlertTypeKey(alert.type || '');
   const bare = normalizeAlertTypeKey(bareAlertTitle(alert.title));
+  if (!bare) return false;
   for (const a of allowed) {
     const key = normalizeAlertTypeKey(a.key);
     const nameKey = normalizeAlertTypeKey(a.name);
-    if (key && (key === type || key === bare)) return true;
-    if (nameKey && (nameKey === type || nameKey === bare)) return true;
+    if (key && bare === key) return true;
+    if (nameKey && bare === nameKey) return true;
   }
   return false;
 }
@@ -176,12 +177,12 @@ export function filterAlertTypeRowsForUser(
   if (roleBypassesAlertAcl(opts.role)) return rows;
   if (!opts.allowed?.length) return [];
   const keys = new Set(opts.allowed.map((a) => normalizeAlertTypeKey(a.key)));
-  return rows.filter(
-    (r) =>
-      keys.has(normalizeAlertTypeKey(r.key)) ||
-      keys.has(normalizeAlertTypeKey(r.type)) ||
-      keys.has(normalizeAlertTypeKey(r.name)),
-  );
+  const names = new Set(opts.allowed.map((a) => normalizeAlertTypeKey(a.name)));
+  return rows.filter((r) => {
+    const rowKey = normalizeAlertTypeKey(r.key);
+    const rowName = normalizeAlertTypeKey(r.name);
+    return keys.has(rowKey) || names.has(rowKey) || keys.has(rowName) || names.has(rowName);
+  });
 }
 
 export async function loadUserAllowedAlertTypes(
