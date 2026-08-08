@@ -46,7 +46,12 @@ export function isStationaryUnit(unit: FleetUnit | null | undefined): boolean {
   return Boolean(unit.stationary || cat === 'generator' || cat === 'machinery');
 }
 
-export function workshopAssetLabel(category: WorkshopAssetCategory): string {
+export function workshopAssetLabel(
+  category: WorkshopAssetCategory,
+  opts?: { hasSelection?: boolean },
+): string {
+  // Before an asset is chosen, keep the UI neutral (vehicles + generators + machinery).
+  if (opts && opts.hasSelection === false) return 'Asset';
   if (category === 'generator') return 'Generator';
   if (category === 'machinery') return 'Machinery';
   return 'Vehicle';

@@ -155,7 +155,7 @@ export function BreakdownReportModal({
   }, [selectedUnit, formData.vehicleId, units]);
   const assetCategory = resolveWorkshopAssetCategory(matchedUnit, formData.assetCategory);
   const stationary = isStationaryUnit(matchedUnit) || assetCategory !== 'vehicle';
-  const assetLabel = workshopAssetLabel(assetCategory);
+  const assetLabel = workshopAssetLabel(assetCategory, { hasSelection: Boolean(matchedUnit) });
   const operatorLabel = workshopOperatorLabel(assetCategory);
   const failureOptions = FAILURE_SYSTEMS[assetCategory];
 

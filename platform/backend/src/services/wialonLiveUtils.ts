@@ -31,8 +31,12 @@ const UNIT_FLAG_FALLBACKS = [
   0x1,
 ];
 
-/** Wialon advanced `act` / `dactt` — deactivated units must not appear in fleet or reports. */
+/**
+ * Wialon advanced `act` / `dactt` — deactivated units must not appear in fleet or reports.
+ * Explicitly activated units win even if a stale `dactt` remains after reactivation.
+ */
 export function isWialonUnitActive(item: Pick<WialonSearchItem, 'act' | 'dactt' | 'nm'>): boolean {
+  if (item.act === 1 || item.act === true) return true;
   if (item.act === 0 || item.act === false) return false;
   if (typeof item.dactt === 'number' && item.dactt > 0) return false;
   return true;
@@ -42,6 +46,30 @@ export function filterActiveWialonUnits<T extends Pick<WialonSearchItem, 'act' |
   items: T[],
 ): T[] {
   return items.filter((item) => isWialonUnitActive(item));
+}
+
+/** Prefer richer search_items payloads when merging strategies. */
+function rankUnitPayload(item: WialonSearchItem): number {
+  let score = 0;
+  if (item.pos) score += 2;
+  if (item.sens && Object.keys(item.sens).length) score += 2;
+  if (item.prp && Object.keys(item.prp).length) score += 1;
+  if (item.act !== undefined) score += 1;
+  if (item.uid) score += 1;
+  return score;
+}
+
+function mergeUnitsById(
+  target: Map<number, WialonSearchItem>,
+  items: WialonSearchItem[],
+): void {
+  for (const item of items) {
+    if (!item?.id) continue;
+    const prev = target.get(item.id);
+    if (!prev || rankUnitPayload(item) >= rankUnitPayload(prev)) {
+      target.set(item.id, item);
+    }
+  }
 }
 
 export function activeUnitNameSet(items: Array<{ nm?: string; name?: string }>): Set<string> {
@@ -163,7 +191,13 @@ function unitSearchSpecs(accountId: string): Array<Record<string, unknown>> {
   ];
 }
 
-/** Search units with flag/spec fallbacks — avoids Wialon error 4 (Invalid input) on some hosts. */
+/**
+ * Search units with flag/spec fallbacks — avoids Wialon error 4 (Invalid input) on some hosts.
+ *
+ * IMPORTANT: Do not return on the first non-empty strategy. Billing `property` vs
+ * `accounttree` vs bact-filtered wildcard often return different subsets on the
+ * same account; merge by unit id so fleet/sync/alerts see the full active set.
+ */
 export async function searchUnitsForAccount(
   client: WialonClient,
   accountId: number,
@@ -171,28 +205,31 @@ export async function searchUnitsForAccount(
 ): Promise<WialonSearchItem[]> {
   const accountKey = String(accountId);
   const specs = unitSearchSpecs(accountKey);
+  const byId = new Map<number, WialonSearchItem>();
   let lastErr: Error | undefined;
+  let anySuccess = false;
 
   for (const spec of specs) {
     for (const flags of UNIT_FLAG_FALLBACKS) {
       try {
         const items = await searchAll(client, spec, flags);
+        anySuccess = true;
         const filtered =
           spec.propValueMask === '*'
             ? items.filter((u) => Number(u.bact) === accountId)
             : items;
         const active = filterActiveWialonUnits(filtered);
-        if (active.length) return active.slice(0, limit);
-        if (filtered.length && spec.propValueMask !== '*') {
-          return filterActiveWialonUnits(filtered).slice(0, limit);
-        }
+        mergeUnitsById(byId, active);
+        // This flag set worked for this spec — try the next search shape.
+        if (active.length || filtered.length) break;
       } catch (err) {
         lastErr = err as Error;
       }
     }
   }
 
-  if (lastErr) throw lastErr;
+  if (byId.size) return [...byId.values()].slice(0, limit);
+  if (lastErr && !anySuccess) throw lastErr;
   return [];
 }
 
@@ -290,26 +327,26 @@ export async function searchUnitsBasicForAccount(
   const specs = unitSearchSpecs(accountKey);
   const MIN_FLAGS =
     WIALON_UNIT_FLAG.BASE | WIALON_UNIT_FLAG.ADVANCED | WIALON_UNIT_FLAG.CONNECTION;
+  const byId = new Map<number, WialonSearchItem>();
   let lastErr: Error | undefined;
+  let anySuccess = false;
 
   for (const spec of specs) {
     try {
       const items = await searchAll(client, spec, MIN_FLAGS);
+      anySuccess = true;
       const filtered =
         spec.propValueMask === '*'
           ? items.filter((u) => Number(u.bact) === accountId)
           : items;
-      const active = filterActiveWialonUnits(filtered);
-      if (active.length) return active.slice(0, limit);
-      if (filtered.length && spec.propValueMask !== '*') {
-        return filterActiveWialonUnits(filtered).slice(0, limit);
-      }
+      mergeUnitsById(byId, filterActiveWialonUnits(filtered));
     } catch (err) {
       lastErr = err as Error;
     }
   }
 
-  if (lastErr) throw lastErr;
+  if (byId.size) return [...byId.values()].slice(0, limit);
+  if (lastErr && !anySuccess) throw lastErr;
   return [];
 }
 

@@ -17,10 +17,19 @@ type Props = {
   className?: string;
 };
 
+function unitOptionLabel(u: FleetUnit): string {
+  const bits = [u.name];
+  if (u.plate) bits.push(u.plate);
+  const cat = u.assetCategory;
+  if (cat === 'generator') bits.push('Generator');
+  else if (cat === 'machinery') bits.push('Machinery');
+  return bits.join(' · ');
+}
+
 export function FleetUnitSelect({
   value,
   onValueChange,
-  placeholder = 'Select vehicle',
+  placeholder = 'Select asset',
   filter,
   className,
 }: Props) {
@@ -44,8 +53,7 @@ export function FleetUnitSelect({
       <SelectContent>
         {options.map((u) => (
           <SelectItem key={u.id} value={u.id}>
-            {u.name}
-            {u.plate ? ` · ${u.plate}` : ''}
+            {unitOptionLabel(u)}
           </SelectItem>
         ))}
       </SelectContent>
