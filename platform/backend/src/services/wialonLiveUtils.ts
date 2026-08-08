@@ -291,7 +291,10 @@ export async function searchGroupsForAccount(
   return [];
 }
 
-/** avl_resource items (report templates) with billing-account fallbacks. */
+/** avl_resource items (reports, notifications, geofences) with billing-account fallbacks.
+ * Merges every discovery strategy (property → accounttree → wildcard+bact) so a hit on an
+ * empty/wrong resource set cannot hide resources that actually hold `unf` / `rep` / `zl`.
+ */
 export async function searchResourcesForAccount(
   client: WialonClient,
   accountId: number,
@@ -299,21 +302,35 @@ export async function searchResourcesForAccount(
   limit = 200
 ): Promise<WialonSearchItem[]> {
   const specs = billingScopedSpecs('avl_resource', String(accountId));
+  const byId = new Map<number, WialonSearchItem>();
   let lastErr: Error | undefined;
+  let anySuccess = false;
 
   for (const spec of specs) {
     try {
       const items = await searchAll(client, spec, flags);
+      anySuccess = true;
       const wildcard = spec.propValueMask === '*';
       const filtered = filterByBillingAccount(items, accountId, wildcard);
-      if (filtered.length) return filtered.slice(0, limit);
-      if (items.length && !wildcard) return items.slice(0, limit);
+      const toMerge = !wildcard && !filtered.length ? items : filtered;
+      for (const item of toMerge) {
+        const id = Number(item?.id);
+        if (!Number.isFinite(id) || id <= 0) continue;
+        const prev = byId.get(id);
+        // Prefer the richer payload when the same resource appears in multiple strategies.
+        const prevScore =
+          (prev?.unf ? 4 : 0) + (prev?.rep ? 2 : 0) + (prev?.zl ? 1 : 0);
+        const nextScore =
+          (item.unf ? 4 : 0) + (item.rep ? 2 : 0) + (item.zl ? 1 : 0);
+        if (!prev || nextScore >= prevScore) byId.set(id, item);
+      }
     } catch (err) {
       lastErr = err as Error;
     }
   }
 
-  if (lastErr) throw lastErr;
+  if (byId.size) return [...byId.values()].slice(0, limit);
+  if (lastErr && !anySuccess) throw lastErr;
   return [];
 }
 

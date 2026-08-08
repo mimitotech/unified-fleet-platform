@@ -119,7 +119,10 @@ export interface WialonSearchItem {
     string,
     {
       id: number;
-      n: string;
+      /** Modern Wialon Hosting name field. */
+      n?: string;
+      /** Legacy SDK name field (still returned by some tokens / hosting builds). */
+      nm?: string;
       ac?: number;
       ta?: number;
       td?: number;

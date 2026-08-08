@@ -24,6 +24,7 @@ import {
   resourceSearchSpec,
   routeSearchSpec,
   searchAll,
+  searchResourcesForAccount,
   searchUnitsForAccount,
   searchUnitsBasicForAccount,
   sleep,
@@ -592,23 +593,12 @@ export class WialonLiveService {
   static async listNotifications(credentials: WialonCredentialsInput, limit = 200) {
     const accountId = this.scopedAccount(credentials);
     return withWialonClient(credentials, async (client) => {
-      // Same pattern as geofences: search resources, then search_item each so `unf` is populated.
-      let resources = await searchAll(
-        client,
-        resourceSearchSpec(accountId),
-        WIALON_RESOURCE_NOTIFICATIONS_FLAGS,
-      );
-      if (!resources.length) {
-        resources = await searchAll(
-          client,
-          resourceSearchSpec(undefined),
-          WIALON_RESOURCE_NOTIFICATIONS_FLAGS,
-        );
-      }
-
+      // Same multi-strategy discovery as report templates / units — a single
+      // sys_billing_account_guid search often returns resources with empty `unf`.
       type Nf = {
-        id: number;
-        n: string;
+        id?: number;
+        n?: string;
+        nm?: string;
         ac?: number;
         ta?: number;
         td?: number;
@@ -617,7 +607,7 @@ export class WialonLiveService {
         trg?: string | { t?: string };
       };
 
-      const out: Array<{
+      type Row = {
         resourceId: number;
         resourceName: string;
         id: number;
@@ -626,27 +616,47 @@ export class WialonLiveService {
         active?: boolean;
         unitCount?: number;
         controlType?: string;
-      }> = [];
+      };
+
+      const parseUnf = (unf: unknown): Array<Nf & { id: number; name: string }> => {
+        if (!unf) return [];
+        const pairs: Array<[string, unknown]> = Array.isArray(unf)
+          ? unf.map((v, i) => [String((v as Nf)?.id ?? i), v])
+          : Object.entries(unf as Record<string, unknown>);
+        const rows: Array<Nf & { id: number; name: string }> = [];
+        for (const [key, raw] of pairs) {
+          if (!raw || typeof raw !== 'object') continue;
+          const nf = raw as Nf;
+          const id = Number(nf.id ?? key);
+          const name = String(nf.n ?? nf.nm ?? '').trim();
+          if (!Number.isFinite(id) || id <= 0 || !name) continue;
+          rows.push({ ...nf, id, name });
+        }
+        return rows;
+      };
+
+      let resources: WialonSearchItem[] = [];
+      if (accountId && Number.isFinite(Number(accountId))) {
+        resources = await searchResourcesForAccount(
+          client,
+          Number(accountId),
+          WIALON_RESOURCE_NOTIFICATIONS_FLAGS,
+        );
+      }
+      if (!resources.length) {
+        resources = await searchAll(
+          client,
+          resourceSearchSpec(undefined),
+          WIALON_RESOURCE_NOTIFICATIONS_FLAGS,
+        );
+      }
+
+      const out: Row[] = [];
       const seen = new Set<string>();
       const now = Math.floor(Date.now() / 1000);
 
-      for (const resource of resources) {
-        let unf: Record<string, Nf> = (resource.unf as Record<string, Nf>) || {};
-        try {
-          const detail = await client.request<{
-            item?: { nm?: string; unf?: Record<string, Nf> };
-          }>('core/search_item', {
-            id: resource.id,
-            flags: WIALON_RESOURCE_NOTIFICATIONS_FLAGS,
-          });
-          if (detail.item?.unf) unf = detail.item.unf;
-        } catch {
-          /* keep list-search unf if any */
-        }
-
-        for (const n of Object.values(unf)) {
-          const nf = n as Nf;
-          if (!nf?.id || !nf.n) continue;
+      const pushRows = (resource: WialonSearchItem, notifications: Array<Nf & { id: number; name: string }>) => {
+        for (const nf of notifications) {
           const key = `${resource.id}:${nf.id}`;
           if (seen.has(key)) continue;
           seen.add(key);
@@ -654,21 +664,61 @@ export class WialonLiveService {
           const disabledByFlag = (Number(nf.fl) & 0x2) === 0x2;
           const deactivated = Boolean(nf.td && nf.td > 0 && nf.td <= now);
           const controlType =
-            typeof nf.trg === 'string' ? nf.trg : nf.trg && typeof nf.trg === 'object' ? nf.trg.t : undefined;
+            typeof nf.trg === 'string'
+              ? nf.trg
+              : nf.trg && typeof nf.trg === 'object'
+                ? nf.trg.t
+                : undefined;
 
           out.push({
             resourceId: resource.id,
             resourceName: resource.nm,
             id: nf.id,
-            name: nf.n,
+            name: nf.name,
             triggers: nf.ac,
             active: !disabledByFlag && !deactivated,
             unitCount: Array.isArray(nf.un) ? nf.un.length : undefined,
             controlType,
           });
-          if (out.length >= limit) {
-            return out.sort((a, b) => a.name.localeCompare(b.name));
+          if (out.length >= limit) return true;
+        }
+        return false;
+      };
+
+      for (const resource of resources) {
+        let notifications = parseUnf(resource.unf);
+
+        try {
+          const detail = await client.request<{
+            item?: { nm?: string; unf?: unknown };
+          }>('core/search_item', {
+            id: resource.id,
+            flags: WIALON_RESOURCE_NOTIFICATIONS_FLAGS,
+          });
+          const deep = parseUnf(detail.item?.unf);
+          if (deep.length) notifications = deep;
+        } catch {
+          /* keep list-search unf if any */
+        }
+
+        // Some hosting builds omit `unf` from search_item; pull via dedicated API.
+        if (!notifications.length) {
+          try {
+            const data = await client.request<unknown>('resource/get_notification_data', {
+              itemId: resource.id,
+            });
+            notifications = parseUnf(
+              Array.isArray(data)
+                ? data
+                : (data as { notifications?: unknown })?.notifications ?? data,
+            );
+          } catch {
+            /* resource may lack notification ACL */
           }
+        }
+
+        if (pushRows(resource, notifications)) {
+          return out.sort((a, b) => a.name.localeCompare(b.name));
         }
       }
 
