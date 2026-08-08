@@ -3,9 +3,9 @@ import { isNoiseAlert } from './wialonAlertClassify.js';
 import type { FleetAlert } from '@ufp/shared';
 
 export type AllowedAlertType = {
-  /** Stable key — normalized bare alert title, or classified type. */
+  /** Classified alert type key — same as alerts.type / Inbox badge (e.g. fuel_filling). */
   key: string;
-  /** Client-facing label shown in Settings / Alert types. */
+  /** Client-facing label (e.g. "fuel filling"). */
   name: string;
 };
 
@@ -14,11 +14,34 @@ export type TenantAlertTypeRow = {
   name: string;
   type: string;
   category: string;
+  categoryLabel: string;
   eventCount: number;
   lastSeen: string | null;
 };
 
 const ADMIN_ROLES = new Set(['tenant_admin', 'platform_admin', 'super_admin']);
+
+/** Mirrors frontend Alerts Inbox category filters exactly. */
+const CATEGORY_DEFS: Array<{ id: string; label: string; match: (type: string) => boolean }> = [
+  {
+    id: 'safety',
+    label: 'Driving',
+    match: (t) => /harsh_|speeding|eco_violation|idling|towing|sos/.test(t),
+  },
+  { id: 'fuel', label: 'Fuel', match: (t) => /fuel_/.test(t) },
+  {
+    id: 'power',
+    label: 'Power',
+    match: (t) => /generator|power_cut|power_restore|battery/.test(t),
+  },
+  { id: 'geofence', label: 'Geofence', match: (t) => t === 'geofence' },
+  { id: 'engine', label: 'Engine', match: (t) => /ignition_/.test(t) },
+  {
+    id: 'sensors',
+    label: 'Sensors',
+    match: (t) => /sensor|temperature|door|connection|maintenance/.test(t),
+  },
+];
 
 let schemaReady = false;
 
@@ -39,49 +62,22 @@ export function roleBypassesAlertAcl(role?: string | null): boolean {
   return Boolean(role && ADMIN_ROLES.has(role));
 }
 
-/** Strip trailing ` · unit` from inbox titles. */
-export function bareAlertTitle(title?: string | null): string {
-  return String(title || '')
-    .replace(/\s*·\s*[^·]+$/u, '')
-    .replace(/\bWialon\b/gi, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
+export function categoryOfAlertType(type?: string): { id: string; label: string } {
+  const t = String(type || '');
+  const found = CATEGORY_DEFS.find((c) => c.match(t));
+  if (found) return { id: found.id, label: found.label };
+  return { id: 'other', label: 'Other' };
 }
 
-export function normalizeAlertTypeKey(raw: string): string {
-  return String(raw || '')
-    .toLowerCase()
-    .replace(/[!?.]+$/g, '')
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_|_$/g, '')
-    .trim();
-}
-
-export function prettyAlertTypeLabel(typeOrName: string): string {
-  const raw = bareAlertTitle(typeOrName);
-  if (!raw) return 'Fleet event';
-  if (!/^[a-z0-9_]+$/i.test(raw) || raw.includes(' ')) {
-    return raw.replace(/^./, (c) => c.toUpperCase());
-  }
+export function prettyAlertTypeLabel(type?: string): string {
+  if (!type) return 'Fleet event';
   return (
-    raw
+    String(type)
       .replace(/^wialon[_-]?/i, '')
       .replace(/^fleet[_-]?/i, 'fleet ')
       .replace(/_/g, ' ')
-      .trim()
-      .replace(/^./, (c) => c.toUpperCase()) || 'Fleet event'
+      .trim() || 'Fleet event'
   );
-}
-
-export function categoryForAlertType(type?: string): string {
-  const t = String(type || '');
-  if (/harsh_|speeding|eco_violation|idling|towing|sos/.test(t)) return 'driving';
-  if (/fuel_/.test(t)) return 'fuel';
-  if (/generator|power_cut|power_restore|battery/.test(t)) return 'power';
-  if (t === 'geofence') return 'geofence';
-  if (/ignition_/.test(t)) return 'engine';
-  if (/sensor|temperature|door|connection|maintenance/.test(t)) return 'sensors';
-  return 'other';
 }
 
 export function parseAllowedAlertTypes(raw: unknown): AllowedAlertType[] | null {
@@ -100,11 +96,13 @@ export function parseAllowedAlertTypes(raw: unknown): AllowedAlertType[] | null 
   for (const item of value) {
     if (!item || typeof item !== 'object') continue;
     const row = item as Record<string, unknown>;
-    const name = prettyAlertTypeLabel(String(row.name ?? row.key ?? '').trim());
-    const key =
-      normalizeAlertTypeKey(String(row.key ?? '')) ||
-      normalizeAlertTypeKey(String(row.name ?? ''));
-    if (!name || !key || seen.has(key)) continue;
+    const key = String(row.key ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_]+/g, '_')
+      .replace(/^_|_$/g, '');
+    if (!key || seen.has(key)) continue;
+    const name = String(row.name ?? '').trim() || prettyAlertTypeLabel(key);
     seen.add(key);
     out.push({ key, name });
   }
@@ -120,25 +118,17 @@ export function sanitizeAllowedAlertTypesInput(
   return parseAllowedAlertTypes(raw) ?? [];
 }
 
+/** Strict: allow only when the inbox classified type matches an enabled key. */
 export function alertMatchesAllowedTypes(
   alert: FleetAlert,
   allowed: AllowedAlertType[],
 ): boolean {
   if (!allowed.length) return false;
-  const bare = bareAlertTitle(alert.title);
-  const bareKey = normalizeAlertTypeKey(bare);
-  const typeKey = normalizeAlertTypeKey(alert.type || '');
-
-  for (const entry of allowed) {
-    const key = normalizeAlertTypeKey(entry.key);
-    const nameKey = normalizeAlertTypeKey(entry.name);
-    if (key && (key === bareKey || key === typeKey || key === normalizeAlertTypeKey(alert.type || ''))) {
-      return true;
-    }
-    if (nameKey && (nameKey === bareKey || nameKey === typeKey)) return true;
-    if (entry.key === alert.type || entry.name === alert.type) return true;
-  }
-  return false;
+  const type = String(alert.type || '')
+    .trim()
+    .toLowerCase();
+  if (!type) return false;
+  return allowed.some((a) => a.key === type);
 }
 
 export function filterAlertsForUser(
@@ -156,10 +146,8 @@ export function filterAlertTypeRowsForUser(
 ): TenantAlertTypeRow[] {
   if (roleBypassesAlertAcl(opts.role)) return rows;
   if (!opts.allowed?.length) return [];
-  const keys = new Set(opts.allowed.map((a) => normalizeAlertTypeKey(a.key)));
-  return rows.filter(
-    (r) => keys.has(normalizeAlertTypeKey(r.key)) || keys.has(normalizeAlertTypeKey(r.type)),
-  );
+  const keys = new Set(opts.allowed.map((a) => a.key));
+  return rows.filter((r) => keys.has(r.key));
 }
 
 export async function loadUserAllowedAlertTypes(
@@ -178,8 +166,9 @@ export async function loadUserAllowedAlertTypes(
 }
 
 /**
- * Alert types for a client = distinct inbox event names/types already harvested.
- * This is the same grouping operators see in Inbox (bare title + classified type).
+ * Alert types = distinct classified `alerts.type` values for this client.
+ * Same set types Inbox shows on each row (e.g. fuel_filling → "fuel filling"),
+ * falling into the same groups (Fuel, Driving, Power, …).
  */
 export async function listTenantAlertTypes(tenantId: string): Promise<TenantAlertTypeRow[]> {
   const { rows } = await query<{
@@ -201,12 +190,17 @@ export async function listTenantAlertTypes(tenantId: string): Promise<TenantAler
     eventCount: number;
     lastSeen: string | null;
   };
-  const byKey = new Map<string, Acc>();
+  const byType = new Map<string, Acc>();
 
   for (const row of rows) {
+    const type = String(row.type || '')
+      .trim()
+      .toLowerCase();
+    if (!type) continue;
+
     const fake: FleetAlert = {
       id: 'x',
-      type: String(row.type || 'fleet_event'),
+      type,
       severity: 'info',
       title: String(row.title || ''),
       timestamp: new Date(row.occurred_at),
@@ -215,14 +209,7 @@ export async function listTenantAlertTypes(tenantId: string): Promise<TenantAler
     };
     if (isNoiseAlert(fake)) continue;
 
-    const bare = bareAlertTitle(row.title);
-    const type = String(row.type || 'fleet_event');
-    // Prefer the fired event name (what Inbox shows); fall back to classified type.
-    const display = bare || prettyAlertTypeLabel(type);
-    const key = normalizeAlertTypeKey(bare) || normalizeAlertTypeKey(type);
-    if (!key) continue;
-
-    const prev = byKey.get(key);
+    const prev = byType.get(type);
     if (prev) {
       prev.eventCount += 1;
       if (!prev.lastSeen || String(row.occurred_at) > prev.lastSeen) {
@@ -230,19 +217,30 @@ export async function listTenantAlertTypes(tenantId: string): Promise<TenantAler
       }
       continue;
     }
-    byKey.set(key, {
-      key,
-      name: prettyAlertTypeLabel(display),
+    byType.set(type, {
+      key: type,
+      name: prettyAlertTypeLabel(type),
       type,
       eventCount: 1,
       lastSeen: row.occurred_at ? String(row.occurred_at) : null,
     });
   }
 
-  return [...byKey.values()]
-    .map((r) => ({
-      ...r,
-      category: categoryForAlertType(r.type),
-    }))
-    .sort((a, b) => b.eventCount - a.eventCount || a.name.localeCompare(b.name));
+  const categoryOrder = new Map(CATEGORY_DEFS.map((c, i) => [c.id, i]));
+
+  return [...byType.values()]
+    .map((r) => {
+      const cat = categoryOfAlertType(r.type);
+      return {
+        ...r,
+        category: cat.id,
+        categoryLabel: cat.label,
+      };
+    })
+    .sort((a, b) => {
+      const ao = categoryOrder.get(a.category) ?? 99;
+      const bo = categoryOrder.get(b.category) ?? 99;
+      if (ao !== bo) return ao - bo;
+      return a.name.localeCompare(b.name);
+    });
 }

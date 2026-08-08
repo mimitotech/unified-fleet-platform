@@ -548,6 +548,7 @@ export const clientApi = {
         name: string;
         type: string;
         category: string;
+        categoryLabel?: string;
         eventCount: number;
         lastSeen: string | null;
       }>;

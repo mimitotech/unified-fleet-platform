@@ -36,6 +36,12 @@ import { cn } from '@/lib/utils';
 import { clientFacingText } from '@/lib/clientFacingText';
 import { isNoiseAlertTitle } from '@/lib/alertNoise';
 import { localDateIso } from '@/lib/localDate';
+import {
+  ALERT_CATEGORY_DEFS,
+  categoryOfAlertType,
+  prettyAlertType,
+  type AlertCategoryDef,
+} from '@/lib/alertCategories';
 
 interface AlertRow {
   id: string;
@@ -78,21 +84,13 @@ const severityStyles: Record<
   },
 };
 
-type CategoryDef = { id: string; label: string; match: (type?: string) => boolean };
+type CategoryDef = AlertCategoryDef;
 
 /** Order matters — used to assign each alert to a single category. */
-const CATEGORY_DEFS: CategoryDef[] = [
-  { id: 'safety', label: 'Driving', match: (t) => !!t && /harsh_|speeding|eco_violation|idling|towing|sos/.test(t) },
-  { id: 'fuel', label: 'Fuel', match: (t) => !!t && /fuel_/.test(t) },
-  { id: 'power', label: 'Power', match: (t) => !!t && /generator|power_cut|power_restore|battery/.test(t) },
-  { id: 'geofence', label: 'Geofence', match: (t) => t === 'geofence' },
-  { id: 'engine', label: 'Engine', match: (t) => !!t && /ignition_/.test(t) },
-  { id: 'sensors', label: 'Sensors', match: (t) => !!t && /sensor|temperature|door|connection|maintenance/.test(t) },
-];
+const CATEGORY_DEFS: CategoryDef[] = ALERT_CATEGORY_DEFS;
 
 function categoryOf(type?: string): string {
-  const found = CATEGORY_DEFS.find((c) => c.match(type));
-  return found ? found.id : 'other';
+  return categoryOfAlertType(type);
 }
 
 function typeIcon(type?: string) {
@@ -111,14 +109,7 @@ function typeIcon(type?: string) {
 }
 
 function prettyType(type?: string) {
-  if (!type) return 'Fleet event';
-  return (
-    type
-      .replace(/^wialon[_-]?/i, '')
-      .replace(/^fleet[_-]?/i, 'fleet ')
-      .replace(/_/g, ' ')
-      .trim() || 'Fleet event'
-  );
+  return prettyAlertType(type);
 }
 
 function prettySource(sourceType?: string) {

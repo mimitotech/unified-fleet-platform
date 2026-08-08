@@ -59,8 +59,8 @@ export function UserAlertTypesPicker({ role, selected, onChange, disabled }: Pro
         <div>
           <Label>Alert types this user can see</Label>
           <p className="text-xs text-muted-foreground mt-0.5">
-            These are the alert kinds already appearing in Inbox for this client. Tick only what this
-            user is allowed to view.
+            Same set types as Inbox (for example fuel filling, power cut). Tick only what this user
+            may see.
           </p>
         </div>
         <div className="flex gap-1">
@@ -118,7 +118,7 @@ export function UserAlertTypesPicker({ role, selected, onChange, disabled }: Pro
                   <span className="font-medium block truncate">{t.name}</span>
                   <span className="text-xs text-muted-foreground">
                     {t.eventCount} event{t.eventCount === 1 ? '' : 's'}
-                    {t.category && t.category !== 'other' ? ` · ${t.category}` : ''}
+                    {t.categoryLabel ? ` · ${t.categoryLabel}` : t.category && t.category !== 'other' ? ` · ${t.category}` : ''}
                   </span>
                 </span>
               </label>
