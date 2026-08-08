@@ -593,8 +593,9 @@ export class WialonLiveService {
   static async listNotifications(credentials: WialonCredentialsInput, limit = 200) {
     const accountId = this.scopedAccount(credentials);
     return withWialonClient(credentials, async (client) => {
-      // Same multi-strategy discovery as report templates / units — a single
-      // sys_billing_account_guid search often returns resources with empty `unf`.
+      // Alert types = Wialon Notifications tab names for this client.
+      // In Hosting those rules live on the account resource itself (id === linked
+      // wialon_resource_id). Searching only children (bact === accountId) skips it.
       type Nf = {
         id?: number;
         n?: string;
@@ -618,7 +619,7 @@ export class WialonLiveService {
         controlType?: string;
       };
 
-      const parseUnf = (unf: unknown): Array<Nf & { id: number; name: string }> => {
+      const parseNotifications = (unf: unknown): Array<Nf & { id: number; name: string }> => {
         if (!unf) return [];
         const pairs: Array<[string, unknown]> = Array.isArray(unf)
           ? unf.map((v, i) => [String((v as Nf)?.id ?? i), v])
@@ -635,94 +636,112 @@ export class WialonLiveService {
         return rows;
       };
 
-      let resources: WialonSearchItem[] = [];
-      if (accountId && Number.isFinite(Number(accountId))) {
-        resources = await searchResourcesForAccount(
-          client,
-          Number(accountId),
-          WIALON_RESOURCE_NOTIFICATIONS_FLAGS,
-        );
-      }
-      if (!resources.length) {
-        resources = await searchAll(
-          client,
-          resourceSearchSpec(undefined),
-          WIALON_RESOURCE_NOTIFICATIONS_FLAGS,
-        );
-      }
-
-      const out: Row[] = [];
-      const seen = new Set<string>();
-      const now = Math.floor(Date.now() / 1000);
-
-      const pushRows = (resource: WialonSearchItem, notifications: Array<Nf & { id: number; name: string }>) => {
-        for (const nf of notifications) {
-          const key = `${resource.id}:${nf.id}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-
-          const disabledByFlag = (Number(nf.fl) & 0x2) === 0x2;
-          const deactivated = Boolean(nf.td && nf.td > 0 && nf.td <= now);
-          const controlType =
-            typeof nf.trg === 'string'
-              ? nf.trg
-              : nf.trg && typeof nf.trg === 'object'
-                ? nf.trg.t
-                : undefined;
-
-          out.push({
-            resourceId: resource.id,
-            resourceName: resource.nm,
-            id: nf.id,
-            name: nf.name,
-            triggers: nf.ac,
-            active: !disabledByFlag && !deactivated,
-            unitCount: Array.isArray(nf.un) ? nf.un.length : undefined,
-            controlType,
-          });
-          if (out.length >= limit) return true;
-        }
-        return false;
-      };
-
-      for (const resource of resources) {
-        let notifications = parseUnf(resource.unf);
+      const loadForResource = async (
+        resourceId: number,
+        fallbackName = '',
+      ): Promise<{ resource: WialonSearchItem; notifications: Array<Nf & { id: number; name: string }> }> => {
+        let resource: WialonSearchItem = { id: resourceId, nm: fallbackName || String(resourceId) };
+        let notifications: Array<Nf & { id: number; name: string }> = [];
 
         try {
           const detail = await client.request<{
-            item?: { nm?: string; unf?: unknown };
+            item?: WialonSearchItem & { unf?: unknown };
           }>('core/search_item', {
-            id: resource.id,
+            id: resourceId,
             flags: WIALON_RESOURCE_NOTIFICATIONS_FLAGS,
           });
-          const deep = parseUnf(detail.item?.unf);
-          if (deep.length) notifications = deep;
+          if (detail.item?.id) resource = detail.item;
+          notifications = parseNotifications(detail.item?.unf);
         } catch {
-          /* keep list-search unf if any */
+          /* fall through to get_notification_data */
         }
 
-        // Some hosting builds omit `unf` from search_item; pull via dedicated API.
         if (!notifications.length) {
           try {
             const data = await client.request<unknown>('resource/get_notification_data', {
-              itemId: resource.id,
+              itemId: resourceId,
             });
-            notifications = parseUnf(
+            notifications = parseNotifications(
               Array.isArray(data)
                 ? data
                 : (data as { notifications?: unknown })?.notifications ?? data,
             );
           } catch {
-            /* resource may lack notification ACL */
+            /* no notification ACL on this resource */
           }
         }
 
-        if (pushRows(resource, notifications)) {
-          return out.sort((a, b) => a.name.localeCompare(b.name));
+        return { resource, notifications };
+      };
+
+      const collect = async (seeds: WialonSearchItem[]): Promise<Row[]> => {
+        const out: Row[] = [];
+        const seen = new Set<string>();
+        const now = Math.floor(Date.now() / 1000);
+
+        for (const seed of seeds) {
+          const id = Number(seed?.id);
+          if (!Number.isFinite(id) || id <= 0) continue;
+          const { resource, notifications } = await loadForResource(id, seed.nm);
+          for (const nf of notifications) {
+            const key = `${resource.id}:${nf.id}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+
+            const disabledByFlag = (Number(nf.fl) & 0x2) === 0x2;
+            const deactivated = Boolean(nf.td && nf.td > 0 && nf.td <= now);
+            const controlType =
+              typeof nf.trg === 'string'
+                ? nf.trg
+                : nf.trg && typeof nf.trg === 'object'
+                  ? nf.trg.t
+                  : undefined;
+
+            out.push({
+              resourceId: resource.id,
+              resourceName: resource.nm,
+              id: nf.id,
+              name: nf.name,
+              triggers: nf.ac,
+              active: !disabledByFlag && !deactivated,
+              unitCount: Array.isArray(nf.un) ? nf.un.length : undefined,
+              controlType,
+            });
+            if (out.length >= limit) return out;
+          }
         }
+        return out;
+      };
+
+      const linkedId = accountId != null ? Number(accountId) : NaN;
+
+      // 1) Linked account resource — where Hosting stores the Notifications list.
+      if (Number.isFinite(linkedId) && linkedId > 0) {
+        const primary = await collect([{ id: linkedId, nm: String(linkedId) }]);
+        if (primary.length) return primary.sort((a, b) => a.name.localeCompare(b.name));
+
+        // 2) Other resources billed to this account (rare backup).
+        try {
+          const extras = await searchResourcesForAccount(
+            client,
+            linkedId,
+            WIALON_RESOURCE_NOTIFICATIONS_FLAGS,
+          );
+          const secondary = await collect(extras.filter((r) => Number(r.id) !== linkedId));
+          if (secondary.length) return secondary.sort((a, b) => a.name.localeCompare(b.name));
+        } catch {
+          /* keep empty rather than leaking other tenants */
+        }
+        return [];
       }
 
-      return out.sort((a, b) => a.name.localeCompare(b.name));
+      // No account scope — list whatever the token can see.
+      const all = await searchAll(
+        client,
+        resourceSearchSpec(undefined),
+        WIALON_RESOURCE_NOTIFICATIONS_FLAGS,
+      );
+      return (await collect(all)).sort((a, b) => a.name.localeCompare(b.name));
     });
   }
 
