@@ -1,11 +1,11 @@
 import { query } from '../config/database.js';
-import { isNoiseAlert } from './wialonAlertClassify.js';
+import { classifyWialonAlertType, isNoiseAlert } from './wialonAlertClassify.js';
 import type { FleetAlert } from '@ufp/shared';
 
 export type AllowedAlertType = {
-  /** Classified alert type key — same as alerts.type / Inbox badge (e.g. fuel_filling). */
+  /** Stable key — normalized event name, or classified type. */
   key: string;
-  /** Client-facing label (e.g. "fuel filling"). */
+  /** Client-facing label. */
   name: string;
 };
 
@@ -69,15 +69,39 @@ export function categoryOfAlertType(type?: string): { id: string; label: string 
   return { id: 'other', label: 'Other' };
 }
 
-export function prettyAlertTypeLabel(type?: string): string {
-  if (!type) return 'Fleet event';
+export function prettyAlertTypeLabel(typeOrName?: string): string {
+  if (!typeOrName) return 'Fleet event';
+  const raw = String(typeOrName).trim();
+  if (!raw) return 'Fleet event';
+  // Already a human label (has spaces / caps) — keep, just tidy.
+  if (/[A-Z]/.test(raw) || raw.includes(' ') || /[^a-z0-9_]/i.test(raw)) {
+    return raw.replace(/\s{2,}/g, ' ').trim();
+  }
   return (
-    String(type)
+    raw
       .replace(/^wialon[_-]?/i, '')
       .replace(/^fleet[_-]?/i, 'fleet ')
       .replace(/_/g, ' ')
       .trim() || 'Fleet event'
   );
+}
+
+/** Strip trailing ` · unit` from inbox titles. */
+export function bareAlertTitle(title?: string | null): string {
+  return String(title || '')
+    .replace(/\s*·\s*[^·]+$/u, '')
+    .replace(/\bWialon\b/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+export function normalizeAlertTypeKey(raw: string): string {
+  return String(raw || '')
+    .toLowerCase()
+    .replace(/[!?.]+$/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_|_$/g, '')
+    .trim();
 }
 
 export function parseAllowedAlertTypes(raw: unknown): AllowedAlertType[] | null {
@@ -96,15 +120,13 @@ export function parseAllowedAlertTypes(raw: unknown): AllowedAlertType[] | null 
   for (const item of value) {
     if (!item || typeof item !== 'object') continue;
     const row = item as Record<string, unknown>;
-    const key = String(row.key ?? '')
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9_]+/g, '_')
-      .replace(/^_|_$/g, '');
+    const name = String(row.name ?? '').trim();
+    const key =
+      normalizeAlertTypeKey(String(row.key ?? '')) ||
+      normalizeAlertTypeKey(name);
     if (!key || seen.has(key)) continue;
-    const name = String(row.name ?? '').trim() || prettyAlertTypeLabel(key);
     seen.add(key);
-    out.push({ key, name });
+    out.push({ key, name: name || prettyAlertTypeLabel(key) });
   }
   return out;
 }
@@ -118,17 +140,24 @@ export function sanitizeAllowedAlertTypesInput(
   return parseAllowedAlertTypes(raw) ?? [];
 }
 
-/** Strict: allow only when the inbox classified type matches an enabled key. */
+/**
+ * Match when the allowed key is the classified type OR the bare event name.
+ * Selecting "fuel filling" (type) or "FUEL FILLING ALERT" (event name) both work.
+ */
 export function alertMatchesAllowedTypes(
   alert: FleetAlert,
   allowed: AllowedAlertType[],
 ): boolean {
   if (!allowed.length) return false;
-  const type = String(alert.type || '')
-    .trim()
-    .toLowerCase();
-  if (!type) return false;
-  return allowed.some((a) => a.key === type);
+  const type = normalizeAlertTypeKey(alert.type || '');
+  const bare = normalizeAlertTypeKey(bareAlertTitle(alert.title));
+  for (const a of allowed) {
+    const key = normalizeAlertTypeKey(a.key);
+    const nameKey = normalizeAlertTypeKey(a.name);
+    if (key && (key === type || key === bare)) return true;
+    if (nameKey && (nameKey === type || nameKey === bare)) return true;
+  }
+  return false;
 }
 
 export function filterAlertsForUser(
@@ -146,8 +175,13 @@ export function filterAlertTypeRowsForUser(
 ): TenantAlertTypeRow[] {
   if (roleBypassesAlertAcl(opts.role)) return rows;
   if (!opts.allowed?.length) return [];
-  const keys = new Set(opts.allowed.map((a) => a.key));
-  return rows.filter((r) => keys.has(r.key));
+  const keys = new Set(opts.allowed.map((a) => normalizeAlertTypeKey(a.key)));
+  return rows.filter(
+    (r) =>
+      keys.has(normalizeAlertTypeKey(r.key)) ||
+      keys.has(normalizeAlertTypeKey(r.type)) ||
+      keys.has(normalizeAlertTypeKey(r.name)),
+  );
 }
 
 export async function loadUserAllowedAlertTypes(
@@ -165,82 +199,148 @@ export async function loadUserAllowedAlertTypes(
   };
 }
 
-/**
- * Alert types = distinct classified `alerts.type` values for this client.
- * Same set types Inbox shows on each row (e.g. fuel_filling → "fuel filling"),
- * falling into the same groups (Fuel, Driving, Power, …).
- */
-export async function listTenantAlertTypes(tenantId: string): Promise<TenantAlertTypeRow[]> {
-  const { rows } = await query<{
-    title: string;
-    type: string;
-    occurred_at: string;
-  }>(
-    `SELECT title, type, occurred_at FROM alerts
-     WHERE tenant_id = $1
-     ORDER BY occurred_at DESC
-     LIMIT 5000`,
-    [tenantId],
-  );
-
-  type Acc = {
-    key: string;
+function upsertType(
+  byKey: Map<string, TenantAlertTypeRow & { _score: number }>,
+  input: {
     name: string;
     type: string;
     eventCount: number;
     lastSeen: string | null;
-  };
-  const byType = new Map<string, Acc>();
+  },
+) {
+  const display = prettyAlertTypeLabel(input.name || input.type);
+  const key =
+    normalizeAlertTypeKey(input.name) ||
+    normalizeAlertTypeKey(input.type);
+  if (!key) return;
+
+  const type = String(input.type || classifyWialonAlertType(display) || 'fleet_event')
+    .trim()
+    .toLowerCase();
+  const cat = categoryOfAlertType(type);
+  // Prefer a more specific classified type over fleet_event when merging.
+  const score = type === 'fleet_event' ? 0 : 2;
+
+  const prev = byKey.get(key);
+  if (prev) {
+    prev.eventCount += input.eventCount;
+    if (!prev.lastSeen || (input.lastSeen && input.lastSeen > prev.lastSeen)) {
+      prev.lastSeen = input.lastSeen;
+    }
+    if (score > prev._score) {
+      prev.type = type;
+      prev.category = cat.id;
+      prev.categoryLabel = cat.label;
+      prev._score = score;
+    }
+    if (display.length > prev.name.length) prev.name = display;
+    return;
+  }
+
+  byKey.set(key, {
+    key,
+    name: display,
+    type,
+    category: cat.id,
+    categoryLabel: cat.label,
+    eventCount: input.eventCount,
+    lastSeen: input.lastSeen,
+    _score: score,
+  });
+}
+
+/**
+ * Full alert-type catalog for a client:
+ * — Every distinct Inbox event name (what each alert row shows before the unit)
+ * — Plus configured rule names for this client that have not fired yet
+ * Structured with the same groups as Inbox (Fuel, Driving, Power, …).
+ */
+export async function listTenantAlertTypes(
+  tenantId: string,
+  configuredNames: string[] = [],
+): Promise<TenantAlertTypeRow[]> {
+  // Aggregate all rows for the tenant — do not sample / truncate.
+  const { rows } = await query<{
+    bare_title: string;
+    type: string;
+    event_count: number | string;
+    last_seen: string | null;
+  }>(
+    `SELECT
+       TRIM(SUBSTRING_INDEX(title, ' · ', 1)) AS bare_title,
+       LOWER(TRIM(type)) AS type,
+       COUNT(*) AS event_count,
+       MAX(occurred_at) AS last_seen
+     FROM alerts
+     WHERE tenant_id = $1
+       AND title IS NOT NULL
+       AND TRIM(title) <> ''
+     GROUP BY TRIM(SUBSTRING_INDEX(title, ' · ', 1)), LOWER(TRIM(type))`,
+    [tenantId],
+  );
+
+  const byKey = new Map<string, TenantAlertTypeRow & { _score: number }>();
 
   for (const row of rows) {
-    const type = String(row.type || '')
-      .trim()
-      .toLowerCase();
-    if (!type) continue;
+    const bare = bareAlertTitle(row.bare_title);
+    const type = String(row.type || '').trim().toLowerCase() || 'fleet_event';
+    const count = Number(row.event_count) || 0;
+    if (!bare) continue;
 
     const fake: FleetAlert = {
       id: 'x',
       type,
       severity: 'info',
-      title: String(row.title || ''),
-      timestamp: new Date(row.occurred_at),
+      title: bare,
+      timestamp: new Date(row.last_seen || Date.now()),
       sourceType: 'wialon',
       acknowledged: false,
     };
     if (isNoiseAlert(fake)) continue;
 
-    const prev = byType.get(type);
-    if (prev) {
-      prev.eventCount += 1;
-      if (!prev.lastSeen || String(row.occurred_at) > prev.lastSeen) {
-        prev.lastSeen = String(row.occurred_at);
-      }
-      continue;
-    }
-    byType.set(type, {
-      key: type,
-      name: prettyAlertTypeLabel(type),
+    // One row per distinct Inbox event name (before · unit) — nothing collapsed.
+    upsertType(byKey, {
+      name: bare,
+      type: type || classifyWialonAlertType(bare),
+      eventCount: count,
+      lastSeen: row.last_seen ? String(row.last_seen) : null,
+    });
+  }
+
+  // 3) Configured rule names for this client that may not have fired yet
+  for (const rawName of configuredNames) {
+    const name = bareAlertTitle(rawName);
+    if (!name) continue;
+    const type = classifyWialonAlertType(name);
+    const fake: FleetAlert = {
+      id: 'x',
       type,
-      eventCount: 1,
-      lastSeen: row.occurred_at ? String(row.occurred_at) : null,
+      severity: 'info',
+      title: name,
+      timestamp: new Date(),
+      sourceType: 'wialon',
+      acknowledged: false,
+    };
+    if (isNoiseAlert(fake)) continue;
+    const key = normalizeAlertTypeKey(name);
+    if (byKey.has(key)) continue;
+    upsertType(byKey, {
+      name,
+      type,
+      eventCount: 0,
+      lastSeen: null,
     });
   }
 
   const categoryOrder = new Map(CATEGORY_DEFS.map((c, i) => [c.id, i]));
 
-  return [...byType.values()]
-    .map((r) => {
-      const cat = categoryOfAlertType(r.type);
-      return {
-        ...r,
-        category: cat.id,
-        categoryLabel: cat.label,
-      };
-    })
+  return [...byKey.values()]
+    .map(({ _score: _s, ...row }) => row)
     .sort((a, b) => {
       const ao = categoryOrder.get(a.category) ?? 99;
       const bo = categoryOrder.get(b.category) ?? 99;
       if (ao !== bo) return ao - bo;
+      if (b.eventCount !== a.eventCount) return b.eventCount - a.eventCount;
       return a.name.localeCompare(b.name);
     });
 }

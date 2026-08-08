@@ -22,6 +22,8 @@ import {
   fleetToSnapshotResponse,
 } from '../services/wialonFleetMapper.js';
 import { logger } from '../config/logger.js';
+import { WialonLiveService } from '../services/WialonLiveService.js';
+import { loadTenantWialonCreds } from '../services/tenantWialonCredentials.js';
 import { toCamelCase } from '../utils/mapper.js';
 import { normalizeUploadPath } from '../utils/normalizeUploadPath.js';
 import {
@@ -544,9 +546,18 @@ router.get('/assets/statuses', requireTenant, async (req: TenantRequest, res) =>
 const alertSyncAt = new Map<string, number>();
 const ALERT_SYNC_MIN_MS = 20_000;
 
-/** Distinct alert types for this client, grouped from Inbox events. */
+/** Full alert-type catalog for this client (Inbox event names + configured rules). */
 router.get('/alert-types', requireTenant, async (req: TenantRequest, res) => {
-  const types = await listTenantAlertTypes(req.tenantId!);
+  let configuredNames: string[] = [];
+  try {
+    const creds = await loadTenantWialonCreds(req.tenantId!);
+    const notifications = await WialonLiveService.listNotifications(creds, 500);
+    configuredNames = notifications.map((n) => n.name).filter(Boolean);
+  } catch {
+    /* Inbox-derived types still work if live rule fetch fails */
+  }
+
+  const types = await listTenantAlertTypes(req.tenantId!, configuredNames);
   const wantCatalog = req.query.catalog === '1' || req.query.catalog === 'true';
   if (wantCatalog) {
     if (!isTenantAdmin(req)) return error(res, 'Forbidden', 403);

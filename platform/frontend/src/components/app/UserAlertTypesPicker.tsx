@@ -59,8 +59,8 @@ export function UserAlertTypesPicker({ role, selected, onChange, disabled }: Pro
         <div>
           <Label>Alert types this user can see</Label>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Same set types as Inbox (for example fuel filling, power cut). Tick only what this user
-            may see.
+            Full list for this client — same alert names as Inbox, grouped (Fuel, Power, Driving, …).
+            Tick only what this user may see.
           </p>
         </div>
         <div className="flex gap-1">

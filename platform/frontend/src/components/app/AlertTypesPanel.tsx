@@ -71,7 +71,7 @@ export function AlertTypesPanel() {
       <div className="flex flex-wrap items-start justify-between gap-2">
         <LiveHeader
           title="Alert types"
-          description="The set types Inbox uses for this client’s alerts. Assign these to users in Settings."
+          description="Every alert this client receives, listed by name and grouped like Inbox. Assign these to users in Settings."
           count={data?.count}
           icon={Bell}
         />
