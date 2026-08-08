@@ -1518,14 +1518,39 @@ export const clientApi = {
   getPreferences: () => api<Record<string, unknown>>('/api/client/preferences'),
   updatePreferences: (data: Record<string, unknown>) =>
     api('/api/client/preferences', { method: 'PUT', body: JSON.stringify(data) }),
-  getTenantUsers: () => api<unknown[]>('/api/client/users'),
-  createTenantUser: (data: { email: string; password?: string; fullName?: string; role?: string }) =>
+  getTenantUsers: () =>
+    api<
+      Array<{
+        id: string;
+        email: string;
+        full_name: string;
+        role: string;
+        is_active: boolean;
+        last_login_at: string | null;
+        created_at?: string;
+        allowed_alert_types: Array<{ key: string; name: string }> | null;
+      }>
+    >('/api/client/users'),
+  createTenantUser: (data: {
+    email: string;
+    password?: string;
+    fullName?: string;
+    role?: string;
+    allowedAlertTypes?: Array<{ key: string; name: string }> | null;
+  }) =>
     api<{ id: string; email: string; temporaryPassword?: string }>('/api/client/users', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
-  updateTenantUser: (userId: string, data: { fullName?: string; role?: string; isActive?: boolean }) =>
-    api(`/api/client/users/${userId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  updateTenantUser: (
+    userId: string,
+    data: {
+      fullName?: string;
+      role?: string;
+      isActive?: boolean;
+      allowedAlertTypes?: Array<{ key: string; name: string }> | null;
+    },
+  ) => api(`/api/client/users/${userId}`, { method: 'PATCH', body: JSON.stringify(data) }),
   removeTenantUser: (userId: string) =>
     api(`/api/client/users/${userId}`, { method: 'DELETE' }),
   resetTenantUserPassword: (userId: string, password?: string) =>

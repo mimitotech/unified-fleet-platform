@@ -27,6 +27,11 @@ import { ChangePasswordForm } from '@/components/shared/ChangePasswordForm';
 import { ROLE_LABELS, TENANT_ROLES } from '@/lib/systemRoles';
 import { notify } from '@/lib/notify';
 import { LoadingButton } from '@/components/shared/LoadingButton';
+import {
+  UserAlertTypesPicker,
+  roleBypassesAlertAcl,
+  type AlertTypeSelection,
+} from '@/components/app/UserAlertTypesPicker';
 import { formatDistanceToNow } from 'date-fns';
 import { Copy, KeyRound, MoreHorizontal, Pencil, UserPlus, UserX, UserCheck } from 'lucide-react';
 
@@ -37,9 +42,16 @@ interface TenantUser {
   role: string;
   is_active: boolean;
   last_login_at: string | null;
+  allowed_alert_types: AlertTypeSelection[] | null;
 }
 
-const EMPTY_CREATE = { fullName: '', email: '', role: 'viewer', password: '' };
+const EMPTY_CREATE = {
+  fullName: '',
+  email: '',
+  role: 'viewer',
+  password: '',
+  allowedAlertTypes: [] as AlertTypeSelection[],
+};
 
 export default function Settings() {
   const [searchParams] = useSearchParams();
@@ -60,7 +72,11 @@ export default function Settings() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createForm, setCreateForm] = useState(EMPTY_CREATE);
   const [editUser, setEditUser] = useState<TenantUser | null>(null);
-  const [editForm, setEditForm] = useState({ fullName: '', role: 'viewer' });
+  const [editForm, setEditForm] = useState({
+    fullName: '',
+    role: 'viewer',
+    allowedAlertTypes: [] as AlertTypeSelection[],
+  });
   const [removeUser, setRemoveUser] = useState<TenantUser | null>(null);
   const [resetUser, setResetUser] = useState<TenantUser | null>(null);
   const [tempPassword, setTempPassword] = useState<{ email: string; password: string } | null>(null);
@@ -74,6 +90,9 @@ export default function Settings() {
         fullName: createForm.fullName.trim() || undefined,
         role: createForm.role,
         password: createForm.password || undefined,
+        allowedAlertTypes: roleBypassesAlertAcl(createForm.role)
+          ? null
+          : createForm.allowedAlertTypes,
       }),
     onSuccess: (created) => {
       refresh();
@@ -90,8 +109,15 @@ export default function Settings() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: (args: { userId: string; data: { fullName?: string; role?: string; isActive?: boolean } }) =>
-      clientApi.updateTenantUser(args.userId, args.data),
+    mutationFn: (args: {
+      userId: string;
+      data: {
+        fullName?: string;
+        role?: string;
+        isActive?: boolean;
+        allowedAlertTypes?: AlertTypeSelection[] | null;
+      };
+    }) => clientApi.updateTenantUser(args.userId, args.data),
     onSuccess: () => {
       refresh();
       setEditUser(null);
@@ -128,7 +154,17 @@ export default function Settings() {
 
   const openEdit = (u: TenantUser) => {
     setEditUser(u);
-    setEditForm({ fullName: u.full_name || '', role: u.role });
+    setEditForm({
+      fullName: u.full_name || '',
+      role: u.role,
+      allowedAlertTypes: u.allowed_alert_types ?? [],
+    });
+  };
+
+  const alertAccessLabel = (u: TenantUser) => {
+    if (roleBypassesAlertAcl(u.role)) return 'All types';
+    if (!u.allowed_alert_types?.length) return 'None';
+    return `${u.allowed_alert_types.length} type${u.allowed_alert_types.length === 1 ? '' : 's'}`;
   };
 
   return (
@@ -166,10 +202,16 @@ export default function Settings() {
                 <div>
                   <CardTitle>Team members</CardTitle>
                   <p className="text-sm text-muted-foreground mt-1">
-                    Create accounts, assign roles, and reset passwords for your organization.
+                    Create accounts, assign roles, choose which alert types each user can see, and reset passwords.
                   </p>
                 </div>
-                <Button onClick={() => setCreateOpen(true)} className="shrink-0">
+                <Button
+                  onClick={() => {
+                    setCreateForm(EMPTY_CREATE);
+                    setCreateOpen(true);
+                  }}
+                  className="shrink-0"
+                >
                   <UserPlus className="w-4 h-4 mr-2" /> Add user
                 </Button>
               </CardHeader>
@@ -180,6 +222,7 @@ export default function Settings() {
                       <TableHead>Name</TableHead>
                       <TableHead>Email</TableHead>
                       <TableHead>Role</TableHead>
+                      <TableHead>Alert access</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="hidden md:table-cell">Last sign-in</TableHead>
                       <TableHead className="w-12" />
@@ -197,6 +240,9 @@ export default function Settings() {
                           <TableCell>{u.email}</TableCell>
                           <TableCell>
                             <Badge variant="outline">{ROLE_LABELS[u.role] || u.role}</Badge>
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {alertAccessLabel(u)}
                           </TableCell>
                           <TableCell>
                             <Badge variant={u.is_active ? 'default' : 'secondary'}>
@@ -233,7 +279,9 @@ export default function Settings() {
                                       </DropdownMenuItem>
                                     ) : (
                                       <DropdownMenuItem
-                                        onClick={() => updateMutation.mutate({ userId: u.id, data: { isActive: true } })}
+                                        onClick={() =>
+                                          updateMutation.mutate({ userId: u.id, data: { isActive: true } })
+                                        }
                                       >
                                         <UserCheck className="w-4 h-4 mr-2" /> Reactivate
                                       </DropdownMenuItem>
@@ -248,7 +296,7 @@ export default function Settings() {
                     })}
                     {users.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                        <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                           No users yet
                         </TableCell>
                       </TableRow>
@@ -261,13 +309,12 @@ export default function Settings() {
         )}
       </Tabs>
 
-      {/* Create user */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Add user</DialogTitle>
             <DialogDescription>
-              New users are asked to change their password on first sign-in.
+              New users are asked to change their password on first sign-in. Choose which alert types they may see.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -300,7 +347,10 @@ export default function Settings() {
               </Select>
             </div>
             <div>
-              <Label>Password <span className="text-muted-foreground font-normal">(optional — leave blank to auto-generate)</span></Label>
+              <Label>
+                Password{' '}
+                <span className="text-muted-foreground font-normal">(optional — leave blank to auto-generate)</span>
+              </Label>
               <Input
                 type="text"
                 value={createForm.password}
@@ -309,6 +359,12 @@ export default function Settings() {
                 autoComplete="off"
               />
             </div>
+            <UserAlertTypesPicker
+              role={createForm.role}
+              selected={createForm.allowedAlertTypes}
+              onChange={(allowedAlertTypes) => setCreateForm({ ...createForm, allowedAlertTypes })}
+              disabled={createMutation.isPending}
+            />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
@@ -324,9 +380,8 @@ export default function Settings() {
         </DialogContent>
       </Dialog>
 
-      {/* Edit user */}
       <Dialog open={!!editUser} onOpenChange={(o) => !o && setEditUser(null)}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit user</DialogTitle>
             <DialogDescription>{editUser?.email}</DialogDescription>
@@ -357,6 +412,12 @@ export default function Settings() {
                 <p className="text-xs text-muted-foreground mt-1">You cannot change your own role.</p>
               )}
             </div>
+            <UserAlertTypesPicker
+              role={editForm.role}
+              selected={editForm.allowedAlertTypes}
+              onChange={(allowedAlertTypes) => setEditForm({ ...editForm, allowedAlertTypes })}
+              disabled={updateMutation.isPending}
+            />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditUser(null)}>Cancel</Button>
@@ -368,6 +429,9 @@ export default function Settings() {
                   data: {
                     fullName: editForm.fullName.trim() || undefined,
                     role: editUser.id === user?.id ? undefined : editForm.role,
+                    allowedAlertTypes: roleBypassesAlertAcl(editForm.role)
+                      ? null
+                      : editForm.allowedAlertTypes,
                   },
                 })
               }
@@ -380,7 +444,6 @@ export default function Settings() {
         </DialogContent>
       </Dialog>
 
-      {/* Remove access confirmation */}
       <Dialog open={!!removeUser} onOpenChange={(o) => !o && setRemoveUser(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -404,7 +467,6 @@ export default function Settings() {
         </DialogContent>
       </Dialog>
 
-      {/* Reset password confirmation */}
       <Dialog open={!!resetUser} onOpenChange={(o) => !o && setResetUser(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -427,7 +489,6 @@ export default function Settings() {
         </DialogContent>
       </Dialog>
 
-      {/* Temporary password display */}
       <Dialog open={!!tempPassword} onOpenChange={(o) => !o && setTempPassword(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

@@ -52,6 +52,7 @@ CREATE TABLE users (
   terms_accepted_at DATETIME(3) NULL,
   wialon_user_id BIGINT NULL,
   wialon_login TEXT NULL,
+  allowed_alert_types JSON NULL,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   UNIQUE KEY uq_users_email (email),

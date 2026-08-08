@@ -24,6 +24,14 @@ import {
 import { logger } from '../config/logger.js';
 import { toCamelCase } from '../utils/mapper.js';
 import { normalizeUploadPath } from '../utils/normalizeUploadPath.js';
+import {
+  ensureUserAlertAccessSchema,
+  filterAlertsForUser,
+  loadUserAllowedAlertTypes,
+  parseAllowedAlertTypes,
+  roleBypassesAlertAcl,
+  sanitizeAllowedAlertTypesInput,
+} from '../services/userAlertAccess.js';
 
 import domainRoutes from './domain/index.js';
 import clientWialonRoutes from './clientWialon.js';
@@ -196,18 +204,30 @@ function isTenantAdmin(req: TenantRequest): boolean {
 
 router.get('/users', requireTenant, async (req: TenantRequest, res) => {
   if (!isTenantAdmin(req)) return error(res, 'Forbidden', 403);
+  await ensureUserAlertAccessSchema();
   const { rows } = await query(
-    `SELECT id, email, full_name, role, is_active, last_login_at, created_at
+    `SELECT id, email, full_name, role, is_active, last_login_at, created_at, allowed_alert_types
      FROM users WHERE tenant_id = $1 ORDER BY full_name`,
     [req.tenantId]
   );
-  return success(res, rows);
+  return success(
+    res,
+    rows.map((r) => ({
+      ...r,
+      allowed_alert_types: parseAllowedAlertTypes(r.allowed_alert_types),
+    })),
+  );
 });
 
 router.post('/users', requireTenant, async (req: TenantRequest, res) => {
   if (!isTenantAdmin(req)) return error(res, 'Forbidden', 403);
-  const { email, password, fullName, role } = req.body as {
-    email?: string; password?: string; fullName?: string; role?: string;
+  await ensureUserAlertAccessSchema();
+  const { email, password, fullName, role, allowedAlertTypes } = req.body as {
+    email?: string;
+    password?: string;
+    fullName?: string;
+    role?: string;
+    allowedAlertTypes?: unknown;
   };
   if (!email || !/\S+@\S+\.\S+/.test(email)) return error(res, 'A valid email is required');
   const userRole = role || 'viewer';
@@ -215,12 +235,26 @@ router.post('/users', requireTenant, async (req: TenantRequest, res) => {
 
   const temporaryPassword = password || crypto.randomBytes(8).toString('hex');
   const hash = await bcrypt.hash(temporaryPassword, 10);
+  // Tenant admins are unrestricted. Everyone else gets an explicit allowlist
+  // (default empty = see no alerts until the admin ticks types).
+  const allowed = roleBypassesAlertAcl(userRole)
+    ? null
+    : (sanitizeAllowedAlertTypesInput(
+        allowedAlertTypes === undefined ? [] : allowedAlertTypes,
+      ) ?? []);
   try {
     const { rows } = await query(
-      `INSERT INTO users (tenant_id, email, password_hash, full_name, role, force_password_change)
-       VALUES ($1, $2, $3, $4, $5, true)
-       RETURNING id, email, full_name, role, is_active, created_at`,
-      [req.tenantId, email.toLowerCase().trim(), hash, fullName || email, userRole]
+      `INSERT INTO users (tenant_id, email, password_hash, full_name, role, force_password_change, allowed_alert_types)
+       VALUES ($1, $2, $3, $4, $5, true, $6)
+       RETURNING id, email, full_name, role, is_active, created_at, allowed_alert_types`,
+      [
+        req.tenantId,
+        email.toLowerCase().trim(),
+        hash,
+        fullName || email,
+        userRole,
+        allowed == null ? null : JSON.stringify(allowed),
+      ]
     );
     await AuditService.log({
       tenantId: req.tenantId,
@@ -229,9 +263,22 @@ router.post('/users', requireTenant, async (req: TenantRequest, res) => {
       action: 'user.create',
       resourceType: 'user',
       resourceId: rows[0].id as string,
-      details: { email, role: userRole, by: 'tenant_admin' },
+      details: {
+        email,
+        role: userRole,
+        by: 'tenant_admin',
+        allowedAlertTypes: allowed,
+      },
     });
-    return success(res, { ...rows[0], temporaryPassword: password ? undefined : temporaryPassword }, 201);
+    return success(
+      res,
+      {
+        ...rows[0],
+        allowed_alert_types: parseAllowedAlertTypes(rows[0].allowed_alert_types),
+        temporaryPassword: password ? undefined : temporaryPassword,
+      },
+      201,
+    );
   } catch (e) {
     const msg = (e as Error).message || '';
     if (msg.includes('duplicate') || msg.includes('unique')) {
@@ -243,21 +290,55 @@ router.post('/users', requireTenant, async (req: TenantRequest, res) => {
 
 router.patch('/users/:userId', requireTenant, async (req: TenantRequest, res) => {
   if (!isTenantAdmin(req)) return error(res, 'Forbidden', 403);
+  await ensureUserAlertAccessSchema();
   const userId = String(req.params.userId);
-  const { fullName, role, isActive } = req.body as {
-    fullName?: string; role?: string; isActive?: boolean;
+  const { fullName, role, isActive, allowedAlertTypes } = req.body as {
+    fullName?: string;
+    role?: string;
+    isActive?: boolean;
+    allowedAlertTypes?: unknown;
   };
   if (role && !isValidTenantRole(String(role))) return error(res, 'Invalid role');
   if (userId === req.user?.id && (role !== undefined || isActive === false)) {
     return error(res, 'You cannot change your own role or deactivate yourself');
   }
-  const { rows } = await query(
-    `UPDATE users SET full_name = COALESCE($3, full_name), role = COALESCE($4, role),
-                      is_active = COALESCE($5, is_active), updated_at = NOW()
-     WHERE id = $2 AND tenant_id = $1
-     RETURNING id, email, full_name, role, is_active`,
-    [req.tenantId, userId, fullName, role, isActive]
+
+  const { rows: existingRows } = await query<{ role: string }>(
+    `SELECT role FROM users WHERE id = $1 AND tenant_id = $2`,
+    [userId, req.tenantId],
   );
+  if (!existingRows[0]) return error(res, 'User not found', 404);
+
+  const nextRole = role ?? existingRows[0].role;
+  let setAllowed = false;
+  let allowedValue: string | null = null;
+  if (allowedAlertTypes !== undefined) {
+    setAllowed = true;
+    if (roleBypassesAlertAcl(nextRole)) {
+      allowedValue = null;
+    } else {
+      allowedValue = JSON.stringify(sanitizeAllowedAlertTypesInput(allowedAlertTypes) ?? []);
+    }
+  } else if (role !== undefined && roleBypassesAlertAcl(role)) {
+    setAllowed = true;
+    allowedValue = null;
+  }
+
+  const { rows } = setAllowed
+    ? await query(
+        `UPDATE users SET full_name = COALESCE($3, full_name), role = COALESCE($4, role),
+                          is_active = COALESCE($5, is_active), allowed_alert_types = $6, updated_at = NOW()
+         WHERE id = $2 AND tenant_id = $1
+         RETURNING id, email, full_name, role, is_active, allowed_alert_types`,
+        [req.tenantId, userId, fullName, role, isActive, allowedValue],
+      )
+    : await query(
+        `UPDATE users SET full_name = COALESCE($3, full_name), role = COALESCE($4, role),
+                          is_active = COALESCE($5, is_active), updated_at = NOW()
+         WHERE id = $2 AND tenant_id = $1
+         RETURNING id, email, full_name, role, is_active, allowed_alert_types`,
+        [req.tenantId, userId, fullName, role, isActive],
+      );
   if (!rows[0]) return error(res, 'User not found', 404);
   await AuditService.log({
     tenantId: req.tenantId,
@@ -266,9 +347,12 @@ router.patch('/users/:userId', requireTenant, async (req: TenantRequest, res) =>
     action: 'user.update',
     resourceType: 'user',
     resourceId: userId,
-    details: { fullName, role, isActive, by: 'tenant_admin' },
+    details: { fullName, role, isActive, allowedAlertTypes, by: 'tenant_admin' },
   });
-  return success(res, rows[0]);
+  return success(res, {
+    ...rows[0],
+    allowed_alert_types: parseAllowedAlertTypes(rows[0].allowed_alert_types),
+  });
 });
 
 router.delete('/users/:userId', requireTenant, async (req: TenantRequest, res) => {
@@ -482,8 +566,11 @@ router.get('/alerts', requireTenant, async (req: TenantRequest, res) => {
       }
     }
   }
-  const alerts = await orch.getAlerts(limit, acknowledged, from, to);
-  return success(res, alerts);
+  const alerts = await orch.getAlerts(Math.max(limit * 3, 150), acknowledged, from, to);
+  if (!req.user?.id) return success(res, alerts.slice(0, limit));
+  const access = await loadUserAllowedAlertTypes(req.user.id);
+  const filtered = filterAlertsForUser(alerts, access);
+  return success(res, filtered.slice(0, limit));
 });
 
 router.post('/alerts/acknowledge-bulk', requireTenant, async (req: TenantRequest, res) => {
@@ -491,6 +578,17 @@ router.post('/alerts/acknowledge-bulk', requireTenant, async (req: TenantRequest
     ? (req.body.ids as unknown[]).map(String).filter(Boolean)
     : undefined;
   const orch = new AlertOrchestrator(req.tenantId!);
+  if (req.user?.id && !roleBypassesAlertAcl(req.user.role)) {
+    const access = await loadUserAllowedAlertTypes(req.user.id);
+    const visible = filterAlertsForUser(
+      await orch.getAlerts(500, undefined),
+      access,
+    );
+    const allowedIds = new Set(visible.map((a) => a.id));
+    const scoped = ids?.length ? ids.filter((id) => allowedIds.has(id)) : [...allowedIds];
+    const acknowledged = await orch.acknowledgeMany(scoped);
+    return success(res, { acknowledged });
+  }
   const acknowledged = await orch.acknowledgeMany(ids);
   return success(res, { acknowledged });
 });
@@ -505,7 +603,15 @@ router.post('/alerts/sync', requireTenant, async (req: TenantRequest, res) => {
 
 router.post('/alerts/:id/acknowledge', requireTenant, async (req: TenantRequest, res) => {
   const orch = new AlertOrchestrator(req.tenantId!);
-  await orch.acknowledge(String(req.params.id));
+  const alertId = String(req.params.id);
+  if (req.user?.id && !roleBypassesAlertAcl(req.user.role)) {
+    const access = await loadUserAllowedAlertTypes(req.user.id);
+    const visible = filterAlertsForUser(await orch.getAlerts(500, undefined), access);
+    if (!visible.some((a) => a.id === alertId)) {
+      return error(res, 'Alert not found or not permitted', 404);
+    }
+  }
+  await orch.acknowledge(alertId);
   return success(res, { acknowledged: true });
 });
 

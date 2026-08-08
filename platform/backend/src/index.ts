@@ -106,6 +106,13 @@ async function main() {
       } catch (e) {
         logger.warn(`Workshop schema ensure skipped: ${(e as Error).message}`);
       }
+      try {
+        const { ensureUserAlertAccessSchema } = await import('./services/userAlertAccess.js');
+        await ensureUserAlertAccessSchema();
+        logger.info('User alert-access schema ready');
+      } catch (e) {
+        logger.warn(`User alert-access schema ensure skipped: ${(e as Error).message}`);
+      }
       logger.info('MySQL connected');
       startSyncScheduler();
       logger.info('Sync scheduler started');
