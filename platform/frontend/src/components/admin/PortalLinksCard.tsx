@@ -2,9 +2,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { notify } from '@/lib/notify';
-import { getAdminUrl, getClientLoginUrl } from '@/lib/portalUrl';
+import { getAdminUrl, getClientLoginUrl, getClientPortalUrl } from '@/lib/portalUrl';
+import { getToken, setAuth } from '@/lib/api';
 import { Copy, ExternalLink } from 'lucide-react';
-import { Link } from 'react-router-dom';
 
 type Props = {
   slug?: string;
@@ -20,9 +20,21 @@ async function copyText(text: string, label: string) {
   }
 }
 
+function openClientApp(slug: string) {
+  const trimmed = slug.trim();
+  if (!trimmed) {
+    notify.error('Missing slug', 'Save the client slug before opening the app');
+    return;
+  }
+  const token = getToken();
+  if (token) setAuth(token, trimmed);
+  window.open(getClientPortalUrl(trimmed), '_blank', 'noopener,noreferrer');
+}
+
 export function PortalLinksCard({ slug, className }: Props) {
   const loginUrl = getClientLoginUrl();
   const adminUrl = getAdminUrl();
+  const portalUrl = slug ? getClientPortalUrl(slug) : '';
 
   return (
     <div className={className}>
@@ -54,16 +66,10 @@ export function PortalLinksCard({ slug, className }: Props) {
 
         <div className="flex flex-wrap gap-2 pt-1">
           {slug && (
-            <Link
-              to="/app/dashboard"
-              target="_blank"
-              onClick={() => slug && localStorage.setItem('ufp_tenant_slug', slug)}
-            >
-              <Button size="sm" variant="secondary" type="button">
-                <ExternalLink className="h-3.5 w-3.5 mr-1" />
-                Open client app
-              </Button>
-            </Link>
+            <Button size="sm" variant="secondary" type="button" onClick={() => openClientApp(slug)}>
+              <ExternalLink className="h-3.5 w-3.5 mr-1" />
+              Open client app
+            </Button>
           )}
           <a href={adminUrl} target="_blank" rel="noreferrer">
             <Button size="sm" variant="outline" type="button">
@@ -71,6 +77,10 @@ export function PortalLinksCard({ slug, className }: Props) {
             </Button>
           </a>
         </div>
+
+        {portalUrl && (
+          <p className="text-[10px] text-muted-foreground font-mono break-all">{portalUrl}</p>
+        )}
 
         <p className="text-[10px] text-muted-foreground border-t pt-2">
           App: <code className="text-[10px]">{typeof window !== 'undefined' ? window.location.origin : '(browser)'}</code>

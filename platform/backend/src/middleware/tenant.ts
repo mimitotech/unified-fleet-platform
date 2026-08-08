@@ -14,8 +14,9 @@ export async function tenantMiddleware(req: TenantRequest, res: Response, next: 
   const slugHeader = (req.headers['x-tenant-slug'] as string) || undefined;
 
   if (isSystemRole(req.user?.role) && slugHeader) {
+    // System staff may preview draft/inactive clients via View Client (?tenant=slug).
     const { rows } = await query<{ id: string; slug: string }>(
-      `SELECT id, slug FROM tenants WHERE slug = $1 AND is_active = true`,
+      `SELECT id, slug FROM tenants WHERE slug = $1`,
       [slugHeader]
     );
     if (rows[0]) {

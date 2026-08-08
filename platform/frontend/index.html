@@ -25,8 +25,15 @@
     <script>
       (function () {
         try {
+          var params = new URLSearchParams(window.location.search || '');
+          var preview = (params.get('tenant') || params.get('as') || '').trim();
+          if (preview && localStorage.getItem('ufp_token')) {
+            localStorage.setItem('ufp_tenant_slug', preview);
+          }
           var slug = localStorage.getItem('ufp_tenant_slug');
           if (!slug) return;
+          var path = window.location.pathname || '';
+          if (path.indexOf('/app') !== 0 && path.indexOf('/admin') !== 0) return;
           var raw = localStorage.getItem('ufp_tenant_theme_vars:' + slug);
           if (!raw) return;
           var vars = JSON.parse(raw);

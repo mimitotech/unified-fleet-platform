@@ -12,7 +12,7 @@ import { LiveIndicator } from '@/components/shared/LiveIndicator';
 import { RefreshButton } from '@/components/shared/RefreshButton';
 import { AnimatedPage } from '@/components/shared/PageLoader';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { clientApi } from '@/lib/api';
+import { clientApi, getTenantSlug } from '@/lib/api';
 import { useAlerts, useAcknowledgeAlert, type ClientAlert } from '@/hooks/useAlerts';
 import { useFleetSnapshot } from '@/hooks/useFleetSnapshot';
 import { safeArray } from '@/lib/safeArray';
@@ -66,7 +66,7 @@ export function AppLayout({ children, title, subtitle, actions }: AppLayoutProps
   const [manualRefreshing, setManualRefreshing] = useState(false);
 
   const { data: integrations } = useQuery({
-    queryKey: ['integrationStatus'],
+    queryKey: ['integrationStatus', getTenantSlug() || 'default'],
     queryFn: () => clientApi.getIntegrationStatus(),
     refetchInterval: pollWhenVisible(LIVE_POLL.integrations),
   });

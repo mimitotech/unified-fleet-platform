@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { clientApi } from '@/lib/api';
+import { clientApi, getTenantSlug } from '@/lib/api';
 import { LIVE_POLL, pollWhenVisible } from '@/lib/liveRefresh';
 
 export type WialonContext = Awaited<ReturnType<typeof clientApi.getWialonContext>>;
@@ -11,9 +11,13 @@ const tierLabel: Record<string, string> = {
   user: 'End user',
 };
 
+function tenantScope() {
+  return getTenantSlug() || 'default';
+}
+
 export function useWialonContext() {
   const query = useQuery({
-    queryKey: ['wialon-context'],
+    queryKey: ['wialon-context', tenantScope()],
     queryFn: () => clientApi.getWialonContext(),
     staleTime: 30_000,
     refetchInterval: 120_000,
@@ -40,7 +44,7 @@ export function useWialonContext() {
 
 export function useWialonRoutes(enabled: boolean) {
   return useQuery({
-    queryKey: ['wialon-routes'],
+    queryKey: ['wialon-routes', tenantScope()],
     queryFn: () => clientApi.getWialonRoutes(),
     enabled,
     staleTime: 60_000,
@@ -49,7 +53,7 @@ export function useWialonRoutes(enabled: boolean) {
 
 export function useWialonReportTemplates(enabled: boolean) {
   return useQuery({
-    queryKey: ['wialon-report-templates'],
+    queryKey: ['wialon-report-templates', tenantScope()],
     queryFn: () => clientApi.getWialonReportTemplates(),
     enabled,
     staleTime: LIVE_POLL.reports,
@@ -59,7 +63,7 @@ export function useWialonReportTemplates(enabled: boolean) {
 
 export function useWialonNotifications(enabled: boolean) {
   return useQuery({
-    queryKey: ['wialon-notifications'],
+    queryKey: ['wialon-notifications', tenantScope()],
     queryFn: () => clientApi.getWialonNotifications(),
     enabled,
     staleTime: 30_000,
@@ -69,7 +73,7 @@ export function useWialonNotifications(enabled: boolean) {
 
 export function useWialonChildAccounts(enabled: boolean) {
   return useQuery({
-    queryKey: ['wialon-child-accounts'],
+    queryKey: ['wialon-child-accounts', tenantScope()],
     queryFn: () => clientApi.getWialonChildAccounts(),
     enabled,
     staleTime: 60_000,

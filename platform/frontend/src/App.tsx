@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { AuthProvider } from '@/providers/AuthProvider';
 import { AppShell, AdminShell } from '@/components/app/AppShell';
 import Landing from '@/pages/public/Landing';
@@ -33,6 +33,12 @@ import AdminAccountPage from '@/pages/admin/AccountPage';
 import WialonCenter from '@/pages/admin/WialonCenter';
 import LocoNavCenter from '@/pages/admin/LocoNavCenter';
 import TrackSolidCenter from '@/pages/admin/TrackSolidCenter';
+
+/** Remount detail when switching clients so form/integration state never sticks. */
+function TenantDetailRoute() {
+  const { id } = useParams<{ id: string }>();
+  return <TenantDetail key={id} />;
+}
 
 export default function App() {
   return (
@@ -70,7 +76,7 @@ export default function App() {
           <Route path="dashboard" element={<AdminDashboard />} />
           <Route path="tenants" element={<AdminTenantsPage />} />
           <Route path="tenants/new" element={<TenantCreate />} />
-          <Route path="tenants/:id" element={<TenantDetail />} />
+          <Route path="tenants/:id" element={<TenantDetailRoute />} />
           <Route path="users" element={<AdminUsersPage />} />
           <Route path="system-users" element={<SystemUsersPage />} />
           <Route path="system" element={<AdminSystemPage />} />

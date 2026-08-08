@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { clientApi } from '@/lib/api';
+import { clientApi, getTenantSlug } from '@/lib/api';
 import { DEFAULT_MODULES, sortModules } from '@/lib/constants/modules';
 import { safeArray } from '@/lib/safeArray';
 import { useAuth } from '@/providers/AuthProvider';
@@ -13,7 +13,7 @@ function resolveModules(data: unknown, isError: boolean) {
 
 export function useModules() {
   const q = useQuery({
-    queryKey: ['modules'],
+    queryKey: ['modules', getTenantSlug() || 'default'],
     queryFn: () => clientApi.getModules(),
     retry: 1,
     staleTime: 60_000,

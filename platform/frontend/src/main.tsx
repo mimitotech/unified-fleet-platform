@@ -5,9 +5,12 @@ import { BrowserRouter } from 'react-router-dom';
 import { Toaster } from '@/components/ui/sonner';
 import { hydrateTenantThemeFromCache } from '@/lib/tenantBrandingCache';
 import { applyDefaultDocumentBranding } from '@/lib/favicon';
+import { syncTenantPreviewFromUrl } from '@/lib/adminTenantPreview';
 import App from './App';
 import './styles/globals.css';
 
+// Admin "View Client" opens /app/dashboard?tenant=<slug> — bind slug before any API calls.
+syncTenantPreviewFromUrl();
 applyDefaultDocumentBranding();
 hydrateTenantThemeFromCache();
 

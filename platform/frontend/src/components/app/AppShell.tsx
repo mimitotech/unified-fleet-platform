@@ -1,19 +1,66 @@
-import { Navigate, Outlet } from 'react-router-dom';
-import { useEffect } from 'react';
+import { Navigate, Outlet, useLocation, useSearchParams } from 'react-router-dom';
+import { useEffect, useLayoutEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/providers/AuthProvider';
 import { preloadFleetUnitIcons } from '@/lib/fleetIconCache';
-import { clientApi } from '@/lib/api';
+import { clientApi, getTenantSlug, getToken, setAuth } from '@/lib/api';
 import { snapshotToUnits } from '@/lib/fleetUnits';
 import { ThemeProvider } from '@/components/shared/ThemeProvider';
 import { FleetProvider } from '@/contexts/FleetContext';
 import { ErrorBoundary } from '@/components/shared/ErrorBoundary';
 import { AppBootLoader } from '@/components/shared/AppBootLoader';
 import { SidebarProvider } from '@/providers/SidebarContext';
-import { canAccessAdminPanel } from '@/lib/systemRoles';
+import { canAccessAdminPanel, isSystemRole } from '@/lib/systemRoles';
 import { needsTermsAcceptance } from '@/lib/authRedirect';
+import {
+  readTenantPreviewSlugFromLocation,
+  syncTenantPreviewFromUrl,
+} from '@/lib/adminTenantPreview';
+import { resetFleetService } from '@/services/fleet';
+
+/**
+ * For platform staff, bind ?tenant= / ?as= into auth storage and drop cached
+ * client queries so View Client always shows that client's dashboard/data.
+ */
+function useAdminTenantPreviewScope(): string {
+  const { user } = useAuth();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const qc = useQueryClient();
+  const urlSlug =
+    searchParams.get('tenant')?.trim() ||
+    searchParams.get('as')?.trim() ||
+    readTenantPreviewSlugFromLocation(location.search);
+  const [scopeSlug, setScopeSlug] = useState(() => getTenantSlug() || 'none');
+
+  useLayoutEffect(() => {
+    if (!isSystemRole(user?.role)) {
+      setScopeSlug(getTenantSlug() || 'none');
+      return;
+    }
+    if (!urlSlug) {
+      setScopeSlug(getTenantSlug() || 'none');
+      return;
+    }
+
+    const token = getToken();
+    const prev = getTenantSlug();
+    syncTenantPreviewFromUrl(location.search);
+    if (token) setAuth(token, urlSlug);
+
+    if (prev !== urlSlug) {
+      qc.clear();
+      resetFleetService();
+    }
+    setScopeSlug(urlSlug);
+  }, [urlSlug, user?.role, location.search, qc]);
+
+  return scopeSlug;
+}
 
 export function AppShell() {
   const { isAuthenticated, isLoading, user } = useAuth();
+  const tenantScope = useAdminTenantPreviewScope();
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -23,7 +70,7 @@ export function AppShell() {
         if (units.length) preloadFleetUnitIcons(units);
       }).catch(() => undefined);
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, tenantScope]);
 
   if (isLoading) return <AppBootLoader />;
   if (!isAuthenticated) return <Navigate to="/auth/login" replace />;
@@ -34,8 +81,8 @@ export function AppShell() {
     <ErrorBoundary fallbackTitle="Application error">
       <SidebarProvider>
         <ThemeProvider>
-          <FleetProvider>
-            <Outlet />
+          <FleetProvider key={tenantScope}>
+            <Outlet key={tenantScope} />
           </FleetProvider>
         </ThemeProvider>
       </SidebarProvider>

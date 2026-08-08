@@ -14,10 +14,11 @@ export function getAdminUrl(path = '/admin/dashboard'): string {
   return `${getAppBaseUrl()}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
-/** Branded client app entry — slug is stored on login for system users entering a tenant */
+/** Client app entry for a specific tenant (admin View Client). Slug is required in the URL. */
 export function getClientPortalUrl(slug?: string): string {
   const base = `${getAppBaseUrl()}/app/dashboard`;
-  return slug ? base : base;
+  if (!slug?.trim()) return base;
+  return `${base}?tenant=${encodeURIComponent(slug.trim())}`;
 }
 
 export function getTenantPortalLabel(slug: string): string {

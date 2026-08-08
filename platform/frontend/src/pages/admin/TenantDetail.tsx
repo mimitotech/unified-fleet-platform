@@ -36,6 +36,8 @@ import { PortalLinksCard } from '@/components/admin/PortalLinksCard';
 import { WialonUserImportCard } from '@/components/admin/WialonUserImportCard';
 import { defaultModulesForRole } from '@/lib/userAccess';
 import { FUEL_TABLE_COLUMN_DEFS } from '@/lib/fuelModuleConfig';
+import { getClientPortalUrl } from '@/lib/portalUrl';
+import { getToken, setAuth } from '@/lib/api';
 import { format } from 'date-fns';
 
 type Tenant = Record<string, unknown>;
@@ -50,7 +52,7 @@ export default function TenantDetail() {
   const isValidId = !!id && UUID_RE.test(id);
 
   const { data: tenantData } = useQuery({
-    queryKey: ['tenant', id],
+    queryKey: ['adminTenant', id],
     queryFn: () => adminApi.getTenant(id!),
     enabled: isValidId,
   });
@@ -208,22 +210,24 @@ export default function TenantDetail() {
     const wialon = (integrations as Array<Record<string, unknown>> | undefined)?.find(
       (i) => i.source_type === 'wialon'
     );
-    if (!wialon) return;
-    if (wialon.wialon_mother_account_id) {
-      setWialonMotherAccountId(String(wialon.wialon_mother_account_id));
+    if (!wialon) {
+      setWialonToken('');
+      setWialonBaseUrl('');
+      setWialonAccountId('');
+      setWialonAccountName('');
+      setWialonMotherAccountId('');
+      setWialonOperateAs('');
+      setWialonUserIds([]);
+      setWialonTestResult(null);
+      return;
     }
-    if (wialon.wialon_resource_id) {
-      setWialonAccountId(String(wialon.wialon_resource_id));
-    }
-    if (wialon.wialon_account_name) {
-      setWialonAccountName(String(wialon.wialon_account_name));
-    }
-    if (wialon.wialon_operate_as) {
-      setWialonOperateAs(String(wialon.wialon_operate_as));
-    }
+    setWialonMotherAccountId(wialon.wialon_mother_account_id ? String(wialon.wialon_mother_account_id) : '');
+    setWialonAccountId(wialon.wialon_resource_id ? String(wialon.wialon_resource_id) : '');
+    setWialonAccountName(wialon.wialon_account_name ? String(wialon.wialon_account_name) : '');
+    setWialonOperateAs(wialon.wialon_operate_as ? String(wialon.wialon_operate_as) : '');
     const meta = wialon.wialon_session_meta as Record<string, unknown> | undefined;
     const baseFromMeta = meta?.baseUrl as string | undefined;
-    if (baseFromMeta) setWialonBaseUrl(baseFromMeta);
+    setWialonBaseUrl(baseFromMeta || '');
   }, [integrations]);
 
   useEffect(() => {
@@ -250,8 +254,8 @@ export default function TenantDetail() {
       success: 'General settings saved',
     }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['tenant', id] });
-      qc.invalidateQueries({ queryKey: ['tenant'] });
+      qc.invalidateQueries({ queryKey: ['adminTenant', id] });
+      qc.invalidateQueries({ queryKey: ['tenants'] });
     },
   });
 
@@ -261,8 +265,8 @@ export default function TenantDetail() {
       success: 'Branding saved successfully',
     }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['tenant', id] });
-      qc.invalidateQueries({ queryKey: ['tenant'] });
+      qc.invalidateQueries({ queryKey: ['adminTenant', id] });
+      qc.invalidateQueries({ queryKey: ['tenants'] });
     },
   });
 
@@ -477,7 +481,8 @@ export default function TenantDetail() {
           `${data.verifiedIntegrations} integration(s) verified — users can sign in with MAMS credentials.`
         );
       }
-      qc.invalidateQueries({ queryKey: ['tenant', id] });
+      qc.invalidateQueries({ queryKey: ['adminTenant', id] });
+      qc.invalidateQueries({ queryKey: ['tenants'] });
     },
     onError: (err, _vars, context) => {
       if (context?.toastId) notify.dismiss(context.toastId);
@@ -660,16 +665,23 @@ export default function TenantDetail() {
               Active · no integrations yet
             </Badge>
           )}
-          <Link
-            to="/app/dashboard"
-            target="_blank"
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!String(t?.slug || general.slug || '').trim()}
             onClick={() => {
-              const slug = String(t?.slug || '');
-              localStorage.setItem('ufp_tenant_slug', slug);
+              const slug = String(t?.slug || general.slug || '').trim();
+              if (!slug) {
+                notify.error('Missing slug', 'Save the client slug before viewing the app');
+                return;
+              }
+              const token = getToken();
+              if (token) setAuth(token, slug);
+              window.open(getClientPortalUrl(slug), '_blank', 'noopener,noreferrer');
             }}
           >
-            <Button size="sm" variant="outline"><ExternalLink className="w-4 h-4 mr-1" />View Client</Button>
-          </Link>
+            <ExternalLink className="w-4 h-4 mr-1" />View Client
+          </Button>
         </div>
       }
     >
@@ -1222,8 +1234,8 @@ export default function TenantDetail() {
                   if (!url) throw new Error('Upload succeeded but no logo URL returned');
                   setBranding((b) => ({ ...b, logoUrl: url }));
                   notify.success('Logo uploaded and saved');
-                  qc.invalidateQueries({ queryKey: ['tenant', id] });
-                  qc.invalidateQueries({ queryKey: ['tenant'] });
+                  qc.invalidateQueries({ queryKey: ['adminTenant', id] });
+                  qc.invalidateQueries({ queryKey: ['tenants'] });
                 }}
                 onClear={async () => {
                   setBranding((b) => ({ ...b, logoUrl: '' }));
@@ -1231,8 +1243,8 @@ export default function TenantDetail() {
                     loading: 'Removing logo...',
                     success: 'Logo cleared',
                   });
-                  qc.invalidateQueries({ queryKey: ['tenant', id] });
-                  qc.invalidateQueries({ queryKey: ['tenant'] });
+                  qc.invalidateQueries({ queryKey: ['adminTenant', id] });
+                  qc.invalidateQueries({ queryKey: ['tenants'] });
                 }}
               />
               <FileUpload
@@ -1245,8 +1257,8 @@ export default function TenantDetail() {
                   if (!url) throw new Error('Upload succeeded but no favicon URL returned');
                   setBranding((b) => ({ ...b, faviconUrl: url }));
                   notify.success('Favicon uploaded and saved');
-                  qc.invalidateQueries({ queryKey: ['tenant', id] });
-                  qc.invalidateQueries({ queryKey: ['tenant'] });
+                  qc.invalidateQueries({ queryKey: ['adminTenant', id] });
+                  qc.invalidateQueries({ queryKey: ['tenants'] });
                 }}
                 onClear={async () => {
                   setBranding((b) => ({ ...b, faviconUrl: '' }));
@@ -1254,8 +1266,8 @@ export default function TenantDetail() {
                     loading: 'Removing favicon...',
                     success: 'Favicon cleared',
                   });
-                  qc.invalidateQueries({ queryKey: ['tenant', id] });
-                  qc.invalidateQueries({ queryKey: ['tenant'] });
+                  qc.invalidateQueries({ queryKey: ['adminTenant', id] });
+                  qc.invalidateQueries({ queryKey: ['tenants'] });
                 }}
               />
               <div><Label>Primary</Label><Input type="color" value={branding.primaryColor} onChange={(e) => setBranding({ ...branding, primaryColor: e.target.value })} className="h-10" /></div>
