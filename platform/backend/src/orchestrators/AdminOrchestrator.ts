@@ -31,7 +31,10 @@ export class AdminOrchestrator {
     );
 
     const { rows: userStats } = await query<{ total: string }>(
-      `SELECT COUNT(*)::int as total FROM users WHERE role != 'platform_admin'`
+      `SELECT COUNT(*)::int as total FROM users
+       WHERE role NOT IN ('platform_admin', 'super_admin')
+         AND tenant_id IS NOT NULL
+         AND is_active = true`
     );
 
     const { rows: alertStats } = await query<{ pending: string }>(
@@ -84,7 +87,7 @@ export class AdminOrchestrator {
               COUNT(DISTINCT u.id)::int as user_count
        FROM tenants t
        LEFT JOIN assets a ON a.tenant_id = t.id
-       LEFT JOIN users u ON u.tenant_id = t.id
+       LEFT JOIN users u ON u.tenant_id = t.id AND u.is_active = true
        GROUP BY t.id ORDER BY vehicle_count DESC LIMIT 5`
     );
 
@@ -369,7 +372,7 @@ export class AdminOrchestrator {
        FROM tenants t
        LEFT JOIN users mgr ON mgr.id = t.assigned_manager_id
        LEFT JOIN assets a ON a.tenant_id = t.id
-       LEFT JOIN users u ON u.tenant_id = t.id AND u.role NOT IN ('platform_admin', 'super_admin')
+       LEFT JOIN users u ON u.tenant_id = t.id AND u.role NOT IN ('platform_admin', 'super_admin') AND u.is_active = true
        LEFT JOIN tenant_modules tm ON tm.tenant_id = t.id
        ${where}
        GROUP BY t.id, mgr.full_name, mgr.email
@@ -425,7 +428,7 @@ export class AdminOrchestrator {
     const { rows: usage } = await query(
       `SELECT
          (SELECT COUNT(*)::int FROM assets WHERE tenant_id = $1) as vehicles_used,
-         (SELECT COUNT(*)::int FROM users WHERE tenant_id = $1) as users_used`,
+         (SELECT COUNT(*)::int FROM users WHERE tenant_id = $1 AND is_active = true) as users_used`,
       [tenantId]
     );
 

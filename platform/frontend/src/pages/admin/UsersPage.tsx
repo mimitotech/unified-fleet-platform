@@ -17,18 +17,21 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { ClientUserEditDialog, type ClientUserRow } from '@/components/admin/ClientUserEditDialog';
-import { Pencil } from 'lucide-react';
+import { Pencil, RefreshCw } from 'lucide-react';
 
 export default function AdminUsersPage() {
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
   const [role, setRole] = useState('all');
+  const [status, setStatus] = useState<'active' | 'inactive' | 'all'>('active');
   const [selected, setSelected] = useState<string[]>([]);
   const [editingUser, setEditingUser] = useState<ClientUserRow | null>(null);
 
-  const { data: users, isLoading } = useQuery({
-    queryKey: ['adminUsers', search, role],
-    queryFn: () => adminApi.listUsers({ search, role }),
+  const { data: users, isLoading, isFetching, refetch } = useQuery({
+    queryKey: ['adminUsers', search, role, status],
+    queryFn: () => adminApi.listUsers({ search, role, status }),
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
 
   const bulkAction = useMutation({
@@ -71,7 +74,10 @@ export default function AdminUsersPage() {
   };
 
   return (
-    <AdminLayout title={`Client Users (${list.length})`} subtitle="Edit roles, module access, and status for users in client organizations">
+    <AdminLayout
+      title={`Client Users (${list.length})`}
+      subtitle="Live list from the database — hard-deleted users no longer appear. Soft-deactivated users are under Inactive."
+    >
       <div className="space-y-4">
         <div className="flex flex-wrap gap-2">
           <Input placeholder="Search users..." value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-xs" />
@@ -85,6 +91,23 @@ export default function AdminUsersPage() {
               <SelectItem value="viewer">Viewer</SelectItem>
             </SelectContent>
           </Select>
+          <Select value={status} onValueChange={(v) => setStatus(v as typeof status)}>
+            <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="inactive">Inactive</SelectItem>
+              <SelectItem value="all">All statuses</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+          >
+            <RefreshCw className={`h-3.5 w-3.5 mr-1 ${isFetching ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
           {selected.length > 0 && (
             <>
               <Button size="sm" variant="outline" onClick={() => bulkAction.mutate('activate')}>Activate</Button>
@@ -95,7 +118,11 @@ export default function AdminUsersPage() {
 
         <Card>
           <CardContent className="p-0">
-            {isLoading ? <div className="p-6"><TableLoader rows={8} /></div> : (
+            {isLoading ? <div className="p-6"><TableLoader rows={8} /></div> : list.length === 0 ? (
+              <p className="p-8 text-center text-sm text-muted-foreground">
+                No users found for this filter. Hard-deleted accounts are gone; switch to Inactive or All if you deactivated them in-app.
+              </p>
+            ) : (
               <Table>
                 <TableHeader>
                   <TableRow>

@@ -15,7 +15,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppLayout } from "@/components/app/AppLayout";
 import { MetricCard } from "@/components/app/MetricCard";
 import { WialonContextBanner } from "@/components/app/WialonContextBanner";
-import { AnimatedPage, PageLoader } from "@/components/shared/PageLoader";
+import { AnimatedPage } from "@/components/shared/PageLoader";
+import { BrandedPageLoader } from "@/components/shared/BrandedPageLoader";
 import { QueryErrorBanner } from "@/components/shared/QueryErrorBanner";
 import {
   DashboardSectionLabel,
@@ -1258,8 +1259,7 @@ export default function Dashboard() {
   if (showLoader) {
     return (
       <AppLayout title="Dashboard" subtitle="Operations command center">
-        <div className="mb-4">{toolbar}</div>
-        <PageLoader />
+        <BrandedPageLoader label="Loading your fleet dashboard..." />
       </AppLayout>
     );
   }

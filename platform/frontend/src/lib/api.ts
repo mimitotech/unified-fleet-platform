@@ -1679,11 +1679,12 @@ export const adminApi = {
   updateMarketplace: (key: string, isEnabledGlobally: boolean) =>
     api(`/api/admin/marketplace/${key}`, { method: 'PATCH', body: JSON.stringify({ isEnabledGlobally }) }),
 
-  listUsers: (params?: { search?: string; role?: string; tenant?: string }) => {
+  listUsers: (params?: { search?: string; role?: string; tenant?: string; status?: string }) => {
     const q = new URLSearchParams();
     if (params?.search) q.set('search', params.search);
     if (params?.role) q.set('role', params.role);
     if (params?.tenant) q.set('tenant', params.tenant);
+    if (params?.status) q.set('status', params.status);
     return api<unknown[]>(`/api/admin/users?${q}`);
   },
   getUser: (id: string) => api<unknown>(`/api/admin/users/${id}`),

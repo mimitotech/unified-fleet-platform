@@ -2,6 +2,7 @@ import { MamsLogo } from '@/components/shared/MamsLogo';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export function AppBootLoader({ label = 'Loading your workspace...' }: { label?: string }) {
+  // Keep boot splash on platform branding (auth may not have tenant context yet).
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-8 p-8">
       <MamsLogo size="lg" />

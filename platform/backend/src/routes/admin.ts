@@ -274,6 +274,7 @@ router.get('/users', async (req: AuthRequest, res) => {
   const search = String(req.query.search || '');
   const tenantFilter = String(req.query.tenant || '');
   const roleFilter = String(req.query.role || '');
+  const statusFilter = String(req.query.status || 'active');
   const params: unknown[] = [];
   let where = `WHERE u.tenant_id IS NOT NULL AND u.role NOT IN ('platform_admin', 'super_admin')`;
 
@@ -294,12 +295,20 @@ router.get('/users', async (req: AuthRequest, res) => {
     params.push(roleFilter);
     where += ` AND u.role = $${params.length}`;
   }
+  if (statusFilter === 'active') {
+    where += ` AND u.is_active = true`;
+  } else if (statusFilter === 'inactive') {
+    where += ` AND u.is_active = false`;
+  }
 
   const { rows } = await query(
     `SELECT u.id, u.email, u.full_name, u.role, u.is_active, u.last_login_at, u.created_at,
             u.tenant_id, t.name as tenant_name, t.slug as tenant_slug
-     FROM users u LEFT JOIN tenants t ON t.id = u.tenant_id
-     ${where} ORDER BY u.created_at DESC LIMIT 200`,
+     FROM users u
+     INNER JOIN tenants t ON t.id = u.tenant_id
+     ${where}
+     ORDER BY u.created_at DESC
+     LIMIT 200`,
     params
   );
   return success(res, rows);

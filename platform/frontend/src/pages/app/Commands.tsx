@@ -3,7 +3,8 @@ import { AppLayout } from '@/components/app/AppLayout';
 import { useFleetUnits } from '@/hooks/useFleetUnits';
 import { clientApi } from '@/lib/api';
 import { WialonContextBanner } from '@/components/app/WialonContextBanner';
-import { AnimatedPage, PageLoader } from '@/components/shared/PageLoader';
+import { AnimatedPage } from '@/components/shared/PageLoader';
+import { BrandedPageLoader } from '@/components/shared/BrandedPageLoader';
 import { WialonCommandButton } from '@/components/fleet/WialonCommandButton';
 import { UnitTypeIcon } from '@/components/fleet/UnitTypeIcon';
 import { StatusBadge } from '@/components/shared/StatusBadge';
@@ -76,7 +77,7 @@ export default function Commands() {
   if (isLoading && !units.length) {
     return (
       <AppLayout title="Commands" subtitle="Remote vehicle commands">
-        <PageLoader />
+        <BrandedPageLoader label="Loading command-ready assets..." />
       </AppLayout>
     );
   }
