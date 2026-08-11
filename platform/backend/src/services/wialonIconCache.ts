@@ -133,7 +133,6 @@ export async function fetchCachedUnitIcon(
 
     const download = async (ugiVal: number) => {
       const url = `${wialonUnitIconUrl(host, unitId, size, ugiVal)}?sid=${encodeURIComponent(sid)}`;
-      // Plain fetch — icon CDN must not abort under Hostinger latency.
       const res = await fetch(url);
       if (!res.ok) throw new Error(`Wialon icon HTTP ${res.status}`);
       const ab = await res.arrayBuffer();

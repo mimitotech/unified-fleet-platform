@@ -9,9 +9,9 @@ export function useFuelModuleConfig() {
     queryKey: ['fuel', 'moduleConfig'],
     queryFn: () => clientApi.getWialonFuelModuleConfig(),
     enabled: isReady,
-    staleTime: 30_000,
-    refetchInterval: 30_000,
-    refetchOnWindowFocus: false,
+    staleTime: 15_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
   });
 }
 

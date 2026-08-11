@@ -36,18 +36,12 @@ export function getSyncSchedulerStatus() {
 }
 
 /**
- * Hostinger runs a single Node process — in-process flags already serialize cycles.
- * Do NOT hold a MySQL pool connection for GET_LOCK across long Wialon work
- * (that starves live API / icons / dashboard under load).
+ * Single Node process on Hostinger — in-process cycle flags already serialize.
+ * Do not use MySQL GET_LOCK across the pool (connection-scoped; breaks sync).
  */
-async function withSyncGate(name: string, work: () => Promise<void>): Promise<boolean> {
-  try {
-    await work();
-    return true;
-  } catch (err) {
-    logger.warn(`[SyncScheduler] ${name} failed`, err);
-    throw err;
-  }
+async function withMysqlLock(_name: string, work: () => Promise<void>): Promise<boolean> {
+  await work();
+  return true;
 }
 
 async function runTenantCycle(): Promise<void> {
@@ -58,7 +52,7 @@ async function runTenantCycle(): Promise<void> {
   tenantCycleRunning = true;
   lastTenantCycleError = null;
   try {
-    await withSyncGate('mams_tenant_sync', async () => {
+    await withMysqlLock('mams_tenant_sync', async () => {
       const tenants = await listActiveTenants();
       let assetCount = 0;
       let snapshotCount = 0;
@@ -108,7 +102,7 @@ async function runFuelDbCycle(): Promise<void> {
   }
   fuelDbCycleRunning = true;
   try {
-    await withSyncGate('mams_fuel_db_sync', async () => {
+    await withMysqlLock('mams_fuel_db_sync', async () => {
       const count = await FuelSyncService.syncAllConnectedTenantsToDb();
       if (count > 0) logger.info(`[FuelSync] synced fuel reports to database for ${count} tenants`);
     });
@@ -127,7 +121,7 @@ async function runDomainCycle(): Promise<void> {
   }
   domainCycleRunning = true;
   try {
-    await withSyncGate('mams_domain_sync', async () => {
+    await withMysqlLock('mams_domain_sync', async () => {
       const count = await DomainSyncService.syncAllConnectedTenants();
       if (count > 0) logger.info(`[DomainSync] synced trips/eco for ${count} Wialon tenants`);
     });
@@ -148,7 +142,7 @@ async function runAlertCycle(): Promise<void> {
   alertCycleRunning = true;
   lastAlertCycleError = null;
   try {
-    await withSyncGate('mams_alert_sync', async () => {
+    await withMysqlLock('mams_alert_sync', async () => {
       const purged = await AlertOrchestrator.purgeNoiseAlertsGlobally();
       if (purged > 0) {
         logger.info(`[AlertSync] purged ${purged} Engine_Hours / counter noise alerts`);
