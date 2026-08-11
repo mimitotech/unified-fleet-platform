@@ -33,7 +33,7 @@ type TrustLogo = {
   imageUrl: string;
 };
 
-type AuthView = 'login' | 'forgot-email' | 'forgot-reset';
+type AuthView = 'login' | 'forgot-email' | 'forgot-sent' | 'forgot-reset';
 
 const WIALON_HOSTING_URL = 'https://hosting.wialon.com';
 
@@ -286,6 +286,16 @@ export default function Login() {
   }, [slides.length]);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('resetToken') || params.get('token');
+    if (token) {
+      setResetToken(token);
+      setView('forgot-reset');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  useEffect(() => {
     if (slides.length < 2) return;
     const id = window.setInterval(() => {
       setSlide((s) => (s + 1) % slides.length);
@@ -313,12 +323,20 @@ export default function Login() {
     setLoading(true);
     try {
       const result = await authApi.forgotPassword(email.trim());
-      setResetToken(result.resetToken);
       setEmail(result.email);
       setNewPassword('');
       setConfirmPassword('');
-      setView('forgot-reset');
-      notify.success('Account found', 'Choose a new password to continue.');
+      if (result.emailed) {
+        setResetToken('');
+        setView('forgot-sent');
+        notify.success('Check your email', 'We sent a password reset link.');
+      } else if (result.resetToken) {
+        setResetToken(result.resetToken);
+        setView('forgot-reset');
+        notify.success('Account found', 'Choose a new password to continue.');
+      } else {
+        notify.error('Reset unavailable', 'No reset method available. Contact support.');
+      }
     } catch (err) {
       notify.error('Reset unavailable', (err as Error).message);
     } finally {
@@ -416,7 +434,9 @@ export default function Login() {
                     ? BRAND.fullName
                     : view === 'forgot-email'
                       ? 'Reset your password'
-                      : 'Choose a new password'}
+                      : view === 'forgot-sent'
+                        ? 'Check your inbox'
+                        : 'Choose a new password'}
                 </p>
               </div>
 
@@ -501,7 +521,7 @@ export default function Login() {
                 {view === 'forgot-email' && (
                   <form onSubmit={handleForgotEmail} className="space-y-3.5">
                     <p className="text-xs font-medium leading-relaxed text-slate-600">
-                      Enter the email on your account. If it exists, you can set a new password.
+                      Enter the email on your account. We will send a secure reset link to that address.
                     </p>
                     <div className="space-y-1">
                       <Label htmlFor="forgot-email" className="text-xs font-bold text-primary">
@@ -524,10 +544,10 @@ export default function Login() {
                       type="submit"
                       className="h-10 w-full rounded-lg bg-primary text-sm font-bold text-white shadow-md shadow-primary/25 hover:bg-primary/90"
                       loading={loading}
-                      loadingText="Checking..."
+                      loadingText="Sending..."
                     >
                       <KeyRound className="mr-1.5 h-4 w-4" />
-                      Continue
+                      Send reset link
                     </LoadingButton>
                     <button
                       type="button"
@@ -539,6 +559,25 @@ export default function Login() {
                       Back to sign in
                     </button>
                   </form>
+                )}
+
+                {view === 'forgot-sent' && (
+                  <div className="space-y-3.5">
+                    <p className="text-xs font-medium leading-relaxed text-slate-600">
+                      If an account exists for <span className="font-bold text-primary">{email}</span>, we
+                      sent a password reset link from{' '}
+                      <span className="font-semibold">mams@mimitotracking.com</span>. Open the email and
+                      choose a new password within 15 minutes.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={goLogin}
+                      className="flex h-10 w-full items-center justify-center gap-1.5 rounded-lg bg-primary text-sm font-bold text-white shadow-md shadow-primary/25 hover:bg-primary/90"
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5" />
+                      Back to sign in
+                    </button>
+                  </div>
                 )}
 
                 {view === 'forgot-reset' && (

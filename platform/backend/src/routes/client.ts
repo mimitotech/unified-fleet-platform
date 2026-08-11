@@ -272,12 +272,27 @@ router.post('/users', requireTenant, async (req: TenantRequest, res) => {
         allowedAlertTypes: allowed,
       },
     });
+
+    let credentialsEmailed = false;
+    try {
+      const { sendAccountCredentialsEmail } = await import('../services/EmailService.js');
+      credentialsEmailed = await sendAccountCredentialsEmail({
+        to: email.toLowerCase().trim(),
+        fullName: fullName || email,
+        temporaryPassword,
+        reason: 'created',
+      });
+    } catch {
+      credentialsEmailed = false;
+    }
+
     return success(
       res,
       {
         ...rows[0],
         allowed_alert_types: parseAllowedAlertTypes(rows[0].allowed_alert_types),
-        temporaryPassword: password ? undefined : temporaryPassword,
+        temporaryPassword: credentialsEmailed ? undefined : password ? undefined : temporaryPassword,
+        credentialsEmailed,
       },
       201,
     );
@@ -402,7 +417,24 @@ router.post('/users/:userId/reset-password', requireTenant, async (req: TenantRe
     resourceId: userId,
     details: { by: 'tenant_admin' },
   });
-  return success(res, { reset: true, temporaryPassword });
+
+  let credentialsEmailed = false;
+  try {
+    const { sendAccountCredentialsEmail } = await import('../services/EmailService.js');
+    credentialsEmailed = await sendAccountCredentialsEmail({
+      to: String(rows[0].email),
+      temporaryPassword,
+      reason: 'reset',
+    });
+  } catch {
+    credentialsEmailed = false;
+  }
+
+  return success(res, {
+    reset: true,
+    temporaryPassword: credentialsEmailed ? undefined : temporaryPassword,
+    credentialsEmailed,
+  });
 });
 
 // Dashboard KPIs

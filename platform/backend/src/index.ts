@@ -115,6 +115,15 @@ async function main() {
       } catch (e) {
         logger.warn(`User alert-access schema ensure skipped: ${(e as Error).message}`);
       }
+      try {
+        const { syncEmailSettingsFromEnv, verifySmtpConnection } = await import('./services/EmailService.js');
+        await syncEmailSettingsFromEnv();
+        const smtp = await verifySmtpConnection();
+        if (smtp.ok) logger.info(`SMTP ready: ${smtp.message}`);
+        else logger.warn(`SMTP not verified: ${smtp.message}`);
+      } catch (e) {
+        logger.warn(`SMTP sync skipped: ${(e as Error).message}`);
+      }
       logger.info('MySQL connected');
       startSyncScheduler();
       logger.info('Sync scheduler started');

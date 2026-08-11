@@ -778,7 +778,16 @@ ON DUPLICATE KEY UPDATE label = VALUES(label);
 
 INSERT INTO system_settings (`key`, value) VALUES
   ('general', JSON_OBJECT('platformName','MAMS','defaultLanguage','en','defaultTimezone','Africa/Kampala')),
-  ('email', JSON_OBJECT('smtpHost','','smtpPort',587,'fromEmail','noreply@mams.mimitotracking.com','fromName','MAMS')),
+  ('email', JSON_OBJECT(
+    'smtpHost','smtp.hostinger.com',
+    'smtpPort',465,
+    'smtpSecure',true,
+    'smtpUser','mams@mimitotracking.com',
+    'fromEmail','mams@mimitotracking.com',
+    'fromName','MAMS',
+    'imapHost','imap.hostinger.com',
+    'imapPort',993
+  )),
   ('webhooks', JSON_OBJECT('globalSecret','','events', JSON_ARRAY('alerts','status'))),
   ('backup', JSON_OBJECT('autoBackup',true,'frequency','daily','backupTime','02:00','retentionDays',30)),
   ('security', JSON_OBJECT('minPasswordLength',8,'requireSpecialChar',true,'sessionTimeoutMinutes',30,'twoFactorPolicy','optional'))

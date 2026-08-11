@@ -25,7 +25,7 @@ Hostinger installs dependencies automatically, then runs `npm run build`
 
 ## Environment variables (required)
 
-Import **`deploy/hostinger.env.example`** (or `deploy/hostinger.env` if you keep a local copy).
+Import the filled production file **`deploy/hostinger.env`** (local, gitignored) or copy from **`deploy/hostinger.env.example`** and fill secrets.
 
 Critical values:
 
@@ -43,10 +43,19 @@ VITE_APP_URL=https://mams.mimitotracking.com
 VITE_API_URL=
 JWT_SECRET=<long random — keep forever once set>
 ENCRYPTION_KEY=<32+ chars — never rotate after go-live>
+SMTP_HOST=smtp.hostinger.com
+SMTP_PORT=465
+SMTP_SECURE=1
+SMTP_USER=mams@mimitotracking.com
+SMTP_PASSWORD=<mailbox password>
+SMTP_FROM_EMAIL=mams@mimitotracking.com
+SMTP_FROM_NAME=MAMS
+IMAP_HOST=imap.hostinger.com
+IMAP_PORT=993
 REDIS_DISABLED=1
 ```
 
-A local fill-in copy (gitignored) lives at `deploy/hostinger.env` — import that into Hostinger, or paste the password from hPanel into the example before import.
+Outbound mail sends password-reset links and new/reset account credentials from **mams@mimitotracking.com**.
 
 `DB_HOST` is optional — the app tries **Unix socket** first, then **TCP 127.0.0.1** (never bare `localhost`, which Node resolves to `::1`).  
 Prefer discrete `DB_*` over `DATABASE_URL`. Confirm the same user/password opens **phpMyAdmin**.
@@ -90,8 +99,9 @@ Same account pattern as HomeBridge+ (`Root directory = platform`).
 ## Go-live checklist
 
 1. [ ] phpMyAdmin: schema imported on `u632889724_mams`
-2. [ ] Hostinger env imported from `deploy/hostinger.env.example`
+2. [ ] Hostinger env imported from filled `deploy/hostinger.env` (includes SMTP)
 3. [ ] Domain `mams.mimitotracking.com` + SSL on this Node app
 4. [ ] Redeploy / restart Node after env save
-5. [ ] Open `https://mams.mimitotracking.com/health` (or login page)
-6. [ ] Login, confirm Monitoring / Workshop / Inbox load without React #310
+5. [ ] Open `https://mams.mimitotracking.com` and confirm login
+6. [ ] Forgot password → email arrives from `mams@mimitotracking.com`
+7. [ ] Monitoring loads without React #310

@@ -20,7 +20,15 @@ export default function AdminSystemPage() {
   const { data: settings } = useQuery({ queryKey: ['systemSettings'], queryFn: () => adminApi.getSystemSettings() });
 
   const [general, setGeneral] = useState<{ platformName?: string; defaultLanguage?: string; defaultTimezone?: string }>({});
-  const [email, setEmail] = useState<{ smtpHost?: string; smtpPort?: number; fromEmail?: string; fromName?: string }>({});
+  const [email, setEmail] = useState<{
+    smtpHost?: string;
+    smtpPort?: number;
+    smtpSecure?: boolean;
+    smtpUser?: string;
+    smtpPassword?: string;
+    fromEmail?: string;
+    fromName?: string;
+  }>({});
   const [security, setSecurity] = useState<{ minPasswordLength?: number; sessionTimeoutMinutes?: number }>({});
 
   const saveSettings = useMutation({
@@ -99,13 +107,79 @@ export default function AdminSystemPage() {
 
           <TabsContent value="email" className="mt-4">
             <Card>
-              <CardHeader><CardTitle>Email Settings</CardTitle><CardDescription>SMTP configuration for notifications</CardDescription></CardHeader>
+              <CardHeader>
+                <CardTitle>Email Settings</CardTitle>
+                <CardDescription>
+                  Outbound SMTP for password resets and account emails. Prefer Hostinger env vars
+                  (SMTP_*); values below sync from env on boot.
+                </CardDescription>
+              </CardHeader>
               <CardContent className="space-y-4 max-w-lg">
-                <div><Label>SMTP Host</Label><Input defaultValue={String(s?.email?.smtpHost || '')} onChange={(e) => setEmail({ ...email, smtpHost: e.target.value })} /></div>
-                <div><Label>SMTP Port</Label><Input type="number" defaultValue={String(s?.email?.smtpPort || 587)} onChange={(e) => setEmail({ ...email, smtpPort: parseInt(e.target.value, 10) })} /></div>
-                <div><Label>From Email</Label><Input defaultValue={String(s?.email?.fromEmail || '')} onChange={(e) => setEmail({ ...email, fromEmail: e.target.value })} /></div>
-                <div><Label>From Name</Label><Input defaultValue={String(s?.email?.fromName || '')} onChange={(e) => setEmail({ ...email, fromName: e.target.value })} /></div>
-                <Button onClick={() => saveSettings.mutate({ key: 'email', value: { ...s?.email, ...email } })}>Save Email Settings</Button>
+                <div>
+                  <Label>SMTP Host</Label>
+                  <Input
+                    defaultValue={String(s?.email?.smtpHost || '')}
+                    onChange={(e) => setEmail({ ...email, smtpHost: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>SMTP Port</Label>
+                  <Input
+                    type="number"
+                    defaultValue={String(s?.email?.smtpPort || 465)}
+                    onChange={(e) => setEmail({ ...email, smtpPort: parseInt(e.target.value, 10) })}
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={Boolean(email.smtpSecure ?? s?.email?.smtpSecure ?? true)}
+                    onCheckedChange={(v) => setEmail({ ...email, smtpSecure: v })}
+                  />
+                  <Label>TLS/SSL (port 465)</Label>
+                </div>
+                <div>
+                  <Label>SMTP Username</Label>
+                  <Input
+                    defaultValue={String(s?.email?.smtpUser || s?.email?.fromEmail || '')}
+                    onChange={(e) => setEmail({ ...email, smtpUser: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>SMTP Password</Label>
+                  <Input
+                    type="password"
+                    placeholder="••••••••"
+                    onChange={(e) => setEmail({ ...email, smtpPassword: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>From Email</Label>
+                  <Input
+                    defaultValue={String(s?.email?.fromEmail || '')}
+                    onChange={(e) => setEmail({ ...email, fromEmail: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>From Name</Label>
+                  <Input
+                    defaultValue={String(s?.email?.fromName || '')}
+                    onChange={(e) => setEmail({ ...email, fromName: e.target.value })}
+                  />
+                </div>
+                <Button
+                  onClick={() =>
+                    saveSettings.mutate({
+                      key: 'email',
+                      value: {
+                        ...s?.email,
+                        ...email,
+                        smtpPassword: email.smtpPassword || s?.email?.smtpPassword,
+                      },
+                    })
+                  }
+                >
+                  Save Email Settings
+                </Button>
               </CardContent>
             </Card>
           </TabsContent>
