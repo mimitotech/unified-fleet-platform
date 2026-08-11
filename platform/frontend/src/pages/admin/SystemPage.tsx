@@ -60,7 +60,7 @@ export default function AdminSystemPage() {
         </div>
 
         <div className="stat-strip-4">
-          <MetricCard title="API" value="99.98%" subtitle={`${(h?.api as { latencyMs?: number })?.latencyMs ?? 0}ms`} icon={Zap} variant="success" size="xxs" />
+          <MetricCard title="API" value={`${(h?.api as { latencyMs?: number })?.latencyMs ?? '—'}ms`} subtitle="DB ping latency" icon={Zap} variant="success" size="xxs" />
           <MetricCard title="Database" value={(h?.database as { status?: string })?.status === 'ok' ? 'OK' : 'Error'} icon={Database} variant="primary" size="xxs" />
           <MetricCard title="Redis" value={redisLabel} subtitle={redisSubtitle} icon={Server} variant={redisVariant} size="xxs" />
           <MetricCard title="Webhooks (24h)" value={String((h?.webhooks as { events24h?: number })?.events24h ?? 0)} icon={Radio} variant="info" size="xxs" />

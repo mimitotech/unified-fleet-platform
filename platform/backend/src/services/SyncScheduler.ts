@@ -13,46 +13,100 @@ let fuelDbCycleRunning = false;
 let alertCycleRunning = false;
 let domainCycleRunning = false;
 
+let lastTenantCycleAt: string | null = null;
+let lastFuelCycleAt: string | null = null;
+let lastAlertCycleAt: string | null = null;
+let lastDomainCycleAt: string | null = null;
+let lastTenantCycleError: string | null = null;
+let lastAlertCycleError: string | null = null;
+
+export function getSyncSchedulerStatus() {
+  return {
+    tenantCycleRunning,
+    fuelDbCycleRunning,
+    alertCycleRunning,
+    domainCycleRunning,
+    lastTenantCycleAt,
+    lastFuelCycleAt,
+    lastAlertCycleAt,
+    lastDomainCycleAt,
+    lastTenantCycleError,
+    lastAlertCycleError,
+  };
+}
+
+async function withMysqlLock(name: string, work: () => Promise<void>): Promise<boolean> {
+  try {
+    const { rows } = await query<{ got: number | string }>(`SELECT GET_LOCK($1, 0) AS got`, [name]);
+    const got = Number(rows[0]?.got);
+    if (got !== 1) {
+      logger.debug(`[SyncScheduler] lock busy: ${name}`);
+      return false;
+    }
+  } catch (err) {
+    logger.warn(`[SyncScheduler] GET_LOCK failed for ${name}`, err);
+    // Fall through without lock rather than skipping all sync forever
+    await work();
+    return true;
+  }
+
+  try {
+    await work();
+    return true;
+  } finally {
+    try {
+      await query(`SELECT RELEASE_LOCK($1)`, [name]);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 async function runTenantCycle(): Promise<void> {
   if (tenantCycleRunning) {
     logger.debug('[SyncScheduler] tenant cycle already running — skip');
     return;
   }
   tenantCycleRunning = true;
+  lastTenantCycleError = null;
   try {
-    const tenants = await listActiveTenants();
-    let assetCount = 0;
-    let snapshotCount = 0;
+    await withMysqlLock('mams_tenant_sync', async () => {
+      const tenants = await listActiveTenants();
+      let assetCount = 0;
+      let snapshotCount = 0;
 
-    for (const tenant of tenants) {
-      try {
-        await delayBetweenTenants();
-        const orch = new AssetOrchestrator(tenant.id);
-        await orch.initialize();
-        await orch.getUnifiedAssets();
-        await query(
-          `UPDATE data_sources SET last_sync_at = NOW() WHERE tenant_id = $1 AND is_active = true`,
-          [tenant.id],
-        );
-        assetCount++;
-      } catch (err) {
-        logger.warn(`[SyncScheduler] asset sync skipped for tenant ${tenant.id}`, err);
-      }
-
-      if (tenant.sources.includes('wialon')) {
+      for (const tenant of tenants) {
         try {
           await delayBetweenTenants();
-          await FuelSyncService.syncTenantLiveSnapshots(tenant.id);
-          snapshotCount++;
+          const orch = new AssetOrchestrator(tenant.id);
+          await orch.initialize();
+          await orch.getUnifiedAssets();
+          await query(
+            `UPDATE data_sources SET last_sync_at = NOW() WHERE tenant_id = $1 AND is_active = true`,
+            [tenant.id],
+          );
+          assetCount++;
         } catch (err) {
-          logger.warn(`[SyncScheduler] live snapshot skipped for tenant ${tenant.id}`, err);
+          logger.warn(`[SyncScheduler] asset sync skipped for tenant ${tenant.id}`, err);
+        }
+
+        if (tenant.sources.includes('wialon')) {
+          try {
+            await delayBetweenTenants();
+            await FuelSyncService.syncTenantLiveSnapshots(tenant.id);
+            snapshotCount++;
+          } catch (err) {
+            logger.warn(`[SyncScheduler] live snapshot skipped for tenant ${tenant.id}`, err);
+          }
         }
       }
-    }
 
-    if (assetCount > 0) logger.info(`Synced assets for ${assetCount} tenants`);
-    if (snapshotCount > 0) logger.info(`[FuelSync] stored live fuel snapshots for ${snapshotCount} tenants`);
+      if (assetCount > 0) logger.info(`Synced assets for ${assetCount} tenants`);
+      if (snapshotCount > 0) logger.info(`[FuelSync] stored live fuel snapshots for ${snapshotCount} tenants`);
+    });
+    lastTenantCycleAt = new Date().toISOString();
   } catch (err) {
+    lastTenantCycleError = (err as Error).message;
     logger.error('Sync scheduler error', err);
   } finally {
     tenantCycleRunning = false;
@@ -66,8 +120,11 @@ async function runFuelDbCycle(): Promise<void> {
   }
   fuelDbCycleRunning = true;
   try {
-    const count = await FuelSyncService.syncAllConnectedTenantsToDb();
-    if (count > 0) logger.info(`[FuelSync] synced fuel reports to database for ${count} tenants`);
+    await withMysqlLock('mams_fuel_db_sync', async () => {
+      const count = await FuelSyncService.syncAllConnectedTenantsToDb();
+      if (count > 0) logger.info(`[FuelSync] synced fuel reports to database for ${count} tenants`);
+    });
+    lastFuelCycleAt = new Date().toISOString();
   } catch (err) {
     logger.error('[FuelSync] scheduler error', err);
   } finally {
@@ -82,8 +139,11 @@ async function runDomainCycle(): Promise<void> {
   }
   domainCycleRunning = true;
   try {
-    const count = await DomainSyncService.syncAllConnectedTenants();
-    if (count > 0) logger.info(`[DomainSync] synced trips/eco for ${count} Wialon tenants`);
+    await withMysqlLock('mams_domain_sync', async () => {
+      const count = await DomainSyncService.syncAllConnectedTenants();
+      if (count > 0) logger.info(`[DomainSync] synced trips/eco for ${count} Wialon tenants`);
+    });
+    lastDomainCycleAt = new Date().toISOString();
   } catch (err) {
     logger.error('[DomainSync] scheduler error', err);
   } finally {
@@ -98,30 +158,35 @@ async function runAlertCycle(): Promise<void> {
     return;
   }
   alertCycleRunning = true;
+  lastAlertCycleError = null;
   try {
-    const purged = await AlertOrchestrator.purgeNoiseAlertsGlobally();
-    if (purged > 0) {
-      logger.info(`[AlertSync] purged ${purged} Engine_Hours / counter noise alerts`);
-    }
-
-    const tenants = await listActiveTenants(['wialon', 'tracksolid', 'loconav']);
-    let synced = 0;
-    let inserted = 0;
-    for (const tenant of tenants) {
-      try {
-        await delayBetweenTenants();
-        const orch = new AlertOrchestrator(tenant.id);
-        const n = await orch.syncFromAdapters();
-        synced++;
-        inserted += n;
-      } catch (err) {
-        logger.warn(`[AlertSync] skipped tenant ${tenant.id}`, err);
+    await withMysqlLock('mams_alert_sync', async () => {
+      const purged = await AlertOrchestrator.purgeNoiseAlertsGlobally();
+      if (purged > 0) {
+        logger.info(`[AlertSync] purged ${purged} Engine_Hours / counter noise alerts`);
       }
-    }
-    if (synced > 0) {
-      logger.info(`[AlertSync] checked ${synced} tenants, inserted ${inserted} new alerts`);
-    }
+
+      const tenants = await listActiveTenants(['wialon', 'tracksolid', 'loconav']);
+      let synced = 0;
+      let inserted = 0;
+      for (const tenant of tenants) {
+        try {
+          await delayBetweenTenants();
+          const orch = new AlertOrchestrator(tenant.id);
+          const n = await orch.syncFromAdapters();
+          synced++;
+          inserted += n;
+        } catch (err) {
+          logger.warn(`[AlertSync] skipped tenant ${tenant.id}`, err);
+        }
+      }
+      if (synced > 0) {
+        logger.info(`[AlertSync] checked ${synced} tenants, inserted ${inserted} new alerts`);
+      }
+    });
+    lastAlertCycleAt = new Date().toISOString();
   } catch (err) {
+    lastAlertCycleError = (err as Error).message;
     logger.error('[AlertSync] scheduler error', err);
   } finally {
     alertCycleRunning = false;
@@ -141,11 +206,12 @@ export function startSyncScheduler(): void {
     void runDomainCycle();
   });
 
-  cron.schedule('* * * * *', () => {
+  // Every 2 minutes — was every minute; reduces Wialon + MySQL pressure under many tenants
+  cron.schedule('*/2 * * * *', () => {
     void runAlertCycle();
   });
 
   setTimeout(() => {
     void runAlertCycle();
-  }, 10_000);
+  }, 15_000);
 }

@@ -11,6 +11,19 @@ export function validateEnv(): void {
     process.exit(1);
   }
 
+  if (isProd) {
+    const jwt = process.env.JWT_SECRET?.trim() || '';
+    const enc = process.env.ENCRYPTION_KEY?.trim() || '';
+    if (jwt.length < 32 || /CHANGE_ME/i.test(jwt)) {
+      logger.error('JWT_SECRET must be a strong random value (32+ chars), not a placeholder.');
+      process.exit(1);
+    }
+    if (enc.length < 32 || /CHANGE_ME/i.test(enc)) {
+      logger.error('ENCRYPTION_KEY must be 32+ chars and must not be a placeholder.');
+      process.exit(1);
+    }
+  }
+
   const hasMysql =
     Boolean(process.env.DATABASE_URL?.startsWith('mysql')) ||
     Boolean(process.env.DB_USER && process.env.DB_NAME);
@@ -20,7 +33,13 @@ export function validateEnv(): void {
     process.exit(1);
   }
 
-  if (isProd && process.env.DB_USER && process.env.DB_NAME && !process.env.DB_PASSWORD?.trim() && !process.env.DATABASE_URL?.includes('@')) {
+  if (
+    isProd &&
+    process.env.DB_USER &&
+    process.env.DB_NAME &&
+    !process.env.DB_PASSWORD?.trim() &&
+    !process.env.DATABASE_URL?.includes('@')
+  ) {
     logger.error('DB_PASSWORD is required in production when using DB_USER/DB_NAME.');
     process.exit(1);
   }
@@ -28,6 +47,27 @@ export function validateEnv(): void {
   if (isProd && !process.env.API_PUBLIC_URL?.trim() && !process.env.FRONTEND_URL?.trim()) {
     logger.error('API_PUBLIC_URL or FRONTEND_URL is required in production (webhooks, share links, CORS).');
     process.exit(1);
+  }
+
+  if (isProd) {
+    const smtpReady = Boolean(
+      process.env.SMTP_HOST?.trim() &&
+        process.env.SMTP_USER?.trim() &&
+        process.env.SMTP_PASSWORD?.trim() &&
+        (process.env.SMTP_FROM_EMAIL?.trim() || process.env.SMTP_USER?.trim()),
+    );
+    if (!smtpReady) {
+      logger.warn(
+        'SMTP_* not fully set — password-reset and account emails will fail until configured.',
+      );
+    }
+
+    const rawLimit = parseInt(process.env.DB_CONNECTION_LIMIT || '12', 10);
+    if (Number.isFinite(rawLimit) && rawLimit > 15) {
+      logger.warn(
+        `DB_CONNECTION_LIMIT=${rawLimit} is high for Hostinger shared MySQL — clamping to 15 at runtime.`,
+      );
+    }
   }
 
   if (!isProd) {

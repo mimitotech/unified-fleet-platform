@@ -67,11 +67,24 @@ export function createApp() {
 
   app.get('/health', async (_req, res) => {
     try {
+      const t0 = Date.now();
       await query('SELECT 1');
+      const { getPoolLimits } = await import('./config/database.js');
+      const { getSyncSchedulerStatus } = await import('./services/SyncScheduler.js');
+      const pool = getPoolLimits();
+      const sync = getSyncSchedulerStatus();
       res.json({
         status: 'ok',
         database: 'connected',
         engine: 'mysql',
+        latencyMs: Date.now() - t0,
+        pool,
+        sync: {
+          alertCycleRunning: sync.alertCycleRunning,
+          tenantCycleRunning: sync.tenantCycleRunning,
+          lastAlertCycleAt: sync.lastAlertCycleAt,
+          lastTenantCycleAt: sync.lastTenantCycleAt,
+        },
         timestamp: new Date().toISOString(),
       });
     } catch {

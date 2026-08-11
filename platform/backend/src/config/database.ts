@@ -64,14 +64,19 @@ function readParts(): ConnParts {
 
 function poolLimits(): { connectionLimit: number; queueLimit: number } {
   const connectionLimit = Math.min(
-    50,
-    Math.max(5, parseInt(process.env.DB_CONNECTION_LIMIT || '20', 10) || 20)
+    15,
+    Math.max(5, parseInt(process.env.DB_CONNECTION_LIMIT || '12', 10) || 12)
   );
   const queueLimit = Math.min(
-    500,
-    Math.max(0, parseInt(process.env.DB_QUEUE_LIMIT || '100', 10) || 100)
+    200,
+    Math.max(0, parseInt(process.env.DB_QUEUE_LIMIT || '80', 10) || 80)
   );
   return { connectionLimit, queueLimit };
+}
+
+/** Exposed for health / ops — Hostinger shared MySQL needs a small pool. */
+export function getPoolLimits(): { connectionLimit: number; queueLimit: number } {
+  return poolLimits();
 }
 
 async function tryConnect(label: string, opts: mysql.PoolOptions): Promise<Pool> {

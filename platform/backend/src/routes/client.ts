@@ -646,7 +646,6 @@ router.post('/alerts/acknowledge-bulk', requireTenant, async (req: TenantRequest
 });
 
 router.post('/alerts/sync', requireTenant, async (req: TenantRequest, res) => {
-  await AlertOrchestrator.purgeNoiseAlertsGlobally();
   const orch = new AlertOrchestrator(req.tenantId!);
   const inserted = await orch.syncFromAdapters();
   alertSyncAt.set(req.tenantId!, Date.now());

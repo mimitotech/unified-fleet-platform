@@ -116,6 +116,13 @@ async function main() {
         logger.warn(`User alert-access schema ensure skipped: ${(e as Error).message}`);
       }
       try {
+        const { ensureProductionHardening } = await import('./services/ensureProductionHardening.js');
+        await ensureProductionHardening();
+        logger.info('Production DB indexes / alert uniqueness ensured');
+      } catch (e) {
+        logger.warn(`Production hardening skipped: ${(e as Error).message}`);
+      }
+      try {
         const { syncEmailSettingsFromEnv, verifySmtpConnection } = await import('./services/EmailService.js');
         await syncEmailSettingsFromEnv();
         const smtp = await verifySmtpConnection();
@@ -133,6 +140,12 @@ async function main() {
 
     process.on('SIGTERM', async () => {
       logger.info('SIGTERM received, shutting down');
+      try {
+        const { getPool } = await import('./config/database.js');
+        await getPool().end();
+      } catch {
+        /* pool may be unavailable */
+      }
       process.exit(0);
     });
   } catch (err) {

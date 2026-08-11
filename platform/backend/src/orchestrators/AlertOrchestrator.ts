@@ -73,10 +73,7 @@ export class AlertOrchestrator {
     from?: Date,
     to?: Date,
   ): Promise<FleetAlert[]> {
-    // Cheap MySQL-safe purge so ghost period-summary rows (wrong EOD clocks)
-    // disappear on a normal inbox load, not only on full Wialon sync.
-    await this.cleanupSpuriousAlerts();
-
+    // Cleanup runs on sync cycles / throttled path — never on every inbox poll.
     let sql = `SELECT * FROM alerts WHERE tenant_id = $1`;
     const params: unknown[] = [this.tenantId];
     if (acknowledged !== undefined) {
@@ -114,15 +111,18 @@ export class AlertOrchestrator {
       .filter((a) => !isNoiseAlert(a));
   }
 
-  /** Wipe Engine_Hours / counter noise for every tenant (one-shot + each sync cycle). */
+  /** Wipe Engine_Hours / counter noise for every tenant (scheduler only; scoped by time). */
   static async purgeNoiseAlertsGlobally(): Promise<number> {
     try {
       const { rowCount } = await query(
         `DELETE FROM alerts
-         WHERE title REGEXP 'engine[_[:space:]-]*hours?'
-            OR description REGEXP 'engine[_[:space:]-]*hours?'
-            OR title REGEXP 'mileage|odometer|gprs[[:space:]_-]*traffic|traffic[[:space:]_-]*counter|moto[[:space:]_-]*hours?'
-            OR description REGEXP 'mileage[[:space:]_-]*counter|odometer|gprs[[:space:]_-]*traffic'`,
+         WHERE occurred_at >= DATE_SUB(NOW(), INTERVAL 14 DAY)
+           AND (
+             title REGEXP 'engine[_[:space:]-]*hours?'
+             OR description REGEXP 'engine[_[:space:]-]*hours?'
+             OR title REGEXP 'mileage|odometer|gprs[[:space:]_-]*traffic|traffic[[:space:]_-]*counter|moto[[:space:]_-]*hours?'
+             OR description REGEXP 'mileage[[:space:]_-]*counter|odometer|gprs[[:space:]_-]*traffic'
+           )`,
       );
       return rowCount ?? 0;
     } catch (err) {
@@ -148,12 +148,11 @@ export class AlertOrchestrator {
   }
 
   async syncFromAdapters(): Promise<number> {
-    await AlertOrchestrator.purgeNoiseAlertsGlobally();
     const from = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
     const to = new Date();
     let count = 0;
 
-    await this.cleanupSpuriousAlerts();
+    await this.cleanupSpuriousAlertsThrottled();
 
     const { rows: sources } = await query<{ source_type: string; credentials_encrypted: string }>(
       `SELECT source_type, credentials_encrypted FROM data_sources WHERE tenant_id = $1 AND is_active = true`,
@@ -264,6 +263,16 @@ export class AlertOrchestrator {
    * Each step is isolated so one MySQL-incompatible statement cannot skip the
    * fuel-sum purge that clears the “today / 02:59:59” ghost alerts.
    */
+  private static cleanupAtByTenant = new Map<string, number>();
+  private static CLEANUP_TTL_MS = 10 * 60_000;
+
+  private async cleanupSpuriousAlertsThrottled(): Promise<void> {
+    const last = AlertOrchestrator.cleanupAtByTenant.get(this.tenantId) || 0;
+    if (Date.now() - last < AlertOrchestrator.CLEANUP_TTL_MS) return;
+    AlertOrchestrator.cleanupAtByTenant.set(this.tenantId, Date.now());
+    await this.cleanupSpuriousAlerts();
+  }
+
   private async cleanupSpuriousAlerts(): Promise<void> {
     const run = async (label: string, sql: string, params: unknown[] = [this.tenantId]) => {
       try {

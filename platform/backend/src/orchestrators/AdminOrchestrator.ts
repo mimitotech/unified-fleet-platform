@@ -221,6 +221,7 @@ export class AdminOrchestrator {
   }
 
   static async getSystemHealth() {
+    const started = Date.now();
     let dbOk = false;
     try {
       await query('SELECT 1');
@@ -228,10 +229,32 @@ export class AdminOrchestrator {
     } catch {
       dbOk = false;
     }
+    const latencyMs = Date.now() - started;
 
     const { pingRedis } = await import('../config/redis.js');
     const redisHealth = await pingRedis();
     const redisStatus = !redisHealth.configured ? 'disabled' : redisHealth.ok ? 'ok' : 'error';
+
+    const { getPoolLimits } = await import('../config/database.js');
+    const pool = getPoolLimits();
+
+    const { getSyncSchedulerStatus } = await import('../services/SyncScheduler.js');
+    const syncStatus = getSyncSchedulerStatus();
+    const syncBusy =
+      syncStatus.tenantCycleRunning ||
+      syncStatus.fuelDbCycleRunning ||
+      syncStatus.alertCycleRunning ||
+      syncStatus.domainCycleRunning;
+    const syncErrored = Boolean(syncStatus.lastTenantCycleError || syncStatus.lastAlertCycleError);
+
+    let smtp: { ok: boolean; message: string } = { ok: false, message: 'not checked' };
+    try {
+      const { verifySmtpConnection } = await import('../services/EmailService.js');
+      smtp = await verifySmtpConnection();
+    } catch (err) {
+      smtp = { ok: false, message: (err as Error).message };
+    }
+
     const allOperational = dbOk && (redisStatus === 'ok' || redisStatus === 'disabled');
 
     const { rows: sourceHealth } = await query(
@@ -252,15 +275,23 @@ export class AdminOrchestrator {
     );
 
     return {
-      overall: allOperational ? 'operational' : 'degraded',
-      api: { status: 'ok', uptime: 99.98, latencyMs: 34 },
-      database: { status: dbOk ? 'ok' : 'error', connections: 12 },
+      overall: allOperational ? (syncErrored ? 'degraded' : 'operational') : 'degraded',
+      api: { status: 'ok', latencyMs },
+      database: {
+        status: dbOk ? 'ok' : 'error',
+        connectionLimit: pool.connectionLimit,
+        queueLimit: pool.queueLimit,
+        latencyMs,
+      },
       redis: {
         status: redisStatus,
         message: redisHealth.message,
-        memoryPct: redisHealth.ok ? 67 : 0,
       },
-      sync: { status: 'ok', queued: 0 },
+      smtp,
+      sync: {
+        status: syncErrored ? 'error' : syncBusy ? 'running' : 'idle',
+        ...syncStatus,
+      },
       integrations: sourceHealth,
       webhooks: { events24h: Number(webhookCount[0]?.count || 0) },
       recentIncidents: await query(

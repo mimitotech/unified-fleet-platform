@@ -139,7 +139,7 @@ CREATE TABLE alerts (
   tenant_id CHAR(36) NOT NULL,
   asset_id CHAR(36) NULL,
   source_type ENUM('wialon','loconav','tracksolid') NOT NULL,
-  external_id TEXT NULL,
+  external_id VARCHAR(191) NULL,
   type VARCHAR(128) NOT NULL,
   severity VARCHAR(32) NOT NULL,
   title TEXT NOT NULL,
@@ -152,6 +152,9 @@ CREATE TABLE alerts (
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   KEY idx_alerts_tenant_time (tenant_id, occurred_at),
   KEY idx_alerts_asset (asset_id),
+  KEY idx_alerts_tenant_ack_time (tenant_id, acknowledged, occurred_at),
+  KEY idx_alerts_tenant_type_time (tenant_id, type, occurred_at),
+  UNIQUE KEY uq_alerts_tenant_source_external (tenant_id, source_type, external_id),
   CONSTRAINT fk_alerts_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   CONSTRAINT fk_alerts_asset FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -368,6 +371,8 @@ CREATE TABLE vehicle_inspections (
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   deleted_at DATETIME(3) NULL,
   KEY idx_inspections_tenant (tenant_id),
+  KEY idx_insp_tenant_deleted_date (tenant_id, deleted_at, inspection_date),
+  KEY idx_insp_tenant_status_date (tenant_id, overall_status, inspection_date),
   CONSTRAINT fk_inspections_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   CONSTRAINT fk_inspections_asset FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE SET NULL,
   CONSTRAINT fk_inspections_driver FOREIGN KEY (driver_id) REFERENCES drivers(id) ON DELETE SET NULL
@@ -399,6 +404,8 @@ CREATE TABLE breakdown_reports (
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   deleted_at DATETIME(3) NULL,
   KEY idx_breakdowns_tenant (tenant_id),
+  KEY idx_brk_tenant_deleted_time (tenant_id, deleted_at, breakdown_time),
+  KEY idx_brk_tenant_severity (tenant_id, severity, deleted_at),
   CONSTRAINT fk_breakdowns_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   CONSTRAINT fk_breakdowns_asset FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE SET NULL,
   CONSTRAINT fk_breakdowns_driver FOREIGN KEY (driver_id) REFERENCES drivers(id) ON DELETE SET NULL
@@ -436,6 +443,8 @@ CREATE TABLE maintenance_logs (
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   deleted_at DATETIME(3) NULL,
   KEY idx_maint_tenant (tenant_id),
+  KEY idx_maint_tenant_deleted_start (tenant_id, deleted_at, start_date),
+  KEY idx_maint_tenant_status (tenant_id, status, deleted_at),
   CONSTRAINT fk_maint_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   CONSTRAINT fk_maint_asset FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE SET NULL,
   CONSTRAINT fk_maint_driver FOREIGN KEY (driver_id) REFERENCES drivers(id) ON DELETE SET NULL,
@@ -528,6 +537,7 @@ CREATE TABLE activity_feed (
   metadata JSON NULL,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   KEY idx_activity_created (created_at),
+  KEY idx_activity_tenant_created (tenant_id, created_at),
   CONSTRAINT fk_activity_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -698,6 +708,7 @@ CREATE TABLE fuel_live_snapshots (
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   KEY idx_fuel_live_unit_time (tenant_id, unit_id, recorded_at),
   KEY idx_fuel_live_time (tenant_id, recorded_at),
+  KEY idx_fuel_live_recorded (recorded_at),
   CONSTRAINT fk_fuel_live_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
