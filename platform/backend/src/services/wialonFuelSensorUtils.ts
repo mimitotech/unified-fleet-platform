@@ -89,13 +89,34 @@ function defaultUnit(name: string, type: string | number | undefined, isFuel: bo
   if (isFuel) return 'L';
   const n = name.toLowerCase();
   if (/temperature|\btemp\b/.test(n)) return '°C';
-  if (/battery|volt/.test(n)) return 'V';
+  if (/battery|volt|fls\s*bat|lls\s*bat|supply/.test(n)) return 'V';
+  if (/hour|moto|engine\s*hrs|runtime/.test(n)) return 'h';
   return '';
 }
 
 function formatSensorValue(value: number, unit: string): string {
   const rounded = Math.round(value * 10) / 10;
   return unit ? `${rounded} ${unit}` : String(rounded);
+}
+
+function coerceNumeric(raw: unknown): number | null {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  if (typeof raw === 'string' && raw.trim() !== '') {
+    const n = Number(String(raw).replace(/,/g, '').replace(/[^\d.eE+-]/g, ''));
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+/** Prefer live last-message param, then prms snapshot (Hosting often shows lmsg when prms is stale). */
+function resolveSensorRaw(item: WialonSearchItem, param: string): number | null {
+  const fromLmsg = coerceNumeric(item.lmsg?.p?.[param]);
+  if (fromLmsg != null) return fromLmsg;
+  const prmsEntry = item.prms?.[param];
+  if (prmsEntry && typeof prmsEntry === 'object' && 'v' in prmsEntry) {
+    return coerceNumeric((prmsEntry as { v?: unknown }).v);
+  }
+  return coerceNumeric(prmsEntry);
 }
 
 /** Read every configured sensor on a Wialon unit — actual Wialon names, calibrated values, units. */
@@ -111,8 +132,8 @@ export function readAllUnitSensors(item: WialonSearchItem): WialonUnitSensorRead
     if (!param || seenParams.has(param)) continue;
     seenParams.add(param);
 
-    const raw = item.prms?.[param]?.v;
-    if (typeof raw !== 'number' || !Number.isFinite(raw)) continue;
+    const raw = resolveSensorRaw(item, param);
+    if (raw == null) continue;
 
     const typeStr = String(sensor.t ?? '');
     const isFuel = isFuelLevelSensor(sensor.n, sensor.t);

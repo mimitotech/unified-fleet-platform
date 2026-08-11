@@ -177,6 +177,40 @@ export type WialonUnitDetail = WialonUnitSlice & {
   fuel?: WialonFuelInfo;
 };
 
+function parseNumericSensorValue(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (value == null) return null;
+  const n = Number(String(value).replace(/,/g, '').replace(/[^\d.eE+-]/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+
+const ENGINE_HOURS_NAME =
+  /engine\s*hours?|moto\s*hours?|genset\s*hours?|running\s*hours?|enginehrs|service\s*hours?|hour\s*meter|runtime/i;
+
+/** Normalize Wialon engine-hour counters (often stored as seconds when very large). */
+export function normalizeEngineHoursCounter(raw?: number | null): number | undefined {
+  if (raw == null || !Number.isFinite(raw) || raw <= 0) return undefined;
+  // Values this large are almost always seconds on Hosting counters.
+  if (raw >= 100_000) return Math.round((raw / 3600) * 10) / 10;
+  return Math.round(raw * 10) / 10;
+}
+
+function engineHoursFromSensors(
+  sensors: Array<{ name: string; value: string; unit?: string }>,
+): number | undefined {
+  for (const s of sensors) {
+    if (!ENGINE_HOURS_NAME.test(s.name || '')) continue;
+    const n = parseNumericSensorValue(s.value);
+    if (n == null || n <= 0) continue;
+    const unit = String(s.unit || '').toLowerCase();
+    if (unit.includes('s') && !unit.includes('h') && n >= 100_000) {
+      return Math.round((n / 3600) * 10) / 10;
+    }
+    return normalizeEngineHoursCounter(n) ?? n;
+  }
+  return undefined;
+}
+
 export function parseWialonUnitDetail(
   item: WialonSearchItem,
   hwTypes?: Map<number, WialonHwType>,
@@ -207,6 +241,33 @@ export function parseWialonUnitDetail(
         unit: hit.unit || s.unit || (hit.isFuelLevel ? 'L' : undefined),
       };
     });
+    // Ensure calibrated FLS/battery sensors appear even if calc_last_message omitted them.
+    for (const r of calibrated) {
+      if (sensors.some((s) => s.name === r.name || (r.param && s.param === r.param))) continue;
+      sensors.push({
+        id: r.sensorId,
+        name: r.name,
+        type: r.type,
+        param: r.param,
+        value: String(r.value),
+        unit: r.unit || (r.isFuelLevel ? 'L' : undefined),
+      });
+    }
+  }
+
+  const counterHours = normalizeEngineHoursCounter(item.cneh);
+  const sensorHours = engineHoursFromSensors(sensors);
+  const engineHours = counterHours ?? sensorHours;
+  const counters = {
+    mileage: item.cnm,
+    engineHours,
+  };
+
+  // Prefer FLS / named battery sensor for device health when lmsg power keys are empty.
+  if (extras.health && extras.health.battery == null) {
+    const bat = sensors.find((s) => /battery|volt|fls\s*bat|lls\s*bat|supply/i.test(s.name));
+    const batVal = bat ? parseNumericSensorValue(bat.value) : null;
+    if (batVal != null) extras.health.battery = batVal;
   }
 
   const fuel = parseWialonFuelSettings(fuelSettings, sensors, liveLls);
@@ -223,6 +284,7 @@ export function parseWialonUnitDetail(
   return {
     ...slice,
     ...extras,
+    counters,
     lastUpdate: pos?.time ? new Date(pos.time * 1000).toISOString() : undefined,
     lastUpdateAge: pos?.time ? formatAge(pos.time) : undefined,
     sensors,

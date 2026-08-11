@@ -93,6 +93,8 @@ function asInspection(row: Record<string, unknown>): VehicleInspection {
     overallStatus: (row.overallStatus as InspectionStatus) || 'pass',
     notes: row.notes as string | undefined,
     inspectorName: row.inspectorName as string | undefined,
+    inspectorDate: row.inspectorDate as string | undefined,
+    inspectorSignature: row.inspectorSignature as string | undefined,
     createdAt: String(row.createdAt ?? ''),
   };
 }
@@ -112,6 +114,9 @@ function asMaintenanceLog(row: Record<string, unknown>): MaintenanceLog {
     priority: (row.priority as MaintenanceLog['priority']) || 'medium',
     description: String(row.description ?? ''),
     mechanicName: String(row.mechanicName ?? ''),
+    mechanicDate: row.mechanicDate as string | undefined,
+    mechanicSignature: row.mechanicSignature as string | undefined,
+    checklistSections: (row.checklistSections as any) || [],
     startDate: String(row.startDate ?? new Date().toISOString()),
     endDate: row.endDate as string | undefined,
     laborHours: Number(row.laborHours ?? 0),
@@ -142,6 +147,9 @@ function asBreakdown(row: Record<string, unknown>): BreakdownReport {
     failureSystem: (row.failureSystem as string | null) ?? null,
     driverId: (row.driverId as string | null) ?? null,
     driverName: (row.driverName as string | null) ?? null,
+    reportedBy: (row.reportedBy as string | null) ?? null,
+    reportedDate: (row.reportedDate as string | null) ?? null,
+    reportedSignature: (row.reportedSignature as string | null) ?? null,
     tripId: row.tripId as string | undefined,
     location: {
       lat: Number(location.lat ?? 0),
@@ -175,6 +183,9 @@ const maintenanceLogToFormData = (log: MaintenanceLog): MaintenanceLogFormData =
   priority: log.priority,
   description: log.description,
   mechanicName: log.mechanicName,
+  mechanicDate: log.mechanicDate || log.startDate?.slice(0, 10) || new Date().toISOString().slice(0, 10),
+  mechanicSignature: log.mechanicSignature || (log.mechanicName || '').trim().toLowerCase(),
+  checklistSections: log.checklistSections || [],
   startDate: log.startDate?.slice(0, 10) || new Date().toISOString().slice(0, 10),
   endDate: log.endDate,
   laborHours: log.laborHours,
@@ -199,6 +210,9 @@ const breakdownToFormData = (brk: BreakdownReport): BreakdownReportFormData => (
   failureSystem: brk.failureSystem || '',
   driverId: brk.driverId,
   driverName: brk.driverName || '',
+  reportedBy: brk.reportedBy || brk.driverName || '',
+  reportedDate: (brk.reportedDate || brk.breakdownTime || '').slice(0, 10),
+  reportedSignature: brk.reportedSignature || (brk.reportedBy || brk.driverName || '').trim().toLowerCase(),
   tripId: brk.tripId,
   location: {
     lat: brk.location.lat,
@@ -431,6 +445,8 @@ export default function Workshop() {
       overallStatus,
       notes: data.notes,
       inspectorName: data.inspectorName,
+      inspectorDate: data.inspectorDate,
+      inspectorSignature: data.inspectorSignature,
     };
 
     try {
@@ -500,6 +516,9 @@ export default function Workshop() {
       priority: data.priority,
       description: data.description,
       mechanicName: data.mechanicName,
+      mechanicDate: data.mechanicDate,
+      mechanicSignature: data.mechanicSignature,
+      checklistSections: data.checklistSections,
       startDate: data.startDate,
       endDate: data.endDate,
       laborHours: data.laborHours,
@@ -577,6 +596,9 @@ export default function Workshop() {
       failureSystem: data.failureSystem || null,
       driverId: data.driverId,
       driverName: data.driverName,
+      reportedBy: data.reportedBy || data.driverName,
+      reportedDate: data.reportedDate,
+      reportedSignature: data.reportedSignature,
       tripId: data.tripId,
       location: data.location,
       breakdownTime: data.breakdownTime,

@@ -22,9 +22,15 @@ export const ALERT_CATEGORY_DEFS: AlertCategoryDef[] = [
   { id: 'geofence', label: 'Geofence', match: (t) => t === 'geofence' },
   { id: 'engine', label: 'Engine', match: (t) => !!t && /ignition_/.test(t) },
   {
+    id: 'workshop',
+    label: 'Workshop',
+    match: (t) => !!t && /workshop_/.test(t),
+  },
+  {
     id: 'sensors',
     label: 'Sensors',
-    match: (t) => !!t && /sensor|temperature|door|connection|maintenance/.test(t),
+    match: (t) =>
+      !!t && /sensor|temperature|door|connection|maintenance/.test(t) && !/workshop_/.test(t),
   },
 ];
 

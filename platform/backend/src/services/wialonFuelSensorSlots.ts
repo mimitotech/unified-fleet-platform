@@ -45,7 +45,7 @@ export type FuelFleetSummary = {
   supportedCategories?: FuelCategorySupportSummary;
 };
 
-const BATTERY = /battery|volt/i;
+const BATTERY = /battery|volt|fls\s*bat|lls\s*bat|sensor\s*power|supply\s*volt|pwr_int|pwr_ext/i;
 const TEMPERATURE = /temperature|\btemp\b/i;
 
 function pickSlot(

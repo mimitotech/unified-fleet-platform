@@ -1,8 +1,11 @@
 import { query } from '../config/database.js';
 import {
   DEFAULT_CHECKLIST_BY_CATEGORY,
+  GENERATOR_MONTHLY_PM_SECTIONS,
+  MAINTENANCE_CHECKLIST_BY_CATEGORY,
   TEMPLATE_META,
   WORKSHOP_ASSET_CATEGORIES,
+  type ChecklistPurpose,
   type WorkshopAssetCategory,
 } from './WorkshopChecklistTemplates.js';
 
@@ -35,6 +38,63 @@ async function addColumn(table: string, column: string, ddl: string): Promise<vo
   }
 }
 
+async function upsertTemplate(input: {
+  id: string;
+  category: WorkshopAssetCategory;
+  purpose: ChecklistPurpose;
+  name: string;
+  description: string;
+  sections: unknown;
+}): Promise<void> {
+  const payload = [
+    input.id,
+    input.category,
+    input.name,
+    input.description,
+    JSON.stringify(input.sections),
+    input.purpose,
+  ];
+  try {
+    await query(
+      `INSERT INTO workshop_checklist_templates
+         (id, tenant_id, asset_category, name, description, sections, is_system, is_active, purpose)
+       VALUES ($1, NULL, $2, $3, $4, $5::jsonb, 1, 1, $6)
+       ON CONFLICT (id) DO UPDATE SET
+         name = EXCLUDED.name,
+         description = EXCLUDED.description,
+         sections = EXCLUDED.sections,
+         purpose = EXCLUDED.purpose,
+         is_active = 1,
+         updated_at = NOW()`,
+      payload,
+    );
+  } catch {
+    try {
+      const { rows } = await query<{ cnt: number }>(
+        `SELECT COUNT(*) AS cnt FROM workshop_checklist_templates WHERE id = $1`,
+        [input.id],
+      );
+      if (Number(rows[0]?.cnt) === 0) {
+        await query(
+          `INSERT INTO workshop_checklist_templates
+             (id, tenant_id, asset_category, name, description, sections, is_system, is_active, purpose)
+           VALUES ($1, NULL, $2, $3, $4, $5::jsonb, 1, 1, $6)`,
+          payload,
+        );
+      } else {
+        await query(
+          `UPDATE workshop_checklist_templates
+           SET name = $2, description = $3, sections = $4::jsonb, purpose = $5, is_active = 1, updated_at = NOW()
+           WHERE id = $1`,
+          [input.id, input.name, input.description, JSON.stringify(input.sections), input.purpose],
+        );
+      }
+    } catch (e2) {
+      console.warn(`[workshop] seed template ${input.id}:`, (e2 as Error).message);
+    }
+  }
+}
+
 async function ensureChecklistTemplatesTable(): Promise<void> {
   if (!(await tableExists('workshop_checklist_templates'))) {
     try {
@@ -43,6 +103,7 @@ async function ensureChecklistTemplatesTable(): Promise<void> {
           id CHAR(36) NOT NULL PRIMARY KEY,
           tenant_id CHAR(36) NULL,
           asset_category VARCHAR(32) NOT NULL,
+          purpose VARCHAR(32) NOT NULL DEFAULT 'inspection',
           name VARCHAR(191) NOT NULL,
           description TEXT NULL,
           sections JSON NOT NULL,
@@ -60,6 +121,12 @@ async function ensureChecklistTemplatesTable(): Promise<void> {
     }
   }
 
+  await addColumn(
+    'workshop_checklist_templates',
+    'purpose',
+    "purpose VARCHAR(32) NOT NULL DEFAULT 'inspection'",
+  );
+
   for (const category of WORKSHOP_ASSET_CATEGORIES) {
     const meta = TEMPLATE_META[category];
     const sections = DEFAULT_CHECKLIST_BY_CATEGORY[category];
@@ -69,57 +136,25 @@ async function ensureChecklistTemplatesTable(): Promise<void> {
         : category === 'generator'
           ? 'a1000001-0000-4000-8000-000000000002'
           : 'a1000001-0000-4000-8000-000000000003';
-    try {
-      await query(
-        `INSERT INTO workshop_checklist_templates
-           (id, tenant_id, asset_category, name, description, sections, is_system, is_active)
-         VALUES ($1, NULL, $2, $3, $4, $5::jsonb, 1, 1)
-         ON CONFLICT (id) DO UPDATE SET
-           name = EXCLUDED.name,
-           description = EXCLUDED.description,
-           sections = EXCLUDED.sections,
-           is_active = 1,
-           updated_at = NOW()`,
-        [stableId, category, meta.name, meta.description, JSON.stringify(sections)],
-      );
-    } catch (e) {
-      try {
-        const { rows } = await query<{ cnt: number }>(
-          `SELECT COUNT(*) AS cnt FROM workshop_checklist_templates WHERE id = $1`,
-          [stableId],
-        );
-        if (Number(rows[0]?.cnt) === 0) {
-          await query(
-            `INSERT INTO workshop_checklist_templates
-               (id, tenant_id, asset_category, name, description, sections, is_system, is_active)
-             VALUES ($1, NULL, $2, $3, $4, $5::jsonb, 1, 1)`,
-            [stableId, category, meta.name, meta.description, JSON.stringify(sections)],
-          );
-        } else {
-          await query(
-            `UPDATE workshop_checklist_templates
-             SET name = $2, description = $3, sections = $4::jsonb, is_active = 1, updated_at = NOW()
-             WHERE id = $1`,
-            [stableId, meta.name, meta.description, JSON.stringify(sections)],
-          );
-        }
-      } catch (e2) {
-        console.warn(`[workshop] seed template ${category}:`, (e2 as Error).message);
-      }
-    }
+    await upsertTemplate({
+      id: stableId,
+      category,
+      purpose: 'inspection',
+      name: meta.name,
+      description: meta.description,
+      sections,
+    });
   }
 
-  // Retire the short-lived separate monthly-only generator template if present.
-  try {
-    await query(
-      `UPDATE workshop_checklist_templates
-       SET is_active = 0, updated_at = NOW()
-       WHERE id = $1`,
-      ['a1000001-0000-4000-8000-000000000004'],
-    );
-  } catch {
-    /* optional cleanup */
-  }
+  // Generator monthly PM lives under Maintenance (not Inspection).
+  await upsertTemplate({
+    id: 'a1000001-0000-4000-8000-000000000004',
+    category: 'generator',
+    purpose: 'maintenance',
+    name: 'Generator monthly preventive maintenance',
+    description: 'Monthly preventive maintenance checklist for generators',
+    sections: GENERATOR_MONTHLY_PM_SECTIONS,
+  });
 }
 
 /** Ensure MAMSv2-rich workshop columns exist on MySQL Hostinger. */
@@ -130,6 +165,8 @@ export async function ensureWorkshopSchema(): Promise<void> {
   await addColumn('vehicle_inspections', 'asset_category', "asset_category VARCHAR(32) NOT NULL DEFAULT 'vehicle'");
   await addColumn('vehicle_inspections', 'engine_hours', 'engine_hours DECIMAL(18,4) NULL');
   await addColumn('vehicle_inspections', 'checklist_sections', 'checklist_sections JSON NULL');
+  await addColumn('vehicle_inspections', 'inspector_date', 'inspector_date DATE NULL');
+  await addColumn('vehicle_inspections', 'inspector_signature', 'inspector_signature TEXT NULL');
 
   await addColumn('maintenance_logs', 'parts_used', 'parts_used JSON NULL');
   await addColumn('maintenance_logs', 'odometer_reading', 'odometer_reading DECIMAL(18,4) NULL');
@@ -138,6 +175,9 @@ export async function ensureWorkshopSchema(): Promise<void> {
   await addColumn('maintenance_logs', 'next_service_days', 'next_service_days INT NULL');
   await addColumn('maintenance_logs', 'asset_category', "asset_category VARCHAR(32) NOT NULL DEFAULT 'vehicle'");
   await addColumn('maintenance_logs', 'engine_hours', 'engine_hours DECIMAL(18,4) NULL');
+  await addColumn('maintenance_logs', 'checklist_sections', 'checklist_sections JSON NULL');
+  await addColumn('maintenance_logs', 'mechanic_date', 'mechanic_date DATE NULL');
+  await addColumn('maintenance_logs', 'mechanic_signature', 'mechanic_signature TEXT NULL');
 
   await addColumn('breakdown_reports', 'towing_cost', 'towing_cost DECIMAL(18,4) NOT NULL DEFAULT 0');
   await addColumn('breakdown_reports', 'repair_cost', 'repair_cost DECIMAL(18,4) NOT NULL DEFAULT 0');
@@ -145,6 +185,9 @@ export async function ensureWorkshopSchema(): Promise<void> {
   await addColumn('breakdown_reports', 'maintenance_log_id', 'maintenance_log_id CHAR(36) NULL');
   await addColumn('breakdown_reports', 'asset_category', "asset_category VARCHAR(32) NOT NULL DEFAULT 'vehicle'");
   await addColumn('breakdown_reports', 'failure_system', 'failure_system VARCHAR(64) NULL');
+  await addColumn('breakdown_reports', 'reported_by', 'reported_by TEXT NULL');
+  await addColumn('breakdown_reports', 'reported_date', 'reported_date DATE NULL');
+  await addColumn('breakdown_reports', 'reported_signature', 'reported_signature TEXT NULL');
 
   await addColumn('assets', 'asset_category', "asset_category VARCHAR(32) NULL");
 
@@ -154,8 +197,10 @@ export async function ensureWorkshopSchema(): Promise<void> {
 export async function getChecklistTemplateForCategory(
   tenantId: string,
   category: WorkshopAssetCategory,
+  purpose: ChecklistPurpose = 'inspection',
 ): Promise<{
   assetCategory: WorkshopAssetCategory;
+  purpose: ChecklistPurpose;
   name: string;
   description: string;
   sections: unknown;
@@ -168,15 +213,17 @@ export async function getChecklistTemplateForCategory(
       sections: unknown;
       tenant_id: string | null;
       is_system: number | boolean;
+      purpose?: string | null;
     }>(
-      `SELECT name, description, sections, tenant_id, is_system
+      `SELECT name, description, sections, tenant_id, is_system, purpose
        FROM workshop_checklist_templates
        WHERE is_active = true
          AND asset_category = $1
          AND (tenant_id = $2 OR tenant_id IS NULL)
+         AND (purpose = $3 OR (purpose IS NULL AND $3 = 'inspection'))
        ORDER BY (tenant_id IS NOT NULL) DESC, updated_at DESC
        LIMIT 1`,
-      [category, tenantId],
+      [category, tenantId, purpose],
     );
     if (rows[0]) {
       let sections = rows[0].sections;
@@ -184,24 +231,55 @@ export async function getChecklistTemplateForCategory(
         try {
           sections = JSON.parse(sections);
         } catch {
-          sections = DEFAULT_CHECKLIST_BY_CATEGORY[category];
+          /* keep */
+        }
+      }
+      // Legacy combined generator inspection templates: strip monthly PM from inspection.
+      if (
+        purpose === 'inspection' &&
+        category === 'generator' &&
+        Array.isArray(sections)
+      ) {
+        sections = (sections as Array<{ id?: string }>).filter((s) => s?.id !== 'monthly-pm');
+        if (!(sections as unknown[]).length) {
+          sections = DEFAULT_CHECKLIST_BY_CATEGORY.generator;
         }
       }
       return {
         assetCategory: category,
+        purpose,
         name: rows[0].name,
-        description: rows[0].description || TEMPLATE_META[category].description,
-        sections: sections ?? DEFAULT_CHECKLIST_BY_CATEGORY[category],
+        description: rows[0].description || '',
+        sections,
         source: rows[0].tenant_id ? 'tenant' : 'system',
       };
     }
-  } catch {
-    /* fall through to builtin */
+  } catch (e) {
+    console.warn('[workshop] getChecklistTemplateForCategory:', (e as Error).message);
+  }
+
+  if (purpose === 'maintenance') {
+    const sections = MAINTENANCE_CHECKLIST_BY_CATEGORY[category] || [];
+    return {
+      assetCategory: category,
+      purpose,
+      name:
+        category === 'generator'
+          ? 'Generator monthly preventive maintenance'
+          : 'Maintenance checklist',
+      description:
+        category === 'generator'
+          ? 'Monthly preventive maintenance checklist for generators'
+          : '',
+      sections,
+      source: 'builtin',
+    };
   }
 
   const meta = TEMPLATE_META[category];
   return {
     assetCategory: category,
+    purpose,
     name: meta.name,
     description: meta.description,
     sections: DEFAULT_CHECKLIST_BY_CATEGORY[category],

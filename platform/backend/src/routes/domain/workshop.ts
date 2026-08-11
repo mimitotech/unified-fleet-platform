@@ -11,6 +11,14 @@ import {
   WORKSHOP_ASSET_CATEGORIES,
   type WorkshopAssetCategory,
 } from '../../services/WorkshopChecklistTemplates.js';
+import {
+  emitBreakdownAlert,
+  emitInspectionAlert,
+  emitMaintenanceAlert,
+  emitServiceDueAlert,
+  safeWorkshopAlert,
+  syncOpenWorkshopAlerts,
+} from '../../services/workshopAlertService.js';
 
 const router = Router();
 const mod = requireModule('workshop');
@@ -61,6 +69,37 @@ function asJson(value: unknown, fallback: unknown) {
   if (value == null) return JSON.stringify(fallback);
   if (typeof value === 'string') return value;
   return JSON.stringify(value);
+}
+
+/** Persist newer workshop columns without rewriting every INSERT $N index. */
+async function patchWorkshopExtras(
+  table: 'vehicle_inspections' | 'maintenance_logs' | 'breakdown_reports',
+  id: string,
+  tenantId: string,
+  fields: Record<string, unknown>,
+): Promise<void> {
+  const entries = Object.entries(fields).filter(([, v]) => v !== undefined);
+  if (!entries.length) return;
+  const sets: string[] = [];
+  const params: unknown[] = [id, tenantId];
+  for (const [col, val] of entries) {
+    params.push(val);
+    const idx = params.length;
+    if (col === 'checklist_sections') {
+      sets.push(`${col} = $${idx}::jsonb`);
+    } else {
+      sets.push(`${col} = $${idx}`);
+    }
+  }
+  try {
+    await query(
+      `UPDATE ${table} SET ${sets.join(', ')}, updated_at = NOW()
+       WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+      params,
+    );
+  } catch (e) {
+    console.warn(`[workshop] extras ${table}:`, (e as Error).message);
+  }
 }
 
 async function persistAssetCategory(assetId: string | null, category: WorkshopAssetCategory) {
@@ -147,6 +186,8 @@ router.get('/kpis', requireTenant, mod, async (req: TenantRequest, res) => {
     const x = typeof v === 'number' ? v : Number(v);
     return Number.isFinite(x) ? x : 0;
   };
+  // Keep Inbox in sync with open workshop work (deduped by external_id).
+  safeWorkshopAlert(syncOpenWorkshopAlerts(req.tenantId!));
   return success(res, {
     ...row,
     pendingMaintenance: n(row.pendingMaintenance),
@@ -197,9 +238,11 @@ router.get('/mechanics', requireTenant, mod, async (req: TenantRequest, res) => 
 
 router.get('/checklist-templates', requireTenant, mod, async (req: TenantRequest, res) => {
   const categoryParam = req.query.assetCategory ?? req.query.category;
+  const purposeRaw = String(req.query.purpose || 'inspection').toLowerCase();
+  const purpose = purposeRaw === 'maintenance' ? 'maintenance' : 'inspection';
   if (categoryParam) {
     const category = sanitizeWorkshopAssetCategory(categoryParam);
-    const tpl = await getChecklistTemplateForCategory(req.tenantId!, category);
+    const tpl = await getChecklistTemplateForCategory(req.tenantId!, category, purpose);
     return success(res, {
       ...tpl,
       failureSystems: FAILURE_SYSTEMS[category],
@@ -207,7 +250,7 @@ router.get('/checklist-templates', requireTenant, mod, async (req: TenantRequest
   }
   const all = await Promise.all(
     WORKSHOP_ASSET_CATEGORIES.map(async (category) => {
-      const tpl = await getChecklistTemplateForCategory(req.tenantId!, category);
+      const tpl = await getChecklistTemplateForCategory(req.tenantId!, category, purpose);
       return { ...tpl, failureSystems: FAILURE_SYSTEMS[category] };
     }),
   );
@@ -220,6 +263,7 @@ router.post('/inspections', requireTenant, mod, requireWriteAccess, async (req: 
     inspectionType, inspectionDate, odometerReading, nextServiceMileage,
     truckHeadChecklist, trailerChecklist, overallStatus, notes, inspectorName,
     assetCategory, engineHours, checklistSections,
+    inspectorDate, inspectorSignature,
   } = req.body;
   if (!vehicleName || !inspectionType) return error(res, 'vehicleName and inspectionType required');
   const resolvedAssetId = await resolveWorkshopAssetId(req.tenantId!, assetId, vehicleId);
@@ -267,7 +311,32 @@ router.post('/inspections', requireTenant, mod, requireWriteAccess, async (req: 
       asJson(sections, []),
     ]
   );
-  return success(res, toCamelRows(rows)[0], 201);
+  const created = rows[0];
+  if (created) {
+    await patchWorkshopExtras('vehicle_inspections', String(created.id), req.tenantId!, {
+      inspector_date: inspectorDate || null,
+      inspector_signature:
+        inspectorSignature ||
+        (inspectorName ? String(inspectorName).trim().toLowerCase() : null),
+    });
+    safeWorkshopAlert(
+      emitInspectionAlert({
+        tenantId: req.tenantId!,
+        inspectionId: String(created.id),
+        assetId: created.asset_id ? String(created.asset_id) : null,
+        vehicleName: String(created.vehicle_name || vehicleName),
+        overallStatus: String(created.overall_status || overallStatus || 'pass'),
+        notes: created.notes != null ? String(created.notes) : notes || null,
+        inspectionType: String(created.inspection_type || inspectionType),
+        inspectionDate: (created.inspection_date as Date) || null,
+      }),
+    );
+  }
+  const { rows: fresh } = await query(
+    `SELECT * FROM vehicle_inspections WHERE id = $1 AND tenant_id = $2`,
+    [created?.id, req.tenantId],
+  );
+  return success(res, toCamelRows(fresh.length ? fresh : rows)[0], 201);
 });
 
 router.patch('/inspections/:id', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
@@ -341,7 +410,33 @@ router.patch('/inspections/:id', requireTenant, mod, requireWriteAccess, async (
     ]
   );
   if (!rows[0]) return error(res, 'Inspection not found', 404);
-  return success(res, toCamelRows(rows)[0]);
+  const updated = rows[0];
+  await patchWorkshopExtras('vehicle_inspections', String(updated.id), req.tenantId!, {
+    inspector_date: b.inspectorDate,
+    inspector_signature:
+      b.inspectorSignature !== undefined
+        ? b.inspectorSignature
+        : b.inspectorName
+          ? String(b.inspectorName).trim().toLowerCase()
+          : undefined,
+  });
+  safeWorkshopAlert(
+    emitInspectionAlert({
+      tenantId: req.tenantId!,
+      inspectionId: String(updated.id),
+      assetId: updated.asset_id ? String(updated.asset_id) : null,
+      vehicleName: String(updated.vehicle_name || 'Asset'),
+      overallStatus: String(updated.overall_status || 'pass'),
+      notes: updated.notes != null ? String(updated.notes) : null,
+      inspectionType: updated.inspection_type != null ? String(updated.inspection_type) : null,
+      inspectionDate: (updated.inspection_date as Date) || null,
+    }),
+  );
+  const { rows: fresh } = await query(
+    `SELECT * FROM vehicle_inspections WHERE id = $1 AND tenant_id = $2`,
+    [updated.id, req.tenantId],
+  );
+  return success(res, toCamelRows(fresh.length ? fresh : rows)[0]);
 });
 
 router.delete('/inspections/:id', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
@@ -351,6 +446,14 @@ router.delete('/inspections/:id', requireTenant, mod, requireWriteAccess, async 
     [req.params.id, req.tenantId]
   );
   if (!rowCount) return error(res, 'Inspection not found', 404);
+  safeWorkshopAlert(
+    emitInspectionAlert({
+      tenantId: req.tenantId!,
+      inspectionId: String(req.params.id),
+      vehicleName: 'Asset',
+      overallStatus: 'pass',
+    }),
+  );
   return success(res, { deleted: true });
 });
 
@@ -360,7 +463,7 @@ router.post('/maintenance', requireTenant, mod, requireWriteAccess, async (req: 
     inspectionId, breakdownId, maintenanceType, priority, description, mechanicName,
     startDate, endDate, laborHours, laborCost, partsCost, totalCost, partsUsed,
     status, notes, odometerReading, nextServiceKm, nextServiceHours, nextServiceDays,
-    assetCategory, engineHours,
+    assetCategory, engineHours, checklistSections, mechanicDate, mechanicSignature,
   } = req.body;
   if (!vehicleName || !maintenanceType || !description || !mechanicName) {
     return error(res, 'vehicleName, maintenanceType, description and mechanicName required');
@@ -408,7 +511,46 @@ router.post('/maintenance', requireTenant, mod, requireWriteAccess, async (req: 
       engineHours ?? null,
     ]
   );
-  return success(res, toCamelRows(rows)[0], 201);
+  const created = rows[0];
+  if (created) {
+    await patchWorkshopExtras('maintenance_logs', String(created.id), req.tenantId!, {
+      checklist_sections: checklistSections != null ? asJson(checklistSections, []) : undefined,
+      mechanic_date: mechanicDate || null,
+      mechanic_signature:
+        mechanicSignature ||
+        (mechanicName ? String(mechanicName).trim().toLowerCase() : null),
+    });
+    safeWorkshopAlert(
+      emitMaintenanceAlert({
+        tenantId: req.tenantId!,
+        maintenanceId: String(created.id),
+        assetId: created.asset_id ? String(created.asset_id) : null,
+        vehicleName: String(created.vehicle_name || vehicleName),
+        priority: String(created.priority || priority || 'medium'),
+        description: String(created.description || description),
+        status: String(created.status || status || 'pending'),
+        maintenanceType: String(created.maintenance_type || maintenanceType),
+        startDate: (created.start_date as Date) || null,
+      }),
+    );
+    const days = Number(created.next_service_days ?? nextServiceDays);
+    if (Number.isFinite(days) && days === 0) {
+      safeWorkshopAlert(
+        emitServiceDueAlert({
+          tenantId: req.tenantId!,
+          assetId: created.asset_id ? String(created.asset_id) : null,
+          vehicleName: String(created.vehicle_name || vehicleName),
+          reason: 'Service marked due (0-day interval)',
+          sourceId: `maint-days:${created.id}`,
+        }),
+      );
+    }
+  }
+  const { rows: fresh } = await query(
+    `SELECT * FROM maintenance_logs WHERE id = $1 AND tenant_id = $2`,
+    [created?.id, req.tenantId],
+  );
+  return success(res, toCamelRows(fresh.length ? fresh : rows)[0], 201);
 });
 
 router.patch('/maintenance/:id', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
@@ -486,7 +628,36 @@ router.patch('/maintenance/:id', requireTenant, mod, requireWriteAccess, async (
     ]
   );
   if (!rows[0]) return error(res, 'Maintenance log not found', 404);
-  return success(res, toCamelRows(rows)[0]);
+  const updated = rows[0];
+  await patchWorkshopExtras('maintenance_logs', String(updated.id), req.tenantId!, {
+    checklist_sections:
+      b.checklistSections != null ? asJson(b.checklistSections, []) : undefined,
+    mechanic_date: b.mechanicDate,
+    mechanic_signature:
+      b.mechanicSignature !== undefined
+        ? b.mechanicSignature
+        : b.mechanicName
+          ? String(b.mechanicName).trim().toLowerCase()
+          : undefined,
+  });
+  safeWorkshopAlert(
+    emitMaintenanceAlert({
+      tenantId: req.tenantId!,
+      maintenanceId: String(updated.id),
+      assetId: updated.asset_id ? String(updated.asset_id) : null,
+      vehicleName: String(updated.vehicle_name || 'Asset'),
+      priority: updated.priority != null ? String(updated.priority) : null,
+      description: updated.description != null ? String(updated.description) : null,
+      status: updated.status != null ? String(updated.status) : null,
+      maintenanceType: updated.maintenance_type != null ? String(updated.maintenance_type) : null,
+      startDate: (updated.start_date as Date) || null,
+    }),
+  );
+  const { rows: fresh } = await query(
+    `SELECT * FROM maintenance_logs WHERE id = $1 AND tenant_id = $2`,
+    [updated.id, req.tenantId],
+  );
+  return success(res, toCamelRows(fresh.length ? fresh : rows)[0]);
 });
 
 router.delete('/maintenance/:id', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
@@ -496,6 +667,14 @@ router.delete('/maintenance/:id', requireTenant, mod, requireWriteAccess, async 
     [req.params.id, req.tenantId]
   );
   if (!rowCount) return error(res, 'Maintenance log not found', 404);
+  safeWorkshopAlert(
+    emitMaintenanceAlert({
+      tenantId: req.tenantId!,
+      maintenanceId: String(req.params.id),
+      vehicleName: 'Asset',
+      status: 'cancelled',
+    }),
+  );
   return success(res, { deleted: true });
 });
 
@@ -505,6 +684,7 @@ router.post('/breakdowns', requireTenant, mod, requireWriteAccess, async (req: T
     location, breakdownTime, resolutionTime, severity, description, cause, resolution,
     downtimeHours, towingCost, repairCost, totalCost, tripId,
     assetCategory, failureSystem,
+    reportedBy, reportedDate, reportedSignature,
   } = req.body;
   if (!vehicleName || !description) return error(res, 'vehicleName and description required');
   const resolvedAssetId = await resolveWorkshopAssetId(req.tenantId!, assetId, vehicleId);
@@ -541,7 +721,35 @@ router.post('/breakdowns', requireTenant, mod, requireWriteAccess, async (req: T
       failureSystem || null,
     ]
   );
-  return success(res, toCamelRows(rows)[0], 201);
+  const created = rows[0];
+  if (created) {
+    const reporter = reportedBy || driverName || null;
+    await patchWorkshopExtras('breakdown_reports', String(created.id), req.tenantId!, {
+      reported_by: reporter,
+      reported_date: reportedDate || null,
+      reported_signature:
+        reportedSignature ||
+        (reporter ? String(reporter).trim().toLowerCase() : null),
+    });
+    safeWorkshopAlert(
+      emitBreakdownAlert({
+        tenantId: req.tenantId!,
+        breakdownId: String(created.id),
+        assetId: created.asset_id ? String(created.asset_id) : null,
+        vehicleName: String(created.vehicle_name || vehicleName),
+        severity: String(created.severity || severity || 'minor'),
+        description: String(created.description || description),
+        location: created.location,
+        breakdownTime: (created.breakdown_time as Date) || null,
+        resolved: Boolean(created.resolution_time),
+      }),
+    );
+  }
+  const { rows: fresh } = await query(
+    `SELECT * FROM breakdown_reports WHERE id = $1 AND tenant_id = $2`,
+    [created?.id, req.tenantId],
+  );
+  return success(res, toCamelRows(fresh.length ? fresh : rows)[0], 201);
 });
 
 router.patch('/breakdowns/:id', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
@@ -605,7 +813,37 @@ router.patch('/breakdowns/:id', requireTenant, mod, requireWriteAccess, async (r
     ]
   );
   if (!rows[0]) return error(res, 'Breakdown report not found', 404);
-  return success(res, toCamelRows(rows)[0]);
+  const updated = rows[0];
+  const reporter =
+    b.reportedBy !== undefined ? b.reportedBy : b.driverName !== undefined ? b.driverName : undefined;
+  await patchWorkshopExtras('breakdown_reports', String(updated.id), req.tenantId!, {
+    reported_by: reporter,
+    reported_date: b.reportedDate,
+    reported_signature:
+      b.reportedSignature !== undefined
+        ? b.reportedSignature
+        : reporter
+          ? String(reporter).trim().toLowerCase()
+          : undefined,
+  });
+  safeWorkshopAlert(
+    emitBreakdownAlert({
+      tenantId: req.tenantId!,
+      breakdownId: String(updated.id),
+      assetId: updated.asset_id ? String(updated.asset_id) : null,
+      vehicleName: String(updated.vehicle_name || 'Asset'),
+      severity: updated.severity != null ? String(updated.severity) : null,
+      description: updated.description != null ? String(updated.description) : null,
+      location: updated.location,
+      breakdownTime: (updated.breakdown_time as Date) || null,
+      resolved: Boolean(updated.resolution_time),
+    }),
+  );
+  const { rows: fresh } = await query(
+    `SELECT * FROM breakdown_reports WHERE id = $1 AND tenant_id = $2`,
+    [updated.id, req.tenantId],
+  );
+  return success(res, toCamelRows(fresh.length ? fresh : rows)[0]);
 });
 
 router.delete('/breakdowns/:id', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
@@ -615,6 +853,14 @@ router.delete('/breakdowns/:id', requireTenant, mod, requireWriteAccess, async (
     [req.params.id, req.tenantId]
   );
   if (!rowCount) return error(res, 'Breakdown report not found', 404);
+  safeWorkshopAlert(
+    emitBreakdownAlert({
+      tenantId: req.tenantId!,
+      breakdownId: String(req.params.id),
+      vehicleName: 'Asset',
+      resolved: true,
+    }),
+  );
   return success(res, { deleted: true });
 });
 

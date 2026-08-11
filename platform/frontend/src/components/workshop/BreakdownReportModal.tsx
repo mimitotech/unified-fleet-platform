@@ -28,6 +28,11 @@ import {
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { FleetUnitSelect } from '@/components/fleet/FleetUnitSelect';
+import {
+  emptySignOff,
+  WorkshopSignOffFields,
+  type WorkshopSignOffValue,
+} from '@/components/workshop/WorkshopSignOffFields';
 import { useFleetUnits } from '@/hooks/useFleetUnits';
 import { FAILURE_SYSTEMS } from '@/lib/workshopChecklists';
 import {
@@ -47,6 +52,9 @@ export interface BreakdownReportFormData {
   failureSystem: string;
   driverId: string | null;
   driverName: string;
+  reportedBy: string;
+  reportedDate: string;
+  reportedSignature: string;
   tripId?: string;
   location: {
     lat: number;
@@ -98,6 +106,9 @@ const initialFormState: BreakdownReportFormData = {
   failureSystem: '',
   driverId: null,
   driverName: '',
+  reportedBy: '',
+  reportedDate: emptySignOff().date,
+  reportedSignature: '',
   location: { lat: 0, lng: 0, address: '' },
   breakdownTime: new Date().toISOString().slice(0, 16),
   severity: 'minor',
@@ -262,20 +273,39 @@ export function BreakdownReportModal({
 
               <div className="space-y-2">
                 <Label htmlFor="driver">{operatorLabel}</Label>
-                <Select
-                  value={formData.driverId || ''}
-                  onValueChange={handleDriverChange}
+                <Input
+                  id="driver"
+                  placeholder={`Type ${operatorLabel.toLowerCase()} name`}
+                  value={formData.driverName}
+                  onChange={(e) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      driverId: null,
+                      driverName: e.target.value,
+                    }))
+                  }
                   disabled={isSubmitting}
-                >
-                  <SelectTrigger id="driver">
-                    <SelectValue placeholder={`Select ${operatorLabel.toLowerCase()}`} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {drivers.map((d) => (
-                      <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <WorkshopSignOffFields
+                  label="Reported by"
+                  required
+                  value={{
+                    name: formData.reportedBy || formData.driverName,
+                    date: formData.reportedDate || emptySignOff().date,
+                    signature: formData.reportedSignature || '',
+                  }}
+                  onChange={(sign: WorkshopSignOffValue) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      reportedBy: sign.name,
+                      reportedDate: sign.date,
+                      reportedSignature: sign.signature,
+                    }))
+                  }
+                />
               </div>
 
               <div className="space-y-2">

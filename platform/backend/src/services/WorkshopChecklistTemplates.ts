@@ -86,7 +86,8 @@ const VEHICLE_SECTIONS: ChecklistSectionDef[] = [
   },
 ];
 
-const GENERATOR_SECTIONS: ChecklistSectionDef[] = [
+/** Daily inspection only — used on the Inspection tab for generators. */
+export const GENERATOR_DAILY_SECTIONS: ChecklistSectionDef[] = [
   {
     id: 'daily-ops',
     title: 'Daily inspection',
@@ -105,6 +106,10 @@ const GENERATOR_SECTIONS: ChecklistSectionDef[] = [
       { name: 'Generator room is clean and accessible', category: 'daily' },
     ],
   },
+];
+
+/** Monthly PM — used on the Maintenance tab for generators (not Inspection). */
+export const GENERATOR_MONTHLY_PM_SECTIONS: ChecklistSectionDef[] = [
   {
     id: 'monthly-pm',
     title: 'Monthly preventive maintenance',
@@ -137,6 +142,8 @@ const GENERATOR_SECTIONS: ChecklistSectionDef[] = [
     ],
   },
 ];
+
+const GENERATOR_SECTIONS: ChecklistSectionDef[] = GENERATOR_DAILY_SECTIONS;
 
 const MACHINERY_SECTIONS: ChecklistSectionDef[] = [
   {
@@ -186,6 +193,15 @@ export const DEFAULT_CHECKLIST_BY_CATEGORY: Record<WorkshopAssetCategory, Checkl
   machinery: MACHINERY_SECTIONS,
 };
 
+/** Checklists for the Maintenance tab (generators get monthly PM). */
+export const MAINTENANCE_CHECKLIST_BY_CATEGORY: Partial<
+  Record<WorkshopAssetCategory, ChecklistSectionDef[]>
+> = {
+  generator: GENERATOR_MONTHLY_PM_SECTIONS,
+};
+
+export type ChecklistPurpose = 'inspection' | 'maintenance';
+
 export const TEMPLATE_META: Record<
   WorkshopAssetCategory,
   { name: string; description: string }
@@ -195,8 +211,8 @@ export const TEMPLATE_META: Record<
     description: 'Standard truck / vehicle and trailer safety checklist',
   },
   generator: {
-    name: 'Generator inspection',
-    description: 'Daily inspection and monthly preventive maintenance checklist',
+    name: 'Generator daily inspection',
+    description: 'Daily generator inspection checklist',
   },
   machinery: {
     name: 'Machinery pre-use / service inspection',

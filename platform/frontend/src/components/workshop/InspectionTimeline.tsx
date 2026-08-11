@@ -18,6 +18,7 @@ import {
   Pencil,
   Trash2,
   MoreHorizontal,
+  Printer,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -43,12 +44,16 @@ import { flattenChecklistSections, sectionsFromLegacy } from '@/lib/workshopChec
 import { sanitizeWorkshopAssetCategory } from '@/lib/workshopUnit';
 import type { VehicleInspection, InspectionStatus, InspectionType } from '@/types/workshop';
 import { format } from 'date-fns';
+import { useTenantBranding } from '@/hooks/useTenantBranding';
+import { printWorkshopReport } from '@/components/workshop/WorkshopPrintReport';
+import { notify } from '@/lib/notify';
 
 interface InspectionTimelineProps {
   inspections: VehicleInspection[];
   onViewDetails?: (inspection: VehicleInspection) => void;
   onEdit?: (inspection: VehicleInspection) => void;
   onDelete?: (inspectionId: string) => void;
+  onPrint?: (inspection: VehicleInspection) => void;
   maxItems?: number;
   showViewAll?: boolean;
 }
@@ -85,11 +90,13 @@ function InspectionCard({
   onViewDetails,
   onEdit,
   onRequestDelete,
+  onPrint,
 }: {
   inspection: VehicleInspection;
   onViewDetails?: (inspection: VehicleInspection) => void;
   onEdit?: (inspection: VehicleInspection) => void;
   onRequestDelete?: (inspection: VehicleInspection) => void;
+  onPrint?: (inspection: VehicleInspection) => void;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const statusConfig = getStatusConfig(inspection.overallStatus);
@@ -191,6 +198,10 @@ function InspectionCard({
                       <Eye className="w-4 h-4 mr-2" />
                       View
                     </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => onPrint?.(inspection)}>
+                      <Printer className="w-4 h-4 mr-2" />
+                      Print report
+                    </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => onEdit?.(inspection)}>
                       <Pencil className="w-4 h-4 mr-2" />
                       Edit
@@ -272,8 +283,17 @@ export function InspectionTimeline({
   maxItems = 5,
   showViewAll = true,
 }: InspectionTimelineProps) {
+  const branding = useTenantBranding();
   const [showAll, setShowAll] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<VehicleInspection | null>(null);
+
+  const handlePrint = async (inspection: VehicleInspection) => {
+    try {
+      await printWorkshopReport({ kind: 'inspection', branding, inspection });
+    } catch (e) {
+      notify.error('Print failed', e instanceof Error ? e.message : undefined);
+    }
+  };
 
   const displayedInspections = showAll ? inspections : inspections.slice(0, maxItems);
   const hasMore = inspections.length > maxItems;
@@ -305,7 +325,8 @@ export function InspectionTimeline({
               inspection={inspection}
               onViewDetails={onViewDetails}
               onEdit={onEdit}
-              onRequestDelete={setPendingDelete}
+              onPrint={handlePrint}
+          onRequestDelete={setPendingDelete}
             />
           ))
         )}

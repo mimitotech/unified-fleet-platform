@@ -5,7 +5,7 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   Wrench, User, Calendar, Clock, Plus, Trash2,
-  Loader2, Package, Gauge, Route,
+  Loader2, Package, Gauge, Route, Check, X, ChevronDown, ChevronUp, AlertCircle,
 } from 'lucide-react';
 import { UgxPrefix } from '@/components/shared/UgxAffix';
 import {
@@ -28,6 +28,17 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { FleetUnitSelect } from '@/components/fleet/FleetUnitSelect';
+import { clientApi } from '@/lib/api';
+import {
+  emptySignOff,
+  WorkshopSignOffFields,
+  type WorkshopSignOffValue,
+} from '@/components/workshop/WorkshopSignOffFields';
+import {
+  instantiateChecklistSections,
+} from '@/lib/workshopChecklists';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { cn } from '@/lib/utils';
 import { useFleetUnits } from '@/hooks/useFleetUnits';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -44,6 +55,8 @@ import type {
   MaintenancePriority,
   MaintenancePart,
   WorkshopAssetCategory,
+  ChecklistItemStatus,
+  ChecklistSection,
 } from '@/types/workshop';
 
 export interface MaintenanceLogFormData {
@@ -59,6 +72,9 @@ export interface MaintenanceLogFormData {
   priority: MaintenancePriority;
   description: string;
   mechanicName: string;
+  mechanicDate: string;
+  mechanicSignature: string;
+  checklistSections: ChecklistSection[];
   startDate: string;
   endDate?: string;
   laborHours: number;
@@ -178,6 +194,9 @@ const initialFormState: MaintenanceLogFormData = {
   priority: 'medium',
   description: '',
   mechanicName: '',
+  mechanicDate: emptySignOff().date,
+  mechanicSignature: '',
+  checklistSections: [],
   startDate: new Date().toISOString().split('T')[0],
   laborHours: 0,
   laborCost: 0,
@@ -246,6 +265,35 @@ export function MaintenanceLogModal({
     if (!isSubmitting) onOpenChange(false);
   }, [onOpenChange, isSubmitting]);
 
+  const loadMaintenanceChecklist = useCallback(async (category: WorkshopAssetCategory) => {
+    if (category !== 'generator') {
+      setFormData((prev) => ({ ...prev, checklistSections: [] }));
+      return;
+    }
+    try {
+      const tpl = await clientApi.getWorkshopChecklistTemplate(category, 'maintenance');
+      const sections = instantiateChecklistSections(category, tpl.sections, 'maintenance');
+      setFormData((prev) => ({
+        ...prev,
+        checklistSections: sections,
+        maintenanceType: prev.maintenanceType === 'repair' ? 'preventive' : prev.maintenanceType,
+        description:
+          prev.description.trim() ||
+          'Monthly preventive maintenance checklist completed',
+      }));
+    } catch {
+      const sections = instantiateChecklistSections(category, undefined, 'maintenance');
+      setFormData((prev) => ({
+        ...prev,
+        checklistSections: sections,
+        maintenanceType: 'preventive',
+        description:
+          prev.description.trim() ||
+          'Monthly preventive maintenance checklist completed',
+      }));
+    }
+  }, []);
+
   const handleUnitChange = (unitId: string, unit: FleetUnit) => {
     setSelectedUnit(unit);
     const category = resolveWorkshopAssetCategory(unit);
@@ -256,15 +304,28 @@ export function MaintenanceLogModal({
       vehiclePlate: unit.plate || '',
       assetCategory: category,
       unit,
+      maintenanceType: category === 'generator' ? 'preventive' : prev.maintenanceType,
     }));
+    void loadMaintenanceChecklist(category);
   };
 
-  const handleDriverChange = (driverId: string) => {
-    const driver = drivers.find((d) => d.id === driverId);
+  const updateChecklistItem = (
+    sectionId: string,
+    index: number,
+    status: ChecklistItemStatus,
+    comment?: string,
+  ) => {
     setFormData((prev) => ({
       ...prev,
-      driverId,
-      driverName: driver?.name || '',
+      checklistSections: (prev.checklistSections || []).map((section) => {
+        if (section.id !== sectionId) return section;
+        return {
+          ...section,
+          items: section.items.map((item, i) =>
+            i === index ? { ...item, status, comment: comment ?? item.comment } : item,
+          ),
+        };
+      }),
     }));
   };
 
@@ -370,35 +431,39 @@ export function MaintenanceLogModal({
 
               <div className="space-y-2">
                 <Label htmlFor="driver">{operatorLabel}</Label>
-                <Select
-                  value={formData.driverId || ''}
-                  onValueChange={handleDriverChange}
+                <Input
+                  id="driver"
+                  placeholder={`Type ${operatorLabel.toLowerCase()} name`}
+                  value={formData.driverName}
+                  onChange={(e) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      driverId: null,
+                      driverName: e.target.value,
+                    }))
+                  }
                   disabled={isSubmitting}
-                >
-                  <SelectTrigger id="driver">
-                    <SelectValue placeholder={`Select ${operatorLabel.toLowerCase()}`} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {drivers.map((d) => (
-                      <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="mechanic">Mechanic *</Label>
-                <div className="relative">
-                  <Input
-                    id="mechanic"
-                    placeholder="Enter mechanic name"
-                    value={formData.mechanicName}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, mechanicName: e.target.value }))}
-                    className="pl-9"
-                    disabled={isSubmitting}
-                  />
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                </div>
+              <div className="md:col-span-2">
+                <WorkshopSignOffFields
+                  label="Maintained by / Technician"
+                  required
+                  value={{
+                    name: formData.mechanicName,
+                    date: formData.mechanicDate || emptySignOff().date,
+                    signature: formData.mechanicSignature || '',
+                  }}
+                  onChange={(sign: WorkshopSignOffValue) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      mechanicName: sign.name,
+                      mechanicDate: sign.date,
+                      mechanicSignature: sign.signature,
+                    }))
+                  }
+                />
               </div>
 
               <div className="space-y-2">
@@ -594,6 +659,65 @@ export function MaintenanceLogModal({
                     </div>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {(formData.checklistSections || []).length > 0 && (
+              <div className="space-y-3 rounded-lg border border-border/70 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold">Monthly preventive maintenance checklist</p>
+                  <Badge variant="secondary">Generator</Badge>
+                </div>
+                {formData.checklistSections.map((section) => (
+                  <div key={section.id} className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                      {section.title}
+                    </p>
+                    {section.items.map((item, idx) => (
+                      <div
+                        key={item.id}
+                        className="flex items-start justify-between gap-2 py-1.5 border-b last:border-0"
+                      >
+                        <span className="text-sm flex-1">{item.name}</span>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={item.status === 'ok' ? 'default' : 'outline'}
+                            className="h-7 w-7 p-0"
+                            onClick={() => updateChecklistItem(section.id, idx, 'ok')}
+                            disabled={isSubmitting}
+                          >
+                            <Check className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={item.status === 'issue' ? 'default' : 'outline'}
+                            className={cn(
+                              'h-7 w-7 p-0',
+                              item.status === 'issue' && 'bg-destructive hover:bg-destructive/90',
+                            )}
+                            onClick={() => updateChecklistItem(section.id, idx, 'issue')}
+                            disabled={isSubmitting}
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={item.status === 'na' ? 'secondary' : 'outline'}
+                            className="h-7 px-2 text-[10px]"
+                            onClick={() => updateChecklistItem(section.id, idx, 'na')}
+                            disabled={isSubmitting}
+                          >
+                            N/A
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
               </div>
             )}
 

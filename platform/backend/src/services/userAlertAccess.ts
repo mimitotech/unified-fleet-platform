@@ -1,5 +1,6 @@
 import { query } from '../config/database.js';
 import { classifyWialonAlertType, isNoiseAlert } from './wialonAlertClassify.js';
+import { WORKSHOP_BUILTIN_ALERT_TYPES } from './workshopAlertService.js';
 import type { FleetAlert } from '@ufp/shared';
 
 export type AllowedAlertType = {
@@ -37,9 +38,14 @@ const CATEGORY_DEFS: Array<{ id: string; label: string; match: (type: string) =>
   { id: 'geofence', label: 'Geofence', match: (t) => t === 'geofence' },
   { id: 'engine', label: 'Engine', match: (t) => /ignition_/.test(t) },
   {
+    id: 'workshop',
+    label: 'Workshop',
+    match: (t) => /workshop_/.test(t),
+  },
+  {
     id: 'sensors',
     label: 'Sensors',
-    match: (t) => /sensor|temperature|door|connection|maintenance/.test(t),
+    match: (t) => /sensor|temperature|door|connection|maintenance/.test(t) && !/workshop_/.test(t),
   },
 ];
 
@@ -328,6 +334,16 @@ export async function listTenantAlertTypes(
     upsertType(byKey, {
       name,
       type,
+      eventCount: 0,
+      lastSeen: null,
+    });
+  }
+
+  // 4) Workshop builtins — always available for ACL even before first event
+  for (const builtin of WORKSHOP_BUILTIN_ALERT_TYPES) {
+    upsertType(byKey, {
+      name: builtin.name,
+      type: builtin.type,
       eventCount: 0,
       lastSeen: null,
     });

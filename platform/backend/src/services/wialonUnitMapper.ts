@@ -231,7 +231,15 @@ export function mapWialonSearchItem(
         }
       : undefined,
     lmsg,
-    counters: { mileage: item.cnm, engineHours: item.cneh },
+    counters: {
+      mileage: item.cnm,
+      engineHours:
+        item.cneh != null && Number.isFinite(item.cneh) && item.cneh > 0
+          ? item.cneh >= 100_000
+            ? Math.round((item.cneh / 3600) * 10) / 10
+            : Math.round(item.cneh * 10) / 10
+          : item.cneh,
+    },
     status: hosting.status,
     motionState: hosting.motionState,
     assetCategory,

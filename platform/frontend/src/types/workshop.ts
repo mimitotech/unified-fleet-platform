@@ -57,6 +57,8 @@ export interface VehicleInspection {
   overallStatus: InspectionStatus;
   notes?: string;
   inspectorName?: string;
+  inspectorDate?: string | null;
+  inspectorSignature?: string | null;
   createdAt: string;
 }
 
@@ -93,6 +95,9 @@ export interface MaintenanceLog {
   priority: MaintenancePriority;
   description: string;
   mechanicName: string;
+  mechanicDate?: string | null;
+  mechanicSignature?: string | null;
+  checklistSections?: ChecklistSection[];
   startDate: string;
   endDate?: string;
   laborHours: number;
@@ -127,6 +132,9 @@ export interface BreakdownReport {
   failureSystem?: string | null;
   driverId: string | null;
   driverName: string | null;
+  reportedBy?: string | null;
+  reportedDate?: string | null;
+  reportedSignature?: string | null;
   tripId?: string;
   location: {
     lat: number;

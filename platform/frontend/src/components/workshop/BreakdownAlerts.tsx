@@ -15,8 +15,11 @@ import {
   ExternalLink,
   MoreHorizontal,
   Pencil,
-  Trash2,
+  Trash2, Printer,
 } from 'lucide-react';
+import { useTenantBranding } from '@/hooks/useTenantBranding';
+import { printWorkshopReport } from '@/components/workshop/WorkshopPrintReport';
+import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -73,6 +76,15 @@ export function BreakdownAlerts({
   onResolveBreakdown,
   onDeleteBreakdown,
 }: BreakdownAlertsProps) {
+  const branding = useTenantBranding();
+  const handlePrint = async (breakdown: BreakdownReport) => {
+    try {
+      await printWorkshopReport({ kind: 'breakdown', branding, breakdown });
+    } catch (e) {
+      notify.error('Print failed', e instanceof Error ? e.message : undefined);
+    }
+  };
+
   const [pendingDelete, setPendingDelete] = useState<BreakdownReport | null>(null);
 
   // Sort by most recent first, unresolved first
@@ -188,6 +200,10 @@ export function BreakdownAlerts({
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => handlePrint(breakdown)}>
+                          <Printer className="w-4 h-4 mr-2" />
+                          Print report
+                        </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => onEditBreakdown?.(breakdown)}>
                           <Pencil className="w-4 h-4 mr-2" />
                           Edit

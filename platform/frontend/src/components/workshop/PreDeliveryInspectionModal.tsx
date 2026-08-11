@@ -40,6 +40,11 @@ import {
   flattenChecklistSections,
 } from '@/lib/workshopChecklists';
 import {
+  emptySignOff,
+  WorkshopSignOffFields,
+  type WorkshopSignOffValue,
+} from '@/components/workshop/WorkshopSignOffFields';
+import {
   isStationaryUnit,
   resolveWorkshopAssetCategory,
   workshopAssetLabel,
@@ -73,6 +78,8 @@ export interface InspectionFormData {
   trailerChecklist: ChecklistItem[];
   notes: string;
   inspectorName: string;
+  inspectorDate: string;
+  inspectorSignature: string;
   unit?: FleetUnit | null;
 }
 
@@ -188,6 +195,8 @@ function emptyForm(defaultVehicleId?: string): InspectionFormData {
     trailerChecklist: legacy.trailerChecklist,
     notes: '',
     inspectorName: '',
+    inspectorDate: emptySignOff().date,
+    inspectorSignature: '',
   };
 }
 
@@ -240,16 +249,16 @@ export function PreDeliveryInspectionModal({
       const token = ++loadToken.current;
       setLoadingTemplate(true);
       try {
-        const tpl = await clientApi.getWorkshopChecklistTemplate(category);
+        const tpl = await clientApi.getWorkshopChecklistTemplate(category, 'inspection');
         if (token !== loadToken.current) return;
         setTemplateName(tpl.name || '');
         if (preserveFilled) return;
-        applySections(category, instantiateChecklistSections(category, tpl.sections));
+        applySections(category, instantiateChecklistSections(category, tpl.sections, 'inspection'));
       } catch {
         if (token !== loadToken.current) return;
         setTemplateName('');
         if (!preserveFilled) {
-          applySections(category, instantiateChecklistSections(category));
+          applySections(category, instantiateChecklistSections(category, undefined, 'inspection'));
         }
       } finally {
         if (token === loadToken.current) setLoadingTemplate(false);
@@ -283,6 +292,10 @@ export function PreDeliveryInspectionModal({
           trailerChecklist: legacy.trailerChecklist,
           notes: editData.notes || '',
           inspectorName: editData.inspectorName || '',
+          inspectorDate: editData.inspectorDate || emptySignOff().date,
+          inspectorSignature:
+            editData.inspectorSignature ||
+            (editData.inspectorName || '').trim().toLowerCase(),
         });
         setOpenSections(Object.fromEntries(sections.map((s, i) => [s.id, i < 2])));
         setSelectedUnit(null);
@@ -315,16 +328,17 @@ export function PreDeliveryInspectionModal({
       unit,
       odometerReading: category === 'vehicle' ? prev.odometerReading : 0,
       engineHours: category !== 'vehicle' ? prev.engineHours : 0,
+      inspectionType: category === 'generator' ? 'pre-trip' : prev.inspectionType,
     }));
     void loadTemplateForCategory(category, false);
   };
 
-  const handleDriverChange = (driverId: string) => {
-    const driver = drivers.find((d) => d.id === driverId);
+  const handleSignOffChange = (sign: WorkshopSignOffValue) => {
     setFormData((prev) => ({
       ...prev,
-      driverId: driverId || null,
-      driverName: driver?.name || '',
+      inspectorName: sign.name,
+      inspectorDate: sign.date,
+      inspectorSignature: sign.signature,
     }));
   };
 
@@ -436,26 +450,25 @@ export function PreDeliveryInspectionModal({
 
               <div className="space-y-2">
                 <Label htmlFor="driver">{operatorLabel}</Label>
-                <Select
-                  value={formData.driverId || ''}
-                  onValueChange={handleDriverChange}
+                <Input
+                  id="driver"
+                  placeholder={`Type ${operatorLabel.toLowerCase()} name`}
+                  value={formData.driverName}
+                  onChange={(e) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      driverId: null,
+                      driverName: e.target.value,
+                    }))
+                  }
                   disabled={isSubmitting}
-                >
-                  <SelectTrigger id="driver">
-                    <SelectValue placeholder={`Select ${operatorLabel.toLowerCase()} (optional)`} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {drivers.map((d) => (
-                      <SelectItem key={d.id} value={d.id}>
-                        {d.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                />
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="inspectionType">Inspection Type</Label>
+                <Label htmlFor="inspectionType">
+                  {assetCategory === 'generator' ? 'Inspection type' : 'Inspection Type'}
+                </Label>
                 <Select
                   value={formData.inspectionType}
                   onValueChange={(v) =>
@@ -467,27 +480,31 @@ export function PreDeliveryInspectionModal({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="pre-delivery">Pre-Delivery / Pre-Use</SelectItem>
-                    <SelectItem value="pre-trip">Pre-Trip / Pre-Start</SelectItem>
-                    <SelectItem value="post-trip">Post-Trip / After Run</SelectItem>
-                    <SelectItem value="scheduled">Scheduled</SelectItem>
+                    {assetCategory === 'generator' ? (
+                      <SelectItem value="pre-trip">Daily inspection</SelectItem>
+                    ) : (
+                      <>
+                        <SelectItem value="pre-delivery">Pre-Delivery / Pre-Use</SelectItem>
+                        <SelectItem value="pre-trip">Pre-Trip / Pre-Start</SelectItem>
+                        <SelectItem value="post-trip">Post-Trip / After Run</SelectItem>
+                        <SelectItem value="scheduled">Scheduled</SelectItem>
+                      </>
+                    )}
                   </SelectContent>
                 </Select>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="inspector">Inspector Name *</Label>
-                <div className="relative">
-                  <Input
-                    id="inspector"
-                    placeholder="Enter inspector name"
-                    value={formData.inspectorName}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, inspectorName: e.target.value }))}
-                    className="pl-9"
-                    disabled={isSubmitting}
-                  />
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                </div>
+              <div className="md:col-span-2">
+                <WorkshopSignOffFields
+                  label="Inspected by"
+                  required
+                  value={{
+                    name: formData.inspectorName,
+                    date: formData.inspectorDate,
+                    signature: formData.inspectorSignature,
+                  }}
+                  onChange={handleSignOffChange}
+                />
               </div>
 
               {!stationary ? (

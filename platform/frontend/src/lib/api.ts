@@ -677,16 +677,20 @@ export const clientApi = {
   getInspections: () => api<unknown[]>('/api/client/workshop/inspections'),
   getMaintenanceLogs: () => api<unknown[]>('/api/client/workshop/maintenance'),
   getBreakdowns: () => api<unknown[]>('/api/client/workshop/breakdowns'),
-  getWorkshopChecklistTemplate: (assetCategory: string) =>
+  getWorkshopChecklistTemplate: (
+    assetCategory: string,
+    purpose: 'inspection' | 'maintenance' = 'inspection',
+  ) =>
     api<{
       assetCategory: string;
+      purpose?: string;
       name: string;
       description: string;
       sections: unknown;
       failureSystems: string[];
       source?: string;
     }>(
-      `/api/client/workshop/checklist-templates?assetCategory=${encodeURIComponent(assetCategory)}`,
+      `/api/client/workshop/checklist-templates?assetCategory=${encodeURIComponent(assetCategory)}&purpose=${encodeURIComponent(purpose)}`,
     ),
   createInspection: (data: Record<string, unknown>) =>
     api('/api/client/workshop/inspections', { method: 'POST', body: JSON.stringify(data) }),

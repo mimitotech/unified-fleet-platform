@@ -105,6 +105,7 @@ function typeIcon(type?: string) {
   if (/temp/.test(type)) return Thermometer;
   if (/door/.test(type)) return DoorOpen;
   if (/connection/.test(type)) return WifiOff;
+  if (/workshop_/.test(type)) return Wrench;
   if (/maintenance/.test(type)) return Wrench;
   return Activity;
 }
@@ -113,7 +114,8 @@ function prettyType(type?: string) {
   return prettyAlertType(type);
 }
 
-function prettySource(sourceType?: string) {
+function prettySource(sourceType?: string, alertType?: string) {
+  if (alertType && /workshop_/.test(alertType)) return 'Workshop';
   const s = (sourceType || '').toLowerCase();
   if (!s || s === 'wialon') return 'Fleet';
   if (s === 'tracksolid') return 'Device';
@@ -494,7 +496,7 @@ export default function AlertsPage() {
                           {prettyType(alert.type)}
                         </Badge>
                         <Badge variant="outline" className="text-[9px] py-0 h-3.5 px-1">
-                          {prettySource(alert.sourceType)}
+                          {prettySource(alert.sourceType, alert.type)}
                         </Badge>
                         {alert.acknowledged && (
                           <Badge

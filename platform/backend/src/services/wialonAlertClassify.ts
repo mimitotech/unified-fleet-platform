@@ -39,9 +39,15 @@ export function classifyWialonAlertType(raw: string): string {
     return 'fuel_level';
   }
 
+  // UEDCL / utility mains (common client naming) — before generic generator bucket
+  if (/\buedcl\b|utility\s*(power|mains|supply)|grid\s*power|mains\s*supply/.test(s)) {
+    if (/\b(off|fail|failed|cut|lost|down|outage|blackout)\b/.test(s)) return 'power_cut';
+    if (/\b(on|ok|restor|return|up|available)\b/.test(s)) return 'power_restore';
+  }
+
   // Generators / mains power (stationary assets)
   if (/generat|genset|standby\s*power|backup\s*power/.test(s)) {
-    if (/power\s*(off|cut|fail|lost|down)|mains\s*fail|grid\s*fail|utility\s*off|blackout/.test(s)) {
+    if (/power\s*(off|cut|fail|lost|down)|mains\s*fail|grid\s*fail|utility\s*off|blackout|uedcl/.test(s)) {
       return 'power_cut';
     }
     if (/power\s*(on|restor|return|up)|mains\s*(on|ok|restor)|grid\s*(on|ok)/.test(s)) {
@@ -81,26 +87,31 @@ export function classifyWialonAlertType(raw: string): string {
   return 'fleet_event';
 }
 
+/**
+ * Surgical severity — only operationally urgent fleet events are critical.
+ * Do not promote every Wialon "violation" flag to critical (mis-labels noise).
+ */
 export function severityForAlertType(
   type: string,
-  flags?: number,
+  _flags?: number,
 ): FleetAlert['severity'] {
-  // Event flag 0x1 = violation
-  if (flags != null && (flags & 1) === 1) return 'critical';
+  // Critical: low fuel, sudden fuel drop, service due, genset off, UEDCL/mains off, SOS
   if (
     type === 'fuel_theft' ||
-    type === 'sos' ||
-    type === 'harsh_braking' ||
+    type === 'fuel_level' ||
+    type === 'maintenance' ||
+    type === 'workshop_service_due' ||
     type === 'power_cut' ||
-    type === 'generator_off'
+    type === 'generator_off' ||
+    type === 'sos'
   ) {
     return 'critical';
   }
   if (
     type === 'speeding' ||
+    type === 'harsh_braking' ||
     type === 'harsh_acceleration' ||
     type === 'harsh_cornering' ||
-    type === 'fuel_level' ||
     type === 'battery' ||
     type === 'temperature' ||
     type === 'connection' ||
@@ -108,7 +119,9 @@ export function severityForAlertType(
     type === 'towing' ||
     type === 'idling' ||
     type === 'door' ||
-    type === 'sensor'
+    type === 'sensor' ||
+    type === 'workshop_breakdown' ||
+    type === 'workshop_inspection'
   ) {
     return 'warning';
   }
@@ -118,7 +131,7 @@ export function severityForAlertType(
     type === 'ignition_off' ||
     type === 'power_restore' ||
     type === 'generator_on' ||
-    type === 'maintenance'
+    type === 'workshop_maintenance'
   ) {
     return 'info';
   }

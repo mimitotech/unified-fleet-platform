@@ -11,6 +11,8 @@ export { MaintenanceLogList } from './MaintenanceLogList';
 export { BreakdownAlerts } from './BreakdownAlerts';
 export { MaintenanceCostChart } from './MaintenanceCostChart';
 export { WorkshopCostingPanel } from './WorkshopCostingPanel';
+export { WorkshopSignOffFields } from './WorkshopSignOffFields';
+export { printWorkshopReport } from './WorkshopPrintReport';
 
 export { PreDeliveryInspectionModal } from './PreDeliveryInspectionModal';
 export type { InspectionFormData, PreDeliveryInspectionModalProps } from './PreDeliveryInspectionModal';

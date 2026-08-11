@@ -103,7 +103,7 @@ const VEHICLE_SECTIONS: ChecklistSection[] = [
   },
 ];
 
-const GENERATOR_SECTIONS: ChecklistSection[] = [
+const GENERATOR_DAILY_SECTIONS: ChecklistSection[] = [
   {
     id: 'daily-ops',
     title: 'Daily inspection',
@@ -122,6 +122,9 @@ const GENERATOR_SECTIONS: ChecklistSection[] = [
       { id: 'gd-11', name: 'Generator room is clean and accessible', category: 'daily', status: 'pending' },
     ],
   },
+];
+
+export const GENERATOR_MONTHLY_PM_SECTIONS: ChecklistSection[] = [
   {
     id: 'monthly-pm',
     title: 'Monthly preventive maintenance',
@@ -154,6 +157,8 @@ const GENERATOR_SECTIONS: ChecklistSection[] = [
     ],
   },
 ];
+
+const GENERATOR_SECTIONS: ChecklistSection[] = GENERATOR_DAILY_SECTIONS;
 
 const MACHINERY_SECTIONS: ChecklistSection[] = [
   {
@@ -203,6 +208,25 @@ export const DEFAULT_CHECKLIST_BY_CATEGORY: Record<WorkshopAssetCategory, Checkl
   machinery: MACHINERY_SECTIONS,
 };
 
+/** Maintenance-tab checklists (generators → monthly PM). */
+export const MAINTENANCE_CHECKLIST_BY_CATEGORY: Partial<
+  Record<WorkshopAssetCategory, ChecklistSection[]>
+> = {
+  generator: GENERATOR_MONTHLY_PM_SECTIONS,
+};
+
+export type ChecklistPurpose = 'inspection' | 'maintenance';
+
+export function filterSectionsForPurpose(
+  sections: ChecklistSection[],
+  purpose: ChecklistPurpose,
+): ChecklistSection[] {
+  if (purpose === 'inspection') {
+    return sections.filter((s) => s.id !== 'monthly-pm');
+  }
+  return sections.filter((s) => s.id === 'monthly-pm' || s.title.toLowerCase().includes('monthly'));
+}
+
 type TemplateSectionRaw = {
   id?: string;
   title?: string;
@@ -213,13 +237,18 @@ type TemplateSectionRaw = {
 export function instantiateChecklistSections(
   category: WorkshopAssetCategory,
   rawSections?: unknown,
+  purpose: ChecklistPurpose = 'inspection',
 ): ChecklistSection[] {
+  const builtin =
+    purpose === 'maintenance'
+      ? MAINTENANCE_CHECKLIST_BY_CATEGORY[category] || []
+      : DEFAULT_CHECKLIST_BY_CATEGORY[category];
   const source =
     Array.isArray(rawSections) && rawSections.length > 0
       ? (rawSections as TemplateSectionRaw[])
-      : DEFAULT_CHECKLIST_BY_CATEGORY[category];
+      : builtin;
 
-  return source.map((section, sIdx) => {
+  const mapped = source.map((section, sIdx) => {
     const sid = String(section.id || `section-${sIdx}`);
     const items = (section.items || []).map((item, iIdx) => {
       const status = (item.status as ChecklistItemStatus) || 'pending';
@@ -240,6 +269,8 @@ export function instantiateChecklistSections(
       items,
     };
   });
+
+  return filterSectionsForPurpose(mapped, purpose);
 }
 
 /** Convert legacy truck/trailer arrays into sections when checklist_sections is empty. */

@@ -238,7 +238,17 @@ export function MapUnitDetailCard({ unit, lat, lng, speed, course, live = false,
           )}
           <Metric
             label="Engine hours"
-            value={detail?.counters?.engineHours != null ? `${detail.counters.engineHours.toFixed(1)} h` : '—'}
+            value={
+              detail?.counters?.engineHours != null
+                ? `${detail.counters.engineHours.toFixed(1)} h`
+                : detail?.sensors?.find((s) =>
+                    /engine\s*hours?|moto\s*hours?|genset\s*hours?/i.test(s.name || ''),
+                  )?.value
+                  ? `${detail.sensors.find((s) =>
+                      /engine\s*hours?|moto\s*hours?|genset\s*hours?/i.test(s.name || ''),
+                    )?.value} h`
+                  : '—'
+            }
             icon={Clock}
           />
           {satellites != null && (

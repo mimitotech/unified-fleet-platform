@@ -16,8 +16,11 @@ import {
   MoreHorizontal,
   Filter,
   Pencil,
-  Trash2,
+  Trash2, Printer,
 } from 'lucide-react';
+import { useTenantBranding } from '@/hooks/useTenantBranding';
+import { printWorkshopReport } from '@/components/workshop/WorkshopPrintReport';
+import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -100,6 +103,15 @@ export function MaintenanceLogList({
   onCompleteLog,
   onDeleteLog,
 }: MaintenanceLogListProps) {
+  const branding = useTenantBranding();
+  const handlePrint = async (log: MaintenanceLog) => {
+    try {
+      await printWorkshopReport({ kind: 'maintenance', branding, maintenance: log });
+    } catch (e) {
+      notify.error('Print failed', e instanceof Error ? e.message : undefined);
+    }
+  };
+
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [pendingDelete, setPendingDelete] = useState<MaintenanceLog | null>(null);
@@ -218,6 +230,10 @@ export function MaintenanceLogList({
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handlePrint(log)}>
+                            <Printer className="w-4 h-4 mr-2" />
+                            Print report
+                          </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => onEditLog?.(log)}>
                             <Pencil className="w-4 h-4 mr-2" />
                             Edit Job
