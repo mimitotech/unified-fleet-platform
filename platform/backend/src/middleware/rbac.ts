@@ -8,7 +8,7 @@ const ROLE_MODULES: Record<string, string[]> = {
   tenant_admin: ['*'],
   manager: [
     'dashboard', 'monitoring', 'surveillance', 'drivers', 'routes', 'fuel',
-    'emissions', 'workshop', 'alerts', 'trailers', 'sensors', 'geofencing',
+    'emissions', 'workshop', 'alerts', 'trailers', 'sensors', 'geofencing', 'commands',
   ],
   operator: ['dashboard', 'monitoring', 'alerts', 'routes'],
   viewer: ['dashboard', 'monitoring', 'alerts'],

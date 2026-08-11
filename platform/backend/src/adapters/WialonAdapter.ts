@@ -389,15 +389,20 @@ export class WialonAdapter extends BaseAdapter {
   }
 
   async sendCommand(assetId: string, command: string, params: Record<string, unknown>) {
-    const paramStr = params && Object.keys(params).length ? JSON.stringify(params) : '';
-    return this.request('unit/exec_cmd', {
-      itemId: parseInt(assetId, 10),
-      commandName: command,
-      linkType: '',
-      param: paramStr,
-      timeout: 60,
-      flags: 0,
-    });
+    const token = (this.config.token || '').trim();
+    if (!token) throw new Error('Wialon token not configured');
+    const { WialonLiveService } = await import('../services/WialonLiveService.js');
+    return WialonLiveService.sendUnitCommand(
+      {
+        token,
+        baseUrl: this.config.baseUrl,
+        operateAs: this.config.operateAs,
+        accountId: this.config.accountId,
+      },
+      parseInt(assetId, 10),
+      command,
+      params,
+    );
   }
 
   async disconnect(): Promise<void> {

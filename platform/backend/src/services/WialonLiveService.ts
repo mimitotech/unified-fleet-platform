@@ -1193,16 +1193,55 @@ export class WialonLiveService {
     commandName: string,
     param: Record<string, unknown> | string = {}
   ) {
+    const tryOnce = async (creds: WialonCredentialsInput) =>
+      this.sendUnitCommandOnce(creds, unitId, commandName, param);
+
+    try {
+      return await tryOnce(credentials);
+    } catch (err) {
+      const msg = (err as Error).message || '';
+      if (!/access denied/i.test(msg)) throw err;
+
+      // Auto-retry as an account user when mother token lacks exec ACL on the unit.
+      if (credentials.operateAs || !credentials.accountId) throw err;
+      const accountId = parseInt(String(credentials.accountId), 10);
+      if (!Number.isFinite(accountId)) throw err;
+
+      try {
+        const { WialonHierarchyService } = await import('./WialonHierarchyService.js');
+        const users = await WialonHierarchyService.getUsersForAccount(credentials, accountId);
+        const pick =
+          users.find((u) => /admin/i.test(u.name || '')) ||
+          users.find((u) => u.accountId === accountId) ||
+          users[0];
+        if (!pick?.id) throw err;
+        return await tryOnce({ ...credentials, operateAs: pick.id });
+      } catch {
+        throw err;
+      }
+    }
+  }
+
+  private static async sendUnitCommandOnce(
+    credentials: WialonCredentialsInput,
+    unitId: number,
+    commandName: string,
+    param: Record<string, unknown> | string = {}
+  ) {
     let linkType = '';
     let paramStr = typeof param === 'string' ? param : '';
     if (typeof param !== 'string' && param && Object.keys(param).length) {
       paramStr = JSON.stringify(param);
     }
 
+    let defLink = '';
     try {
       const defs = await this.getUnitCommands(credentials, unitId);
       const def = defs.find((c) => c.name === commandName);
-      if (def?.linkType != null) linkType = def.linkType;
+      if (def?.linkType != null && String(def.linkType).trim() !== '') {
+        defLink = String(def.linkType).trim();
+        linkType = defLink;
+      }
       if (!paramStr && def?.params != null && def.params !== '') {
         paramStr = String(def.params);
       }
@@ -1210,16 +1249,36 @@ export class WialonLiveService {
       /* use auto link type */
     }
 
-    return withWialonClient(credentials, async (client) =>
-      client.request('unit/exec_cmd', {
-        itemId: unitId,
-        commandName,
-        linkType,
-        param: paramStr,
-        timeout: 60,
-        flags: 0,
-      })
+    const linkAttempts = Array.from(
+      new Set([linkType, defLink, '', 'tcp', 'udp', 'gsm', 'vrt', 'virtual'].filter((v) => v != null)),
     );
+
+    let lastErr: Error | null = null;
+    for (const lt of linkAttempts) {
+      try {
+        return await withWialonClient(credentials, async (client) =>
+          client.request('unit/exec_cmd', {
+            itemId: unitId,
+            commandName,
+            linkType: lt,
+            param: paramStr,
+            timeout: 60,
+            flags: 0,
+          }),
+        );
+      } catch (err) {
+        lastErr = err as Error;
+        const msg = lastErr.message || '';
+        if (/invalid session|invalid or expired token|authorization/i.test(msg)) throw lastErr;
+        if (!/access denied|invalid input|error performing/i.test(msg)) throw lastErr;
+      }
+    }
+
+    const hint =
+      /access denied/i.test(lastErr?.message || '')
+        ? ' Wialon denied execute rights for this session. In Admin → Wialon Center, set Operate As to the client account admin user, or grant “Execute commands” on the unit for the mother token.'
+        : '';
+    throw new Error(`${lastErr?.message || 'Command failed'}.${hint}`.replace(/\.\./g, '.'));
   }
 
   /** Fetch unit icon PNG bytes from Wialon hosting (uses active session). */

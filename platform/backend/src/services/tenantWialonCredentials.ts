@@ -39,11 +39,13 @@ export async function loadTenantWialonCreds(tenantId: string): Promise<WialonCre
   const { rows } = await query<{
     credentials_encrypted: string;
     wialon_resource_id: number | null;
+    wialon_operate_as: number | string | null;
     wialon_mother_account_id: string | null;
     inherits_platform_credentials: boolean;
     is_active: boolean;
   }>(
-    `SELECT credentials_encrypted, wialon_resource_id, wialon_mother_account_id, inherits_platform_credentials, is_active
+    `SELECT credentials_encrypted, wialon_resource_id, wialon_operate_as, wialon_mother_account_id,
+            inherits_platform_credentials, is_active
      FROM data_sources WHERE tenant_id = $1 AND source_type = 'wialon'`,
     [tenantId]
   );
@@ -59,10 +61,19 @@ export async function loadTenantWialonCreds(tenantId: string): Promise<WialonCre
   }
 
   const accountId = resolveAccountId(stored, rows[0].wialon_resource_id);
-  const operateAs =
+
+  // Prefer encrypted blob, then the dedicated column set at link time.
+  const fromBlob =
     stored.operateAs !== undefined && stored.operateAs !== '' && stored.operateAs !== null
       ? (stored.operateAs as string | number)
       : undefined;
+  const fromCol =
+    rows[0].wialon_operate_as !== undefined &&
+    rows[0].wialon_operate_as !== null &&
+    String(rows[0].wialon_operate_as).trim() !== ''
+      ? rows[0].wialon_operate_as
+      : undefined;
+  const operateAs = fromBlob ?? fromCol;
 
   if (rows[0].inherits_platform_credentials || await PlatformIntegrationService.isWialonConfigured()) {
     const motherId = rows[0].wialon_mother_account_id || (await WialonMotherAccountService.getDefaultId());
@@ -72,7 +83,7 @@ export async function loadTenantWialonCreds(tenantId: string): Promise<WialonCre
     return {
       ...platform,
       accountId: accountId !== undefined ? accountId : platform.accountId,
-      operateAs,
+      operateAs: operateAs !== undefined ? operateAs : platform.operateAs,
     };
   }
 
@@ -85,6 +96,9 @@ export async function loadTenantWialonCreds(tenantId: string): Promise<WialonCre
   const creds = parseWialonCredsFromBody(stored);
   if (!creds.accountId && rows[0].wialon_resource_id) {
     creds.accountId = rows[0].wialon_resource_id;
+  }
+  if (creds.operateAs === undefined && operateAs !== undefined) {
+    creds.operateAs = operateAs;
   }
   return creds;
 }

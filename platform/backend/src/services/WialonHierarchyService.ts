@@ -101,6 +101,35 @@ async function searchAll(
   return all;
 }
 
+/**
+ * Per-account active unit counts via billing/accounttree search.
+ * bact on a flat mother search is often missing or points only at the mother —
+ * so the tree would show "0 active" on every client. This matches how account
+ * detail already counts units.
+ */
+async function fillAccountUnitCounts(
+  client: WialonClient,
+  accounts: WialonAccountNode[],
+  concurrency = 5,
+): Promise<void> {
+  if (!accounts.length) return;
+  let cursor = 0;
+  async function worker() {
+    while (cursor < accounts.length) {
+      const idx = cursor++;
+      const acct = accounts[idx];
+      try {
+        const units = await searchUnitsForAccount(client, acct.id, 10_000);
+        acct.unitCount = units.length;
+      } catch {
+        if (acct.unitCount == null) acct.unitCount = 0;
+      }
+    }
+  }
+  const n = Math.min(concurrency, accounts.length);
+  await Promise.all(Array.from({ length: n }, () => worker()));
+}
+
 export class WialonHierarchyService {
   static async probe(credentials: WialonCredentialsInput): Promise<WialonProbeResult> {
     const client = new WialonClient({
@@ -236,15 +265,31 @@ export class WialonHierarchyService {
           );
       const units = filterActiveWialonUnits(rawUnits);
 
+      // Fast bact attribution (works when Wialon returns billing ids)
       const unitCountByAccount = new Map<number, number>();
       for (const u of units) {
-        if (u.bact) {
-          unitCountByAccount.set(u.bact, (unitCountByAccount.get(u.bact) || 0) + 1);
+        const bact = Number(u.bact);
+        if (Number.isFinite(bact) && bact > 0) {
+          unitCountByAccount.set(bact, (unitCountByAccount.get(bact) || 0) + 1);
         }
       }
       for (const acct of accounts) {
         acct.unitCount = unitCountByAccount.get(acct.id) ?? 0;
         acct.userCount = scopedUsers.filter((un) => un.accountId === acct.id).length;
+      }
+
+      // When bact is missing/wrong, every client shows 0 while mother totals are fine.
+      // Fall back to per-account billing/accounttree search (same as account detail).
+      const attributed = accounts.reduce((s, a) => s + (a.unitCount || 0), 0);
+      const needAccurate =
+        accounts.length > 0 &&
+        units.length > 0 &&
+        (attributed === 0 || attributed < Math.floor(units.length * 0.3));
+      if (needAccurate || !Number.isNaN(scopedAccountId)) {
+        const targets = !Number.isNaN(scopedAccountId)
+          ? accounts.filter((a) => a.id === scopedAccountId)
+          : accounts;
+        await fillAccountUnitCounts(client, targets.length ? targets : accounts);
       }
 
       const displayUsers = !Number.isNaN(scopedAccountId) ? scopedUsers : userNodes;
@@ -284,12 +329,21 @@ export class WialonHierarchyService {
 
       const accountTier = tierFromProbe(sessionUser, accounts.length, dealerRights);
 
+      // Prefer sum of account tree counts when we filled them; else flat search total
+      const treeUnitSum = accounts.reduce((s, a) => s + (a.unitCount || 0), 0);
+      const unitTotal =
+        !Number.isNaN(scopedAccountId)
+          ? units.length
+          : treeUnitSum > 0
+            ? treeUnitSum
+            : units.length;
+
       return {
         sessionUser,
         accountTier,
         dealerRights,
         counts: {
-          units: units.length,
+          units: unitTotal,
           accounts: accounts.length,
           users: displayUsers.length,
           resources: resources.length,
