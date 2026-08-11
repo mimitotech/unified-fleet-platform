@@ -8,6 +8,7 @@ import { authMiddleware } from '../middleware/auth.js';
 import { tenantMiddleware, requireTenant, type TenantRequest } from '../middleware/tenant.js';
 import { getAllowedModules } from '../middleware/rbac.js';
 import { success, error } from '../utils/response.js';
+import { assertStrongPassword, generateStrongPassword } from '../utils/passwordPolicy.js';
 import { AssetOrchestrator } from '../orchestrators/AssetOrchestrator.js';
 import { AlertOrchestrator } from '../orchestrators/AlertOrchestrator.js';
 import { DashboardOrchestrator } from '../orchestrators/DashboardOrchestrator.js';
@@ -235,7 +236,15 @@ router.post('/users', requireTenant, async (req: TenantRequest, res) => {
   const userRole = role || 'viewer';
   if (!isValidTenantRole(userRole)) return error(res, 'Invalid role');
 
-  const temporaryPassword = password || crypto.randomBytes(8).toString('hex');
+  const explicitPassword = password != null ? String(password) : '';
+  const temporaryPassword = explicitPassword.trim()
+    ? explicitPassword
+    : generateStrongPassword({ length: 16 });
+  try {
+    assertStrongPassword(temporaryPassword);
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
   const hash = await bcrypt.hash(temporaryPassword, 10);
   // Tenant admins are unrestricted. Everyone else gets an explicit allowlist
   // (default empty = see no alerts until the admin ticks types).
@@ -400,7 +409,15 @@ router.post('/users/:userId/reset-password', requireTenant, async (req: TenantRe
   if (userId === req.user?.id) {
     return error(res, 'Use the change password form in Account to update your own password');
   }
-  const temporaryPassword = (req.body?.password as string) || crypto.randomBytes(8).toString('hex');
+  const explicitPassword = req.body?.password != null ? String(req.body.password) : '';
+  const temporaryPassword = explicitPassword.trim()
+    ? explicitPassword
+    : generateStrongPassword({ length: 16 });
+  try {
+    assertStrongPassword(temporaryPassword);
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
   const hash = await bcrypt.hash(temporaryPassword, 10);
   const { rows } = await query(
     `UPDATE users SET password_hash = $3, force_password_change = true, updated_at = NOW()

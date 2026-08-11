@@ -18,6 +18,8 @@ import { postLoginPath } from '@/lib/authRedirect';
 import { cn } from '@/lib/utils';
 import { api, authApi } from '@/lib/api';
 import { resetToPlatformBranding } from '@/lib/tenantBrandingCache';
+import { isStrongPassword } from '@/lib/passwordPolicy';
+import { PasswordStrengthIndicator } from '@/components/shared/PasswordStrengthIndicator';
 
 type Slide = {
   id: string;
@@ -346,6 +348,10 @@ export default function Login() {
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isStrongPassword(newPassword)) {
+      notify.error('Password too weak', 'Use at least 8 characters with uppercase, lowercase, number, and symbol.');
+      return;
+    }
     if (newPassword !== confirmPassword) {
       notify.error('Passwords do not match');
       return;
@@ -598,6 +604,9 @@ export default function Login() {
                         autoFocus
                         className={fieldClass}
                       />
+                      <div className="mt-2">
+                        <PasswordStrengthIndicator password={newPassword} />
+                      </div>
                     </div>
                     <div className="space-y-1">
                       <Label className="text-xs font-bold text-primary">Confirm password</Label>
@@ -617,6 +626,7 @@ export default function Login() {
                       className="h-10 w-full rounded-lg bg-primary text-sm font-bold text-white shadow-md shadow-primary/25 hover:bg-primary/90"
                       loading={loading}
                       loadingText="Saving..."
+                      disabled={!newPassword || !confirmPassword || newPassword !== confirmPassword || !isStrongPassword(newPassword)}
                     >
                       <KeyRound className="mr-1.5 h-4 w-4" />
                       Save new password

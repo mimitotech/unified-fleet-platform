@@ -25,6 +25,7 @@ import {
 } from '../utils/userAccess.js';
 import { publicUrlOrPath } from '../utils/publicUrl.js';
 import { normalizeUploadPath } from '../utils/normalizeUploadPath.js';
+import { assertStrongPassword, generateStrongPassword } from '../utils/passwordPolicy.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -371,7 +372,16 @@ router.post('/users/:id/reset-password', async (req: AuthRequest, res) => {
   try {
     const userId = String(req.params.id);
     await assertCanManageClientUser(req, userId);
-    const newPassword = req.body.password || crypto.randomBytes(8).toString('hex');
+    const explicitPassword = req.body.password != null ? String(req.body.password) : '';
+    const newPassword = explicitPassword.trim()
+      ? explicitPassword
+      : generateStrongPassword({ length: 16 });
+
+    try {
+      assertStrongPassword(newPassword);
+    } catch (e) {
+      return error(res, (e as Error).message);
+    }
     const hash = await bcrypt.hash(newPassword, 10);
     await query(
       `UPDATE users SET password_hash = $2, force_password_change = true, updated_at = NOW() WHERE id = $1`,
@@ -423,9 +433,18 @@ router.get('/system-users', requireSuperAdmin, async (_req, res) => {
 
 router.post('/system-users', requireSuperAdmin, async (req: AuthRequest, res) => {
   const { email, password, fullName, role } = req.body;
-  if (!email || !password) return error(res, 'email and password required');
+  if (!email) return error(res, 'email required');
   const staffRole = role === 'super_admin' ? 'super_admin' : 'platform_admin';
-  const hash = await bcrypt.hash(password, 10);
+  const explicitPassword = password != null ? String(password) : '';
+  const finalPassword = explicitPassword.trim()
+    ? explicitPassword
+    : generateStrongPassword({ length: 16 });
+  try {
+    assertStrongPassword(finalPassword);
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+  const hash = await bcrypt.hash(finalPassword, 10);
   const { rows } = await query(
     `INSERT INTO users (tenant_id, email, password_hash, full_name, role)
      VALUES (NULL, $1, $2, $3, $4)
@@ -461,7 +480,15 @@ router.patch('/system-users/:id', requireSuperAdmin, async (req: AuthRequest, re
 });
 
 router.post('/system-users/:id/reset-password', requireSuperAdmin, async (req: AuthRequest, res) => {
-  const newPassword = req.body.password || crypto.randomBytes(8).toString('hex');
+  const explicitPassword = req.body.password != null ? String(req.body.password) : '';
+  const newPassword = explicitPassword.trim()
+    ? explicitPassword
+    : generateStrongPassword({ length: 16 });
+  try {
+    assertStrongPassword(newPassword);
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
   const hash = await bcrypt.hash(newPassword, 10);
   const { rows } = await query(
     `UPDATE users SET password_hash = $2, updated_at = NOW()
@@ -1135,10 +1162,23 @@ router.get('/tenants/:id/users/:userId', async (req, res) => {
 router.post('/tenants/:id/users', async (req: AuthRequest, res) => {
   const { email, password, fullName, role, modules } = req.body;
   if (!email || !String(email).trim()) return error(res, 'email required');
-  if (!password || String(password).length < 8) {
-    return error(res, 'password required (min 8 characters)');
+  const explicitPassword = password != null ? String(password) : '';
+  let temporaryPassword: string | undefined;
+  const finalPassword = explicitPassword.trim()
+    ? explicitPassword
+    : (() => {
+        const pw = generateStrongPassword({ length: 16 });
+        temporaryPassword = pw;
+        return pw;
+      })();
+
+  try {
+    assertStrongPassword(finalPassword);
+  } catch (e) {
+    return error(res, (e as Error).message);
   }
-  const hash = await bcrypt.hash(String(password), 10);
+
+  const hash = await bcrypt.hash(finalPassword, 10);
   const { rows } = await query(
     `INSERT INTO users (tenant_id, email, password_hash, full_name, role)
      VALUES ($1, $2, $3, $4, $5) RETURNING id, email, full_name, role, is_active`,
@@ -1161,7 +1201,7 @@ router.post('/tenants/:id/users', async (req: AuthRequest, res) => {
     resourceId: rows[0].id as string,
     details: { email },
   });
-  return success(res, rows[0], 201);
+  return success(res, { ...rows[0], temporaryPassword }, 201);
 });
 
 router.get('/tenants/:id/wialon/users', async (req, res) => {

@@ -6,6 +6,7 @@ import { WialonHierarchyService } from './WialonHierarchyService.js';
 import { PlatformIntegrationService } from './PlatformIntegrationService.js';
 import { loadTenantWialonCreds } from './tenantWialonCredentials.js';
 import { upsertWialonUnit } from './wialonUnitSync.js';
+import { generateStrongPassword } from '../utils/passwordPolicy.js';
 
 export interface WialonProvisionedUser {
   id: string;
@@ -75,7 +76,7 @@ export class WialonUserProvisionService {
       const login = wu.name.trim();
       const email = buildEmail(login, wu.id, tenantSlug, wu.email);
       const role = 'operator';
-      const tempPassword = crypto.randomBytes(9).toString('base64url');
+      const tempPassword = generateStrongPassword({ length: 16 });
       const passwordHash = await bcrypt.hash(tempPassword, 10);
 
       const { rows: byWialon } = await query<{ id: string }>(

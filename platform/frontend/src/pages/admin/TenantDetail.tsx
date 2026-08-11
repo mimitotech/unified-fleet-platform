@@ -26,6 +26,8 @@ import {
 } from '@/components/ui/table';
 import { ExternalLink, RefreshCw, FileSpreadsheet, Trash2, Upload } from 'lucide-react';
 import { PasswordInput } from '@/components/shared/PasswordInput';
+import { PasswordStrengthIndicator } from '@/components/shared/PasswordStrengthIndicator';
+import { isStrongPassword } from '@/lib/passwordPolicy';
 import { useAuth } from '@/providers/AuthProvider';
 import { isSuperAdmin, ROLE_LABELS } from '@/lib/systemRoles';
 import { INTEGRATION_GUIDE, type IntegrationSource } from '@/lib/integrations';
@@ -1444,7 +1446,15 @@ export default function TenantDetail() {
                 </div>
                 <div>
                   <Label>Password</Label>
-                  <PasswordInput placeholder="Password" value={newUser.password} onChange={(e) => setNewUser({ ...newUser, password: e.target.value })} />
+                  <PasswordInput
+                    placeholder="Password"
+                    value={newUser.password}
+                    onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                    minLength={8}
+                  />
+                  <div className="mt-2">
+                    <PasswordStrengthIndicator password={newUser.password} />
+                  </div>
                 </div>
               </div>
               <UserAccessEditor
@@ -1462,7 +1472,12 @@ export default function TenantDetail() {
               />
               <Button
                 onClick={() => createUser.mutate()}
-                disabled={!newUser.email || !newUser.password || createUser.isPending}
+                disabled={
+                  !newUser.email ||
+                  !newUser.password ||
+                  !isStrongPassword(newUser.password) ||
+                  createUser.isPending
+                }
               >
                 Create User
               </Button>

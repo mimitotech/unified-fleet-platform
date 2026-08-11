@@ -6,6 +6,7 @@ import { clientApi } from '@/lib/api';
 import { useAuth } from '@/providers/AuthProvider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/shared/PasswordInput';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -27,6 +28,8 @@ import { ChangePasswordForm } from '@/components/shared/ChangePasswordForm';
 import { ROLE_LABELS, TENANT_ROLES } from '@/lib/systemRoles';
 import { notify } from '@/lib/notify';
 import { LoadingButton } from '@/components/shared/LoadingButton';
+import { isStrongPassword } from '@/lib/passwordPolicy';
+import { PasswordStrengthIndicator } from '@/components/shared/PasswordStrengthIndicator';
 import {
   UserAlertTypesPicker,
   roleBypassesAlertAcl,
@@ -353,13 +356,19 @@ export default function Settings() {
                 Password{' '}
                 <span className="text-muted-foreground font-normal">(optional — leave blank to auto-generate)</span>
               </Label>
-              <Input
-                type="text"
+              <PasswordInput
                 value={createForm.password}
                 onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
                 placeholder="Auto-generate"
                 autoComplete="off"
               />
+              <div className="mt-2">
+                <PasswordStrengthIndicator
+                  password={createForm.password}
+                  optional
+                  label="Strength requirements"
+                />
+              </div>
             </div>
             <UserAlertTypesPicker
               role={createForm.role}
@@ -374,7 +383,10 @@ export default function Settings() {
               onClick={() => createMutation.mutate()}
               loading={createMutation.isPending}
               loadingText="Creating..."
-              disabled={!createForm.email.trim()}
+              disabled={
+                !createForm.email.trim() ||
+                (createForm.password.trim().length > 0 && !isStrongPassword(createForm.password))
+              }
             >
               Create user
             </LoadingButton>

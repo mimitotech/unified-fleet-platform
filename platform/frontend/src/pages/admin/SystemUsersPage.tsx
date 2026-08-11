@@ -18,6 +18,8 @@ import { ROLE_LABELS } from '@/lib/systemRoles';
 import { notify } from '@/lib/notify';
 import { SystemUserEditDialog, type SystemUserRow } from '@/components/admin/SystemUserEditDialog';
 import { Pencil } from 'lucide-react';
+import { isStrongPassword } from '@/lib/passwordPolicy';
+import { PasswordStrengthIndicator } from '@/components/shared/PasswordStrengthIndicator';
 
 export default function SystemUsersPage() {
   const qc = useQueryClient();
@@ -99,7 +101,11 @@ export default function SystemUsersPage() {
                 value={form.password}
                 onChange={(e) => setForm({ ...form, password: e.target.value })}
                 placeholder="Strong password"
+                minLength={8}
               />
+              <div className="mt-2">
+                <PasswordStrengthIndicator password={form.password} />
+              </div>
             </div>
             <div>
               <Label>Role</Label>
@@ -114,7 +120,12 @@ export default function SystemUsersPage() {
             <Button
               className="w-full"
               onClick={() => createUser.mutate()}
-              disabled={!form.email || !form.password || createUser.isPending}
+              disabled={
+                !form.email ||
+                !form.password ||
+                !isStrongPassword(form.password) ||
+                createUser.isPending
+              }
             >
               Create system user
             </Button>

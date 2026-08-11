@@ -5,6 +5,8 @@ import { LoadingButton } from '@/components/shared/LoadingButton';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { notify } from '@/lib/notify';
+import { isStrongPassword } from '@/lib/passwordPolicy';
+import { PasswordStrengthIndicator } from '@/components/shared/PasswordStrengthIndicator';
 
 interface ChangePasswordFormProps {
   className?: string;
@@ -20,8 +22,8 @@ export function ChangePasswordForm({ className, onSuccess }: ChangePasswordFormP
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (newPassword.length < 8) {
-      notify.error('Password too short', 'Use at least 8 characters');
+    if (!isStrongPassword(newPassword)) {
+      notify.error('Password too weak', 'Use at least 8 characters, with uppercase, lowercase, number, and symbol.');
       return;
     }
 
@@ -77,6 +79,9 @@ export function ChangePasswordForm({ className, onSuccess }: ChangePasswordFormP
               autoComplete="new-password"
               placeholder="At least 8 characters"
             />
+            <div className="mt-2">
+              <PasswordStrengthIndicator password={newPassword} />
+            </div>
           </div>
           <div>
             <Label htmlFor="confirm-password">Confirm new password</Label>
@@ -91,7 +96,12 @@ export function ChangePasswordForm({ className, onSuccess }: ChangePasswordFormP
             />
           </div>
           <div className="md:col-span-2">
-            <LoadingButton type="submit" loading={loading} loadingText="Updating...">
+            <LoadingButton
+              type="submit"
+              loading={loading}
+              loadingText="Updating..."
+              disabled={!newPassword || !confirmPassword || newPassword !== confirmPassword || !isStrongPassword(newPassword)}
+            >
               Update password
             </LoadingButton>
           </div>

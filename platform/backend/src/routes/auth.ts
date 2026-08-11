@@ -7,10 +7,9 @@ import { isSystemRole } from '../utils/systemRoles.js';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 import { AuditService } from '../services/AuditService.js';
 import { getJwtSecret } from '../config/env.js';
+import { assertStrongPassword } from '../utils/passwordPolicy.js';
 
 const router = Router();
-
-const MIN_PASSWORD_LENGTH = 8;
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
@@ -152,8 +151,10 @@ router.post('/change-password', authMiddleware, async (req: AuthRequest, res) =>
     return error(res, 'Current password and new password are required');
   }
 
-  if (newPassword.length < MIN_PASSWORD_LENGTH) {
-    return error(res, `New password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+  try {
+    assertStrongPassword(newPassword);
+  } catch (e) {
+    return error(res, (e as Error).message);
   }
 
   if (currentPassword === newPassword) {
@@ -309,8 +310,10 @@ router.post('/reset-password', async (req, res) => {
   if (!newPassword || !confirmPassword) {
     return error(res, 'New password and confirmation are required');
   }
-  if (newPassword.length < MIN_PASSWORD_LENGTH) {
-    return error(res, `Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+  try {
+    assertStrongPassword(newPassword);
+  } catch (e) {
+    return error(res, (e as Error).message);
   }
   if (newPassword !== confirmPassword) {
     return error(res, 'Passwords do not match');

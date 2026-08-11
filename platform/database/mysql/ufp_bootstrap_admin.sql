@@ -11,7 +11,7 @@ WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE slug = 'mimito');
 -- Create admin if missing (does not overwrite an existing password)
 INSERT INTO users (id, tenant_id, email, password_hash, full_name, role, is_active)
 SELECT UUID(), t.id, 'admin@mimitotracking.co.ug',
-  '$2b$10$zI3rDQYQNN8DdTZS1c90Ceut7.wgj.B38coWlgg/nqoM0daFWsQKG',
+  '$2b$10$pmsUm9HotpmKMbqCsJAYM.5PH71qnG5Abw.g54smE5usnFYjwBWdy',
   'Platform Admin', 'super_admin', 1
 FROM tenants t
 WHERE t.slug = 'mimito'
@@ -30,7 +30,7 @@ WHERE t.slug = 'mimito'
 
 -- OPTIONAL recovery only (uncomment if you intentionally need to reset the admin password):
 -- UPDATE users
--- SET password_hash = '$2b$10$zI3rDQYQNN8DdTZS1c90Ceut7.wgj.B38coWlgg/nqoM0daFWsQKG',
+-- SET password_hash = '$2b$10$pmsUm9HotpmKMbqCsJAYM.5PH71qnG5Abw.g54smE5usnFYjwBWdy',
 --     full_name = 'Platform Admin',
 --     role = 'super_admin',
 --     is_active = 1,
