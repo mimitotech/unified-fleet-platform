@@ -29,6 +29,26 @@ export interface WialonClientConfig {
   operateAs?: string | number;
 }
 
+const WIALON_FETCH_TIMEOUT_MS = Math.min(
+  60_000,
+  Math.max(8_000, parseInt(process.env.WIALON_FETCH_TIMEOUT_MS || '25000', 10) || 25_000),
+);
+
+async function wialonFetch(url: string, timeoutMs = WIALON_FETCH_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } catch (err) {
+    if ((err as Error)?.name === 'AbortError') {
+      throw new Error(`Wialon request timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class WialonClient {
   private baseUrl: string;
   private token: string;
@@ -79,7 +99,7 @@ export class WialonClient {
         svc: 'token/login',
         params: JSON.stringify(loginParams),
       });
-      const res = await fetch(`${this.baseUrl}?${params}`);
+      const res = await wialonFetch(`${this.baseUrl}?${params}`);
       if (!res.ok) {
         throw new Error(`Wialon login HTTP ${res.status} — check WIALON_API_URL (${this.baseUrl})`);
       }
@@ -115,22 +135,25 @@ export class WialonClient {
     });
   }
 
-  async request<T>(svc: string, params: Record<string, unknown>): Promise<T> {
+  async request<T>(svc: string, params: Record<string, unknown>, _retried = false): Promise<T> {
     if (!this.sessionId) await this.connect();
     const urlParams = new URLSearchParams({
       svc,
       params: JSON.stringify(params),
       sid: this.sessionId!,
     });
-    const res = await fetch(`${this.baseUrl}?${urlParams}`);
+    const res = await wialonFetch(`${this.baseUrl}?${urlParams}`);
     if (!res.ok) {
       throw new Error(`Wialon API HTTP ${res.status} for ${svc}`);
     }
     const data = await res.json();
     if (data.error === 1) {
+      if (_retried) {
+        throw new Error(`Wialon API error: ${formatWialonError(1, data.reason)}`);
+      }
       this.sessionId = null;
       await this.connect();
-      return this.request(svc, params);
+      return this.request(svc, params, true);
     }
     if (data.error) {
       throw new Error(`Wialon API error: ${formatWialonError(data.error, data.reason)}`);
@@ -153,7 +176,7 @@ export class WialonClient {
       params: JSON.stringify(params),
       sid: this.sessionId!,
     });
-    const res = await fetch(`${this.baseUrl}?${urlParams}`);
+    const res = await wialonFetch(`${this.baseUrl}?${urlParams}`);
     if (!res.ok) {
       throw new Error(`Wialon API HTTP ${res.status} for ${svc}`);
     }
@@ -183,7 +206,7 @@ export class WialonClient {
   }
 
   /** Keep session alive (Wialon default idle timeout ~5 min). */
-  startKeepAlive(intervalMs = 2000): void {
+  startKeepAlive(intervalMs = 45_000): void {
     this.stopKeepAlive();
     this.keepAliveTimer = setInterval(() => {
       if (!this.sessionId) return;
@@ -207,7 +230,7 @@ export class WialonClient {
       params: JSON.stringify({}),
       sid: this.sessionId,
     });
-    const res = await fetch(`${this.baseUrl}?${urlParams}`);
+    const res = await wialonFetch(`${this.baseUrl}?${urlParams}`, 15_000);
     if (!res.ok) return;
     const data = await res.json();
     if (data.error === 1) {
@@ -220,7 +243,12 @@ export class WialonClient {
     this.stopKeepAlive();
     if (!this.sessionId) return;
     try {
-      await this.request('core/logout', {});
+      const urlParams = new URLSearchParams({
+        svc: 'core/logout',
+        params: JSON.stringify({}),
+        sid: this.sessionId,
+      });
+      await wialonFetch(`${this.baseUrl}?${urlParams}`, 10_000);
     } catch {
       /* ignore */
     }

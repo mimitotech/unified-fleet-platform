@@ -1134,7 +1134,11 @@ router.get('/tenants/:id/users/:userId', async (req, res) => {
 
 router.post('/tenants/:id/users', async (req: AuthRequest, res) => {
   const { email, password, fullName, role, modules } = req.body;
-  const hash = await bcrypt.hash(password || 'changeme123', 10);
+  if (!email || !String(email).trim()) return error(res, 'email required');
+  if (!password || String(password).length < 8) {
+    return error(res, 'password required (min 8 characters)');
+  }
+  const hash = await bcrypt.hash(String(password), 10);
   const { rows } = await query(
     `INSERT INTO users (tenant_id, email, password_hash, full_name, role)
      VALUES ($1, $2, $3, $4, $5) RETURNING id, email, full_name, role, is_active`,

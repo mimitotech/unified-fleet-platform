@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react';
 import { MapSkeleton } from '@/components/app/MapSkeleton';
+import { MapErrorBoundary } from '@/components/shared/MapErrorBoundary';
 import type { MapStatusPoint } from '@/components/app/UnifiedMap';
 
 const UnifiedMapLazy = lazy(() =>
@@ -30,18 +31,20 @@ export function LazyUnifiedMap({
   showGeofences,
 }: LazyUnifiedMapProps) {
   return (
-    <Suspense fallback={<MapSkeleton height={height} />}>
-      <UnifiedMapLazy
-        statuses={statuses}
-        height={height}
-        sessionKey={sessionKey}
-        selectedUnitId={selectedUnitId}
-        onUnitSelect={onUnitSelect}
-        detailPanel={detailPanel}
-        fitSignal={fitSignal}
-        showFitControl={showFitControl}
-        showGeofences={showGeofences}
-      />
-    </Suspense>
+    <MapErrorBoundary>
+      <Suspense fallback={<MapSkeleton height={height} />}>
+        <UnifiedMapLazy
+          statuses={statuses}
+          height={height}
+          sessionKey={sessionKey}
+          selectedUnitId={selectedUnitId}
+          onUnitSelect={onUnitSelect}
+          detailPanel={detailPanel}
+          fitSignal={fitSignal}
+          showFitControl={showFitControl}
+          showGeofences={showGeofences}
+        />
+      </Suspense>
+    </MapErrorBoundary>
   );
 }

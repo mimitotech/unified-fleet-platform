@@ -1,5 +1,5 @@
 import mysql, { type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from 'mysql2/promise';
-import { randomUUID, createHash } from 'crypto';
+import { randomUUID } from 'crypto';
 import { existsSync } from 'fs';
 
 export type QueryResultRow = Record<string, unknown>;
@@ -111,12 +111,9 @@ async function tryConnect(label: string, opts: mysql.PoolOptions): Promise<Pool>
 
 async function createWorkingPool(): Promise<Pool> {
   const parts = readParts();
-  const fp = createHash('sha256').update(parts.password).digest('hex').slice(0, 8);
   console.log('[mams-db] credentials', {
     user: parts.user,
     database: parts.database,
-    passwordLength: parts.password.length,
-    passwordFingerprint: fp,
   });
 
   const base = {
@@ -153,7 +150,7 @@ async function createWorkingPool(): Promise<Pool> {
 
   console.error('[mams-db] all connection strategies failed:\n - ' + errors.join('\n - '));
   throw new Error(
-    `MySQL Access denied. passwordLength=${parts.password.length} fingerprint=${fp}. ` +
+    `MySQL Access denied for user ${parts.user} / database ${parts.database}. ` +
       `Open phpMyAdmin with the same user/password; re-save DB_PASSWORD in Hostinger; ` +
       `ensure user is assigned to database ${parts.database}.`
   );
@@ -442,11 +439,11 @@ async function executeRaw(
   return { rows: [], rowCount: header.affectedRows ?? 0, insertId: header.insertId };
 }
 
-async function queryWithConn(
+export async function queryWithConn<T extends QueryResultRow = QueryResultRow>(
   conn: ExecConn,
   text: string,
   params: unknown[] = []
-): Promise<QueryResult> {
+): Promise<QueryResult<T>> {
   const returningMatch = text.match(/\sRETURNING\s+([\s\S]+)$/i);
   const selectCols = returningMatch ? returningMatch[1].trim() : '*';
   let sql =
@@ -511,14 +508,14 @@ async function queryWithConn(
           conn,
           `SELECT ${selectCols === '*' ? '*' : selectCols} FROM ${table} WHERE \`${reselectCol}\` = $1`,
           [reselectVal]
-        );
+        ) as Promise<QueryResult<T>>;
       }
       if (execResult.insertId) {
         return executeRaw(
           conn,
           `SELECT ${selectCols === '*' ? '*' : selectCols} FROM ${table} WHERE id = $1`,
           [execResult.insertId]
-        );
+        ) as Promise<QueryResult<T>>;
       }
       return { rows: [], rowCount: 0 };
     }
@@ -533,11 +530,11 @@ async function queryWithConn(
         conn,
         `SELECT ${selectCols === '*' ? '*' : selectCols} FROM ${table} WHERE ${whereMatch[1]}`,
         bind
-      );
+      ) as Promise<QueryResult<T>>;
     }
   }
 
-  return executeRaw(conn, sql, bind);
+  return executeRaw(conn, sql, bind) as Promise<QueryResult<T>>;
 }
 
 export async function connectDatabase(): Promise<void> {

@@ -76,7 +76,10 @@ export async function resolveSmtpConfig(): Promise<SmtpConfig | null> {
   if (fromEnv) return fromEnv;
 
   const fromDb = await readSmtpConfigFromDb();
-  if (!fromDb?.host || !fromDb.user || !fromDb.password || !fromDb.fromEmail) return null;
+  const dbPassword = fromDb?.password || '';
+  // Ignore masked / placeholder passwords written for Admin UI display.
+  if (!fromDb?.host || !fromDb.user || !fromDb.fromEmail) return null;
+  if (!dbPassword || /^\*+$/.test(dbPassword) || dbPassword === 'CHANGE_ME') return null;
 
   const port = fromDb.port || 465;
   return {
@@ -84,13 +87,14 @@ export async function resolveSmtpConfig(): Promise<SmtpConfig | null> {
     port,
     secure: fromDb.secure ?? port === 465,
     user: fromDb.user,
-    password: fromDb.password,
+    password: dbPassword,
     fromEmail: fromDb.fromEmail,
     fromName: fromDb.fromName || 'MAMS',
   };
 }
 
 export function isSmtpConfigured(): boolean {
+  // Prefer env (source of truth on Hostinger). DB-only SMTP is resolved at send time.
   return Boolean(readSmtpConfigFromEnv());
 }
 
@@ -223,7 +227,7 @@ export async function sendAccountCredentialsEmail(opts: {
   });
 }
 
-/** Persist env SMTP into system_settings so Admin → Email UI shows live values (password masked optional). */
+/** Persist env SMTP into system_settings so Admin → Email UI shows live values (password masked). */
 export async function syncEmailSettingsFromEnv(): Promise<void> {
   const cfg = readSmtpConfigFromEnv();
   if (!cfg) return;
@@ -233,7 +237,8 @@ export async function syncEmailSettingsFromEnv(): Promise<void> {
     smtpPort: cfg.port,
     smtpSecure: cfg.secure,
     smtpUser: cfg.user,
-    smtpPassword: cfg.password,
+    // Never persist real SMTP password in DB — env remains source of truth.
+    smtpPassword: cfg.password ? '********' : '',
     fromEmail: cfg.fromEmail,
     fromName: cfg.fromName,
     imapHost: strip(process.env.IMAP_HOST) || 'imap.hostinger.com',
@@ -250,6 +255,10 @@ export async function syncEmailSettingsFromEnv(): Promise<void> {
     port: cfg.port,
     from: cfg.fromEmail,
   });
+}
+
+export async function isSmtpConfiguredAsync(): Promise<boolean> {
+  return Boolean(await resolveSmtpConfig());
 }
 
 export async function verifySmtpConnection(): Promise<{ ok: boolean; message: string }> {

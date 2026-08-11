@@ -1,16 +1,12 @@
 import type { Request, Response, NextFunction } from 'express';
 import { logger } from '../config/logger.js';
 
-/** Surface actionable DB errors even in production (Hostinger hides stacks). */
+/** Surface safe messages to clients; keep DB detail in logs only. */
 function publicMessage(err: Error): string {
-  const msg = err.message || 'Internal server error';
-  if (/ER_|access denied|Duplicate entry|syntax|Unknown column|doesn't exist|bind parameters/i.test(msg)) {
-    return msg.slice(0, 300);
-  }
   if (process.env.NODE_ENV === 'production') {
     return 'Internal server error';
   }
-  return msg;
+  return (err.message || 'Internal server error').slice(0, 300);
 }
 
 export function errorHandler(err: Error, _req: Request, res: Response, _next: NextFunction) {

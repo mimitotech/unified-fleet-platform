@@ -1,6 +1,6 @@
 /**
  * Apply production indexes / alert external_id shape on boot.
- * Idempotent: ignores duplicate-key / already-modified errors.
+ * Idempotent: skips heavy work when unique index already exists.
  */
 
 import { query } from '../config/database.js';
@@ -29,28 +29,70 @@ async function trySql(label: string, sql: string, params: unknown[] = []): Promi
   }
 }
 
+async function indexExists(table: string, indexName: string): Promise<boolean> {
+  try {
+    const { rows } = await query<{ c: number | string }>(
+      `SELECT COUNT(*) AS c
+       FROM information_schema.STATISTICS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = $1
+         AND INDEX_NAME = $2`,
+      [table, indexName],
+    );
+    return Number(rows[0]?.c) > 0;
+  } catch {
+    return false;
+  }
+}
+
 export async function ensureProductionHardening(): Promise<void> {
   await trySql(
     'alerts.external_id VARCHAR(191)',
     `ALTER TABLE alerts MODIFY COLUMN external_id VARCHAR(191) NULL`,
   );
 
-  // Dedup before unique (best-effort; ignore if none)
-  await trySql(
-    'alerts dedupe external_id',
-    `DELETE a FROM alerts a
-     INNER JOIN alerts b
-       ON a.tenant_id = b.tenant_id
-      AND a.source_type = b.source_type
-      AND a.external_id IS NOT NULL
-      AND a.external_id = b.external_id
-      AND a.id > b.id`,
-  );
+  const hasUnique = await indexExists('alerts', 'uq_alerts_tenant_source_external');
+  if (!hasUnique) {
+    // Batched dedupe — never full-table self-join on boot at scale
+    for (let i = 0; i < 25; i++) {
+      try {
+        const { rowCount } = await query(
+          `DELETE FROM alerts
+           WHERE id IN (
+             SELECT id FROM (
+               SELECT a.id
+               FROM alerts a
+               INNER JOIN (
+                 SELECT tenant_id, source_type, external_id, MIN(id) AS keep_id
+                 FROM alerts
+                 WHERE external_id IS NOT NULL
+                 GROUP BY tenant_id, source_type, external_id
+                 HAVING COUNT(*) > 1
+               ) d
+                 ON a.tenant_id = d.tenant_id
+                AND a.source_type = d.source_type
+                AND a.external_id = d.external_id
+                AND a.id <> d.keep_id
+               LIMIT 500
+             ) doomed
+           )`,
+        );
+        if (!rowCount) break;
+        logger.info(`[db-harden] alerts dedupe batch removed ${rowCount}`);
+      } catch (err) {
+        logger.warn(`[db-harden] alerts dedupe batch failed: ${(err as Error).message.slice(0, 200)}`);
+        break;
+      }
+    }
 
-  await trySql(
-    'uq_alerts_tenant_source_external',
-    `ALTER TABLE alerts ADD UNIQUE KEY uq_alerts_tenant_source_external (tenant_id, source_type, external_id)`,
-  );
+    await trySql(
+      'uq_alerts_tenant_source_external',
+      `ALTER TABLE alerts ADD UNIQUE KEY uq_alerts_tenant_source_external (tenant_id, source_type, external_id)`,
+    );
+  } else {
+    logger.debug('[db-harden] skip alerts unique — already present');
+  }
+
   await trySql(
     'idx_alerts_tenant_ack_time',
     `ALTER TABLE alerts ADD KEY idx_alerts_tenant_ack_time (tenant_id, acknowledged, occurred_at)`,

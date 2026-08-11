@@ -78,7 +78,7 @@ export default function AdminDashboard() {
     queryKey: ['adminDashboard'],
     queryFn: () => adminApi.getDashboard(),
     refetchInterval: POLL_MS,
-    refetchIntervalInBackground: true,
+    refetchIntervalInBackground: false,
   });
 
   const stats = data as Record<string, unknown> | undefined;

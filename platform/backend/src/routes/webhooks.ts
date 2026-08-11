@@ -10,8 +10,12 @@ router.post('/loconav/:tenantSlug', async (req, res) => {
   const signature = req.headers['x-loconav-signature'] as string || req.headers['x-signature'] as string || '';
   const secret = process.env.LOCONAV_WEBHOOK_SECRET || '';
 
-  const rawBody = JSON.stringify(req.body);
-  if (secret && signature && !WebhookHandler.verifyLocoNavSignature(rawBody, signature, secret)) {
+  // Fail closed in production when secret is not configured.
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      return error(res, 'Webhook secret not configured', 503);
+    }
+  } else if (!signature || !WebhookHandler.verifyLocoNavSignature(JSON.stringify(req.body), signature, secret)) {
     return error(res, 'Invalid signature', 401);
   }
 
@@ -27,8 +31,11 @@ router.post('/tracksolid/:tenantSlug', async (req, res) => {
   const signature = req.headers['x-tracksolid-signature'] as string || '';
   const secret = process.env.TRACKSOLID_WEBHOOK_SECRET || '';
 
-  const rawBody = JSON.stringify(req.body);
-  if (secret && signature && !WebhookHandler.verifyTrackSolidSignature(rawBody, signature, secret)) {
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      return error(res, 'Webhook secret not configured', 503);
+    }
+  } else if (!signature || !WebhookHandler.verifyTrackSolidSignature(JSON.stringify(req.body), signature, secret)) {
     return error(res, 'Invalid signature', 401);
   }
 

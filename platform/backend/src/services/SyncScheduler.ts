@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { query } from '../config/database.js';
+import { getPool, query, queryWithConn } from '../config/database.js';
 import { AssetOrchestrator } from '../orchestrators/AssetOrchestrator.js';
 import { AlertOrchestrator } from '../orchestrators/AlertOrchestrator.js';
 import { FuelSyncService } from './FuelSyncService.js';
@@ -35,30 +35,47 @@ export function getSyncSchedulerStatus() {
   };
 }
 
+/**
+ * Named MySQL locks are connection-scoped. Hold one pool connection for the
+ * entire critical section so GET_LOCK / work / RELEASE_LOCK share the same conn.
+ * On lock-API failure, skip work (do not run unlocked).
+ */
 async function withMysqlLock(name: string, work: () => Promise<void>): Promise<boolean> {
+  let conn;
   try {
-    const { rows } = await query<{ got: number | string }>(`SELECT GET_LOCK($1, 0) AS got`, [name]);
-    const got = Number(rows[0]?.got);
-    if (got !== 1) {
-      logger.debug(`[SyncScheduler] lock busy: ${name}`);
-      return false;
-    }
+    conn = await getPool().getConnection();
   } catch (err) {
-    logger.warn(`[SyncScheduler] GET_LOCK failed for ${name}`, err);
-    // Fall through without lock rather than skipping all sync forever
-    await work();
-    return true;
+    logger.warn(`[SyncScheduler] pool getConnection failed for ${name}`, err);
+    return false;
   }
 
   try {
-    await work();
-    return true;
-  } finally {
     try {
-      await query(`SELECT RELEASE_LOCK($1)`, [name]);
-    } catch {
-      /* ignore */
+      const { rows } = await queryWithConn<{ got: number | string }>(conn, `SELECT GET_LOCK($1, 0) AS got`, [
+        name,
+      ]);
+      const got = Number(rows[0]?.got);
+      if (got !== 1) {
+        logger.debug(`[SyncScheduler] lock busy: ${name}`);
+        return false;
+      }
+    } catch (err) {
+      logger.warn(`[SyncScheduler] GET_LOCK failed for ${name} — skip cycle`, err);
+      return false;
     }
+
+    try {
+      await work();
+      return true;
+    } finally {
+      try {
+        await queryWithConn(conn, `SELECT RELEASE_LOCK($1)`, [name]);
+      } catch {
+        /* ignore */
+      }
+    }
+  } finally {
+    conn.release();
   }
 }
 

@@ -38,7 +38,6 @@ export function FuelSelectedReportsPanel({
 }) {
   const lower = assetCategory === 'vehicle' ? 'fuel report' : 'fuel usage report';
   const filtered = reports.filter((r) => r.templateName.toLowerCase().includes(lower));
-  if (!filtered.length) return null;
 
   const [open, setOpen] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string>('');
@@ -57,6 +56,7 @@ export function FuelSelectedReportsPanel({
   } | null>(null);
 
   useEffect(() => {
+    if (!filtered.length) return;
     if (!selectedKey && filtered.length) {
       setSelectedKey(`${filtered[0].resourceId}:${filtered[0].templateId}`);
     }
@@ -126,6 +126,8 @@ export function FuelSelectedReportsPanel({
       objectKind: selectedReport.isGroupReport ? 'group' : 'unit',
     });
   };
+
+  if (!filtered.length) return null;
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>

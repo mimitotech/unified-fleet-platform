@@ -141,44 +141,48 @@ function legacyChecklistsFromSections(sections: unknown): { truck: unknown; trai
 
 router.get('/kpis', requireTenant, mod, async (req: TenantRequest, res) => {
   const { rows } = await query(
-    `WITH maint AS (
-       SELECT * FROM maintenance_logs WHERE tenant_id = $1 AND deleted_at IS NULL
-     ),
-     brk AS (
-       SELECT * FROM breakdown_reports WHERE tenant_id = $1 AND deleted_at IS NULL
-     ),
-     insp AS (
-       SELECT * FROM vehicle_inspections WHERE tenant_id = $1 AND deleted_at IS NULL
-     )
-     SELECT
-       (SELECT COUNT(*)::int FROM maint WHERE status IN ('pending','in-progress')) AS pending_maintenance,
-       (SELECT COUNT(*)::int FROM maint WHERE status = 'completed' AND start_date >= date_trunc('month', NOW())) AS completed_this_month,
-       (SELECT COUNT(*)::int FROM brk WHERE resolution_time IS NULL) AS open_breakdowns,
-       (SELECT COUNT(*)::int FROM insp WHERE inspection_date >= NOW() - INTERVAL '30 days' AND overall_status = 'needs-attention') AS inspections_due,
-       (SELECT COALESCE(SUM(total_cost), 0)::float FROM maint) AS total_maintenance_cost,
-       (SELECT COALESCE(SUM(total_cost), 0)::float FROM brk) AS total_breakdown_cost,
-       (SELECT COUNT(DISTINCT vehicle_id)::int FROM maint WHERE status IN ('pending','in-progress')) AS vehicles_needing_service,
-       (SELECT COUNT(*)::int FROM maint WHERE status IN ('pending','in-progress')) AS active_maintenance_jobs,
-       (
-         SELECT COALESCE(AVG(
-           EXTRACT(EPOCH FROM (COALESCE(end_date, start_date) - start_date)) / 3600.0
-         ), 0)::float
-         FROM maint WHERE status = 'completed'
-       ) AS avg_repair_time,
-       (
-         SELECT CASE WHEN COUNT(*) = 0 THEN 0
-           ELSE ROUND(100.0 * COUNT(*) FILTER (WHERE overall_status = 'pass') / COUNT(*))::int
+    `SELECT
+       (SELECT COUNT(*) FROM maintenance_logs
+         WHERE tenant_id = $1 AND deleted_at IS NULL AND status IN ('pending','in-progress')) AS pending_maintenance,
+       (SELECT COUNT(*) FROM maintenance_logs
+         WHERE tenant_id = $1 AND deleted_at IS NULL AND status = 'completed'
+           AND start_date >= DATE_FORMAT(NOW(), '%Y-%m-01')) AS completed_this_month,
+       (SELECT COUNT(*) FROM breakdown_reports
+         WHERE tenant_id = $1 AND deleted_at IS NULL AND resolution_time IS NULL) AS open_breakdowns,
+       (SELECT COUNT(*) FROM vehicle_inspections
+         WHERE tenant_id = $1 AND deleted_at IS NULL
+           AND inspection_date >= NOW() - INTERVAL 30 DAY
+           AND overall_status = 'needs-attention') AS inspections_due,
+       (SELECT COALESCE(SUM(total_cost), 0) FROM maintenance_logs
+         WHERE tenant_id = $1 AND deleted_at IS NULL) AS total_maintenance_cost,
+       (SELECT COALESCE(SUM(total_cost), 0) FROM breakdown_reports
+         WHERE tenant_id = $1 AND deleted_at IS NULL) AS total_breakdown_cost,
+       (SELECT COUNT(DISTINCT vehicle_id) FROM maintenance_logs
+         WHERE tenant_id = $1 AND deleted_at IS NULL AND status IN ('pending','in-progress')) AS vehicles_needing_service,
+       (SELECT COUNT(*) FROM maintenance_logs
+         WHERE tenant_id = $1 AND deleted_at IS NULL AND status IN ('pending','in-progress')) AS active_maintenance_jobs,
+       (SELECT COALESCE(AVG(
+           TIMESTAMPDIFF(SECOND, start_date, COALESCE(end_date, start_date)) / 3600.0
+         ), 0)
+         FROM maintenance_logs
+         WHERE tenant_id = $1 AND deleted_at IS NULL AND status = 'completed') AS avg_repair_time,
+       (SELECT CASE WHEN COUNT(*) = 0 THEN 0
+           ELSE ROUND(100.0 * SUM(CASE WHEN overall_status = 'pass' THEN 1 ELSE 0 END) / COUNT(*))
          END
-         FROM insp WHERE inspection_date >= NOW() - INTERVAL '90 days'
-       ) AS inspection_pass_rate,
-       (
-         SELECT GREATEST(0, LEAST(100,
+         FROM vehicle_inspections
+         WHERE tenant_id = $1 AND deleted_at IS NULL
+           AND inspection_date >= NOW() - INTERVAL 90 DAY) AS inspection_pass_rate,
+       (SELECT GREATEST(0, LEAST(100,
            100
-           - (SELECT COUNT(*)::int FROM maint WHERE status IN ('pending','in-progress')) * 5
-           - (SELECT COUNT(*)::int FROM brk WHERE resolution_time IS NULL) * 10
-           - (SELECT COUNT(*)::int FROM insp WHERE overall_status = 'fail' AND inspection_date >= NOW() - INTERVAL '30 days') * 8
-         ))
-       ) AS fleet_health_score`,
+           - (SELECT COUNT(*) FROM maintenance_logs
+                WHERE tenant_id = $1 AND deleted_at IS NULL AND status IN ('pending','in-progress')) * 5
+           - (SELECT COUNT(*) FROM breakdown_reports
+                WHERE tenant_id = $1 AND deleted_at IS NULL AND resolution_time IS NULL) * 10
+           - (SELECT COUNT(*) FROM vehicle_inspections
+                WHERE tenant_id = $1 AND deleted_at IS NULL
+                  AND overall_status = 'fail'
+                  AND inspection_date >= NOW() - INTERVAL 30 DAY) * 8
+         ))) AS fleet_health_score`,
     [req.tenantId]
   );
   const row = toCamelRows(rows)[0] || {};

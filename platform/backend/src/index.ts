@@ -138,6 +138,14 @@ async function main() {
       logger.error('MySQL not connected — UI is up; /api and /health will report database error until credentials are fixed');
     }
 
+    process.on('unhandledRejection', (reason) => {
+      logger.error('unhandledRejection', reason);
+    });
+    process.on('uncaughtException', (err) => {
+      logger.error('uncaughtException — exiting', err);
+      process.exit(1);
+    });
+
     process.on('SIGTERM', async () => {
       logger.info('SIGTERM received, shutting down');
       try {

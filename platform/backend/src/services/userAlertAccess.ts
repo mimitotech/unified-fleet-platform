@@ -172,7 +172,9 @@ export function filterAlertsForUser(
   opts: { role?: string | null; allowed: AllowedAlertType[] | null },
 ): FleetAlert[] {
   if (roleBypassesAlertAcl(opts.role)) return alerts;
-  if (!opts.allowed?.length) return [];
+  // null = unrestricted (legacy / unset); [] = explicit deny-all
+  if (opts.allowed == null) return alerts;
+  if (!opts.allowed.length) return [];
   return alerts.filter((a) => alertMatchesAllowedTypes(a, opts.allowed!));
 }
 
@@ -181,7 +183,8 @@ export function filterAlertTypeRowsForUser(
   opts: { role?: string | null; allowed: AllowedAlertType[] | null },
 ): TenantAlertTypeRow[] {
   if (roleBypassesAlertAcl(opts.role)) return rows;
-  if (!opts.allowed?.length) return [];
+  if (opts.allowed == null) return rows;
+  if (!opts.allowed.length) return [];
   const keys = new Set(opts.allowed.map((a) => normalizeAlertTypeKey(a.key)));
   const names = new Set(opts.allowed.map((a) => normalizeAlertTypeKey(a.name)));
   return rows.filter((r) => {
@@ -266,7 +269,7 @@ export async function listTenantAlertTypes(
   tenantId: string,
   configuredNames: string[] = [],
 ): Promise<TenantAlertTypeRow[]> {
-  // Aggregate all rows for the tenant — do not sample / truncate.
+  // Bound to recent retention window — full history GROUP BY is too heavy at scale.
   const { rows } = await query<{
     bare_title: string;
     type: string;
@@ -280,6 +283,7 @@ export async function listTenantAlertTypes(
        MAX(occurred_at) AS last_seen
      FROM alerts
      WHERE tenant_id = $1
+       AND occurred_at >= NOW() - INTERVAL 90 DAY
        AND title IS NOT NULL
        AND TRIM(title) <> ''
      GROUP BY TRIM(SUBSTRING_INDEX(title, ' · ', 1)), LOWER(TRIM(type))`,

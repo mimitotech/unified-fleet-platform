@@ -92,7 +92,9 @@ export default function Settings() {
         password: createForm.password || undefined,
         allowedAlertTypes: roleBypassesAlertAcl(createForm.role)
           ? null
-          : createForm.allowedAlertTypes,
+          : createForm.allowedAlertTypes.length
+            ? createForm.allowedAlertTypes
+            : null,
       }),
     onSuccess: (created) => {
       refresh();

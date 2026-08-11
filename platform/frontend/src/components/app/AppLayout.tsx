@@ -47,7 +47,7 @@ export function AppLayout({ children, title, subtitle, actions }: AppLayoutProps
   const branding = useTenantBranding();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { data: alerts } = useAlerts(300);
+  const { data: alerts } = useAlerts(80);
   const acknowledge = useAcknowledgeAlert();
   const alertList = safeArray<ClientAlert>(alerts);
   const unackList = alertList.filter((a) => {
