@@ -298,6 +298,20 @@ export function UnitDetailPanel({
       ),
     [detail?.fuel],
   );
+  // Must stay above any early return — React #310 if hook count changes between renders.
+  const engineHoursFromSensors = useMemo(() => {
+    for (const s of sensors) {
+      if (!/engine\s*hours?|moto\s*hours?|genset\s*hours?|running\s*hours?/i.test(s.name || "")) {
+        continue;
+      }
+      const n = Number(String(s.value ?? "").replace(/,/g, "").replace(/[^\d.eE+-]/g, ""));
+      if (Number.isFinite(n) && n > 0) {
+        return n >= 100_000 ? Math.round((n / 3600) * 10) / 10 : n;
+      }
+    }
+    return undefined;
+  }, [sensors]);
+
   if (!unit) {
     return (
       <div
@@ -325,16 +339,6 @@ export function UnitDetailPanel({
     unit.stationary === true ||
     unit.assetCategory === "generator" ||
     unit.assetCategory === "machinery";
-  const engineHoursFromSensors = useMemo(() => {
-    for (const s of sensors) {
-      if (!/engine\s*hours?|moto\s*hours?|genset\s*hours?|running\s*hours?/i.test(s.name || '')) {
-        continue;
-      }
-      const n = Number(String(s.value ?? '').replace(/,/g, '').replace(/[^\d.eE+-]/g, ''));
-      if (Number.isFinite(n) && n > 0) return n >= 100_000 ? Math.round((n / 3600) * 10) / 10 : n;
-    }
-    return undefined;
-  }, [sensors]);
   const engineHours =
     detail?.counters?.engineHours ??
     (detail ? undefined : unit.engineHours) ??

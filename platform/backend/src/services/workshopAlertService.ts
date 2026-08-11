@@ -76,21 +76,27 @@ async function emit(
   if (await alertExists(tenantId, input.externalId)) return;
   const orch = new AlertOrchestrator(tenantId);
   const label = String(input.assetLabel || 'Asset').trim() || 'Asset';
-  await orch.insertAlert({
-    tenantId,
-    type: input.type,
-    severity: input.severity,
-    title: `${input.name} · ${label}`,
-    description: input.description || undefined,
-    latitude: input.latitude ?? undefined,
-    longitude: input.longitude ?? undefined,
-    timestamp: input.occurredAt ? new Date(input.occurredAt) : new Date(),
-    // DB enum only allows telematics sources — workshop events still use this slot.
-    sourceType: 'wialon',
-    externalId: input.externalId,
-    assetId: input.assetId || undefined,
-    acknowledged: false,
-  });
+  try {
+    await orch.insertAlert({
+      tenantId,
+      type: input.type,
+      severity: input.severity,
+      title: `${input.name} · ${label}`,
+      description: input.description || undefined,
+      latitude: input.latitude ?? undefined,
+      longitude: input.longitude ?? undefined,
+      timestamp: input.occurredAt ? new Date(input.occurredAt) : new Date(),
+      // DB enum only allows telematics sources — workshop events still use this slot.
+      sourceType: 'wialon',
+      externalId: input.externalId,
+      assetId: input.assetId || undefined,
+      acknowledged: false,
+    });
+  } catch (err) {
+    // Concurrent tenants/users may race the exists-check; ignore duplicate inserts.
+    const msg = (err as Error)?.message || '';
+    if (!/duplicate|unique|constraint/i.test(msg)) throw err;
+  }
 }
 
 function parseLocation(location: unknown): { lat?: number; lng?: number } {
@@ -243,91 +249,114 @@ function rowStr(row: DbRow, ...keys: string[]): string {
 /**
  * Backfill Inbox alerts from open workshop work so existing records show up
  * without waiting for the next create/edit.
+ *
+ * Throttled per tenant so KPI polling under many concurrent users cannot
+ * stampede the DB with repeated full scans.
  */
+const workshopSyncInFlight = new Map<string, Promise<void>>();
+const workshopSyncLastAt = new Map<string, number>();
+const WORKSHOP_SYNC_MIN_INTERVAL_MS = 60_000;
+
 export async function syncOpenWorkshopAlerts(tenantId: string): Promise<void> {
-  const [brk, maint, insp] = await Promise.all([
-    query<DbRow>(
-      `SELECT id, asset_id, vehicle_name, severity, description, location, breakdown_time
-       FROM breakdown_reports
-       WHERE tenant_id = $1 AND deleted_at IS NULL AND resolution_time IS NULL
-       ORDER BY breakdown_time DESC LIMIT 200`,
-      [tenantId],
-    ),
-    query<DbRow>(
-      `SELECT id, asset_id, vehicle_name, priority, description, status, maintenance_type, start_date,
-              next_service_km, next_service_hours, next_service_days, odometer_reading, engine_hours
-       FROM maintenance_logs
-       WHERE tenant_id = $1 AND deleted_at IS NULL AND status IN ('pending', 'in-progress')
-       ORDER BY start_date DESC LIMIT 200`,
-      [tenantId],
-    ),
-    query<DbRow>(
-      `SELECT id, asset_id, vehicle_name, overall_status, notes, inspection_type, inspection_date
-       FROM vehicle_inspections
-       WHERE tenant_id = $1 AND deleted_at IS NULL
-         AND overall_status IN ('needs-attention', 'needs_attention', 'fail', 'failed')
-       ORDER BY inspection_date DESC LIMIT 200`,
-      [tenantId],
-    ),
-  ]);
+  if (!tenantId) return;
+  const now = Date.now();
+  const last = workshopSyncLastAt.get(tenantId) || 0;
+  if (now - last < WORKSHOP_SYNC_MIN_INTERVAL_MS) return;
 
-  for (const row of brk.rows) {
-    await emitBreakdownAlert({
-      tenantId,
-      breakdownId: rowStr(row, 'id'),
-      assetId: rowStr(row, 'asset_id') || null,
-      vehicleName: rowStr(row, 'vehicle_name') || 'Asset',
-      severity: rowStr(row, 'severity') || null,
-      description: rowStr(row, 'description') || null,
-      location: row.location,
-      breakdownTime: (row.breakdown_time as Date | string) || null,
-    });
-  }
+  const existing = workshopSyncInFlight.get(tenantId);
+  if (existing) return existing;
 
-  for (const row of maint.rows) {
-    await emitMaintenanceAlert({
-      tenantId,
-      maintenanceId: rowStr(row, 'id'),
-      assetId: rowStr(row, 'asset_id') || null,
-      vehicleName: rowStr(row, 'vehicle_name') || 'Asset',
-      priority: rowStr(row, 'priority') || null,
-      description: rowStr(row, 'description') || null,
-      status: rowStr(row, 'status') || null,
-      maintenanceType: rowStr(row, 'maintenance_type') || null,
-      startDate: (row.start_date as Date | string) || null,
-    });
+  const run = (async () => {
+    workshopSyncLastAt.set(tenantId, Date.now());
+    const [brk, maint, insp] = await Promise.all([
+      query<DbRow>(
+        `SELECT id, asset_id, vehicle_name, severity, description, location, breakdown_time
+         FROM breakdown_reports
+         WHERE tenant_id = $1 AND deleted_at IS NULL AND resolution_time IS NULL
+         ORDER BY breakdown_time DESC LIMIT 100`,
+        [tenantId],
+      ),
+      query<DbRow>(
+        `SELECT id, asset_id, vehicle_name, priority, description, status, maintenance_type, start_date,
+                next_service_km, next_service_hours, next_service_days, odometer_reading, engine_hours
+         FROM maintenance_logs
+         WHERE tenant_id = $1 AND deleted_at IS NULL AND status IN ('pending', 'in-progress')
+         ORDER BY start_date DESC LIMIT 100`,
+        [tenantId],
+      ),
+      query<DbRow>(
+        `SELECT id, asset_id, vehicle_name, overall_status, notes, inspection_type, inspection_date
+         FROM vehicle_inspections
+         WHERE tenant_id = $1 AND deleted_at IS NULL
+           AND overall_status IN ('needs-attention', 'needs_attention', 'fail', 'failed')
+         ORDER BY inspection_date DESC LIMIT 100`,
+        [tenantId],
+      ),
+    ]);
 
-    // When next-service interval is already overdue relative to start_date, raise Service due.
-    const days = Number(row.next_service_days);
-    if (Number.isFinite(days) && days >= 0 && row.start_date) {
-      const start = new Date(row.start_date as string | Date);
-      if (!Number.isNaN(start.getTime())) {
-        const due = new Date(start.getTime() + days * 86400000);
-        if (due.getTime() <= Date.now()) {
-          await emitServiceDueAlert({
-            tenantId,
-            assetId: rowStr(row, 'asset_id') || null,
-            vehicleName: rowStr(row, 'vehicle_name') || 'Asset',
-            reason: `Service interval reached (${days} day${days === 1 ? '' : 's'} from last job)`,
-            sourceId: `maint-days:${rowStr(row, 'id')}`,
-          });
+    // Sequential emits keep insertAlert pressure bounded under multi-tenant load.
+    for (const row of brk.rows) {
+      await emitBreakdownAlert({
+        tenantId,
+        breakdownId: rowStr(row, 'id'),
+        assetId: rowStr(row, 'asset_id') || null,
+        vehicleName: rowStr(row, 'vehicle_name') || 'Asset',
+        severity: rowStr(row, 'severity') || null,
+        description: rowStr(row, 'description') || null,
+        location: row.location,
+        breakdownTime: (row.breakdown_time as Date | string) || null,
+      });
+    }
+
+    for (const row of maint.rows) {
+      await emitMaintenanceAlert({
+        tenantId,
+        maintenanceId: rowStr(row, 'id'),
+        assetId: rowStr(row, 'asset_id') || null,
+        vehicleName: rowStr(row, 'vehicle_name') || 'Asset',
+        priority: rowStr(row, 'priority') || null,
+        description: rowStr(row, 'description') || null,
+        status: rowStr(row, 'status') || null,
+        maintenanceType: rowStr(row, 'maintenance_type') || null,
+        startDate: (row.start_date as Date | string) || null,
+      });
+
+      const days = Number(row.next_service_days);
+      if (Number.isFinite(days) && days >= 0 && row.start_date) {
+        const start = new Date(row.start_date as string | Date);
+        if (!Number.isNaN(start.getTime())) {
+          const due = new Date(start.getTime() + days * 86400000);
+          if (due.getTime() <= Date.now()) {
+            await emitServiceDueAlert({
+              tenantId,
+              assetId: rowStr(row, 'asset_id') || null,
+              vehicleName: rowStr(row, 'vehicle_name') || 'Asset',
+              reason: `Service interval reached (${days} day${days === 1 ? '' : 's'} from last job)`,
+              sourceId: `maint-days:${rowStr(row, 'id')}`,
+            });
+          }
         }
       }
     }
-  }
 
-  for (const row of insp.rows) {
-    await emitInspectionAlert({
-      tenantId,
-      inspectionId: rowStr(row, 'id'),
-      assetId: rowStr(row, 'asset_id') || null,
-      vehicleName: rowStr(row, 'vehicle_name') || 'Asset',
-      overallStatus: rowStr(row, 'overall_status') || null,
-      notes: rowStr(row, 'notes') || null,
-      inspectionType: rowStr(row, 'inspection_type') || null,
-      inspectionDate: (row.inspection_date as Date | string) || null,
-    });
-  }
+    for (const row of insp.rows) {
+      await emitInspectionAlert({
+        tenantId,
+        inspectionId: rowStr(row, 'id'),
+        assetId: rowStr(row, 'asset_id') || null,
+        vehicleName: rowStr(row, 'vehicle_name') || 'Asset',
+        overallStatus: rowStr(row, 'overall_status') || null,
+        notes: rowStr(row, 'notes') || null,
+        inspectionType: rowStr(row, 'inspection_type') || null,
+        inspectionDate: (row.inspection_date as Date | string) || null,
+      });
+    }
+  })().finally(() => {
+    workshopSyncInFlight.delete(tenantId);
+  });
+
+  workshopSyncInFlight.set(tenantId, run);
+  return run;
 }
 
 /** Fire-and-forget wrapper so workshop writes never fail on alert errors. */
