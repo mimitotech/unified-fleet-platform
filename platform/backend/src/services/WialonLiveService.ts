@@ -180,10 +180,8 @@ export class WialonLiveService {
       );
 
       if (fuelMissing.length) {
-        // Cap enrichment — unbounded Promise.all of calc_last_message times out the fleet snapshot.
-        const toEnrich = fuelMissing.slice(0, 20);
         const enriched = await Promise.all(
-          toEnrich.map(async (u) => {
+          fuelMissing.map(async (u) => {
             try {
               const sens = await client.request<{ sensors?: Array<{ n: string; v: string; u?: string; t?: number }> }>(
                 'unit/calc_last_message',

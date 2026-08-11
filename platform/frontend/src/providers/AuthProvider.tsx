@@ -8,6 +8,11 @@ import {
 } from '@/lib/tenantBrandingCache';
 import { clearAllMapViewports } from '@/lib/mapViewport';
 import { isSystemRole } from '@/lib/systemRoles';
+import {
+  readTenantPreviewSlugFromLocation,
+  readTenantPreviewSlugFromSession,
+  TENANT_PREVIEW_SESSION_KEY,
+} from '@/lib/adminTenantPreview';
 
 interface AuthContextValue {
   user: User | null;
@@ -46,9 +51,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then((u) => {
         setUser(u);
         setMapSessionKey(buildMapSessionKey(u));
-        // System staff View Client: never overwrite preview slug from /me.
         if (isSystemRole(u.role)) {
           localStorage.setItem('ufp_token', token);
+          // Keep View Client slug so /api/client/* resolves a tenant for system staff.
+          const preview =
+            readTenantPreviewSlugFromLocation() || readTenantPreviewSlugFromSession();
+          if (preview) {
+            try {
+              sessionStorage.setItem(TENANT_PREVIEW_SESSION_KEY, preview);
+            } catch {
+              /* ignore */
+            }
+            localStorage.setItem('ufp_tenant_slug', preview);
+          }
         } else if (u.tenantSlug) {
           setAuth(token, u.tenantSlug);
         }

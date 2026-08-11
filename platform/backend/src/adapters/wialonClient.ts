@@ -29,19 +29,22 @@ export interface WialonClientConfig {
   operateAs?: string | number;
 }
 
-const WIALON_FETCH_TIMEOUT_MS = Math.min(
-  90_000,
-  Math.max(15_000, parseInt(process.env.WIALON_FETCH_TIMEOUT_MS || '45000', 10) || 45_000),
-);
+/**
+ * Plain fetch by default (Hostinger + slow Wialon must not abort mid-fleet).
+ * Set WIALON_FETCH_TIMEOUT_MS>0 only if you explicitly want hard aborts.
+ */
+export async function wialonFetch(url: string, timeoutMs?: number): Promise<Response> {
+  const envMs = parseInt(process.env.WIALON_FETCH_TIMEOUT_MS || '0', 10);
+  const ms = timeoutMs != null ? timeoutMs : Number.isFinite(envMs) && envMs > 0 ? envMs : 0;
+  if (!ms) return fetch(url);
 
-export async function wialonFetch(url: string, timeoutMs = WIALON_FETCH_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => controller.abort(), ms);
   try {
     return await fetch(url, { signal: controller.signal });
   } catch (err) {
     if ((err as Error)?.name === 'AbortError') {
-      throw new Error(`Wialon request timed out after ${timeoutMs}ms`);
+      throw new Error(`Wialon request timed out after ${ms}ms`);
     }
     throw err;
   } finally {
@@ -206,7 +209,7 @@ export class WialonClient {
   }
 
   /** Keep session alive (Wialon default idle timeout ~5 min). */
-  startKeepAlive(intervalMs = 45_000): void {
+  startKeepAlive(intervalMs = 30_000): void {
     this.stopKeepAlive();
     this.keepAliveTimer = setInterval(() => {
       if (!this.sessionId) return;
@@ -230,12 +233,16 @@ export class WialonClient {
       params: JSON.stringify({}),
       sid: this.sessionId,
     });
-    const res = await wialonFetch(`${this.baseUrl}?${urlParams}`, 15_000);
-    if (!res.ok) return;
-    const data = await res.json();
-    if (data.error === 1) {
-      this.sessionId = null;
-      await this.connect();
+    try {
+      const res = await wialonFetch(`${this.baseUrl}?${urlParams}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.error === 1) {
+        this.sessionId = null;
+        await this.connect();
+      }
+    } catch {
+      /* ignore ping failures */
     }
   }
 
@@ -243,12 +250,7 @@ export class WialonClient {
     this.stopKeepAlive();
     if (!this.sessionId) return;
     try {
-      const urlParams = new URLSearchParams({
-        svc: 'core/logout',
-        params: JSON.stringify({}),
-        sid: this.sessionId,
-      });
-      await wialonFetch(`${this.baseUrl}?${urlParams}`, 10_000);
+      await this.request('core/logout', {});
     } catch {
       /* ignore */
     }

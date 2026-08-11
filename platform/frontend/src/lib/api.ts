@@ -532,7 +532,7 @@ export const clientApi = {
         lmsg?: { time?: number; params?: Record<string, string | number> };
         position?: { lat: number; lng: number; speed: number; time: number; course?: number };
       }>;
-    }>('/api/client/fleet/snapshot', { timeoutMs: 90_000 }).then((snap) => ({
+    }>('/api/client/fleet/snapshot').then((snap) => ({
       ...snap,
       units: safeArray(snap?.units),
       counts: snap?.counts ?? {

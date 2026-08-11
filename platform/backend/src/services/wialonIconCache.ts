@@ -1,6 +1,6 @@
 import { getRedis } from '../config/redis.js';
 import type { WialonCredentialsInput } from './WialonHierarchyService.js';
-import { WialonClient, wialonFetch } from '../adapters/wialonClient.js';
+import { WialonClient } from '../adapters/wialonClient.js';
 import { wialonHostFromBaseUrl, wialonUnitIconUrl } from './wialonIcon.js';
 
 type MemEntry = { buf: Buffer; expires: number };
@@ -133,7 +133,8 @@ export async function fetchCachedUnitIcon(
 
     const download = async (ugiVal: number) => {
       const url = `${wialonUnitIconUrl(host, unitId, size, ugiVal)}?sid=${encodeURIComponent(sid)}`;
-      const res = await wialonFetch(url, 20_000);
+      // Plain fetch — icon CDN must not abort under Hostinger latency.
+      const res = await fetch(url);
       if (!res.ok) throw new Error(`Wialon icon HTTP ${res.status}`);
       const ab = await res.arrayBuffer();
       if (!ab.byteLength) throw new Error('Empty Wialon icon');
