@@ -1,6 +1,6 @@
 /**
  * Printable workshop documents — inspection, maintenance (incl. monthly PM), breakdown.
- * Mimito ownership is always shown in the branded footer.
+ * Meta / notes / sign-off use compact horizontal layouts (print CSS + inline styles).
  */
 
 import { createRoot } from 'react-dom/client';
@@ -26,6 +26,15 @@ import { sanitizeWorkshopAssetCategory } from '@/lib/workshopUnit';
 
 export type WorkshopPrintKind = 'inspection' | 'maintenance' | 'breakdown';
 
+function fmtDate(value?: string | null, withTime = false): string {
+  if (!value) return '—';
+  try {
+    return format(new Date(value), withTime ? 'dd MMM yyyy HH:mm' : 'dd MMM yyyy');
+  } catch {
+    return value;
+  }
+}
+
 function statusLabel(s?: string) {
   const v = String(s || '').toLowerCase();
   if (v === 'ok' || v === 'pass' || v === 'passed') return 'OK';
@@ -44,17 +53,34 @@ function ChecklistTable({
 }) {
   if (!sections.length) return null;
   return (
-    <div className="space-y-4 mt-4">
+    <div data-report-checklist style={{ marginTop: 12 }}>
       {sections.map((section) => (
-        <div key={section.id} data-report-section>
-          <h3 className="text-sm font-semibold text-slate-800 mb-2">{section.title}</h3>
+        <div key={section.id} data-report-section style={{ marginBottom: 12 }}>
+          <h3
+            data-report-section-title
+            style={{
+              margin: '0 0 6px',
+              fontSize: 12,
+              fontWeight: 700,
+              color: '#0f172a',
+              letterSpacing: '0.02em',
+              textTransform: 'uppercase',
+              borderLeft: `3px solid ${primaryColor}`,
+              paddingLeft: 8,
+            }}
+          >
+            {section.title}
+          </h3>
           <table className="w-full text-xs border-collapse" data-report-table>
             <thead>
               <tr>
                 <th className="text-left p-2 border" style={brandedTableHeadStyle(primaryColor)}>
                   Item
                 </th>
-                <th className="text-left p-2 border w-28" style={brandedTableHeadStyle(primaryColor)}>
+                <th
+                  className="text-left p-2 border"
+                  style={{ ...brandedTableHeadStyle(primaryColor), width: '18%' }}
+                >
                   Result
                 </th>
                 <th className="text-left p-2 border" style={brandedTableHeadStyle(primaryColor)}>
@@ -78,43 +104,267 @@ function ChecklistTable({
   );
 }
 
+/** Compact 4-column fact strip — labels left, values right in each cell. */
+function MetaStrip({
+  rows,
+  columns = 4,
+}: {
+  rows: Array<[string, string]>;
+  columns?: 3 | 4;
+}) {
+  return (
+    <div
+      data-report-meta-grid
+      data-report-meta-cols={String(columns)}
+      style={{
+        display: 'grid',
+        gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+        gap: 0,
+        marginTop: 10,
+        border: '1px solid #e2e8f0',
+        borderRadius: 6,
+        overflow: 'hidden',
+        background: '#fff',
+      }}
+    >
+      {rows.map(([k, v], i) => {
+        const col = i % columns;
+        const row = Math.floor(i / columns);
+        const totalRows = Math.ceil(rows.length / columns);
+        return (
+          <div
+            key={`${k}-${i}`}
+            data-report-meta-cell
+            style={{
+              display: 'flex',
+              flexDirection: 'row',
+              alignItems: 'baseline',
+              justifyContent: 'space-between',
+              gap: 8,
+              padding: '7px 10px',
+              borderRight: col === columns - 1 ? 'none' : '1px solid #e2e8f0',
+              borderBottom: row === totalRows - 1 ? 'none' : '1px solid #e2e8f0',
+              minWidth: 0,
+              background: row % 2 === 0 ? '#f8fafc' : '#fff',
+            }}
+          >
+            <span
+              data-report-meta-label
+              style={{
+                flex: '0 0 auto',
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+                color: '#64748b',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {k}
+            </span>
+            <span
+              data-report-meta-value
+              style={{
+                flex: '1 1 auto',
+                fontSize: 11,
+                fontWeight: 600,
+                color: '#0f172a',
+                textAlign: 'right',
+                wordBreak: 'break-word',
+                lineHeight: 1.3,
+              }}
+            >
+              {v || '—'}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function NarrativePanel({
+  title,
+  body,
+  primaryColor,
+}: {
+  title: string;
+  body: string;
+  primaryColor: string;
+}) {
+  return (
+    <div
+      data-report-narrative
+      style={{
+        border: '1px solid #e2e8f0',
+        borderRadius: 6,
+        background: '#f8fafc',
+        padding: '8px 12px',
+        minWidth: 0,
+      }}
+    >
+      <p
+        data-report-narrative-title
+        style={{
+          margin: 0,
+          fontSize: 9,
+          fontWeight: 700,
+          letterSpacing: '0.05em',
+          textTransform: 'uppercase',
+          color: primaryColor,
+        }}
+      >
+        {title}
+      </p>
+      <p
+        data-report-narrative-body
+        style={{
+          margin: '4px 0 0',
+          fontSize: 11,
+          color: '#1e293b',
+          lineHeight: 1.45,
+          whiteSpace: 'pre-wrap',
+        }}
+      >
+        {body}
+      </p>
+    </div>
+  );
+}
+
+function NarrativeRow({
+  items,
+  primaryColor,
+}: {
+  items: Array<{ title: string; body: string }>;
+  primaryColor: string;
+}) {
+  const usable = items.filter((i) => i.body?.trim());
+  if (!usable.length) return null;
+  const cols = Math.min(usable.length, 2);
+  return (
+    <div
+      data-report-narrative-grid
+      data-report-narrative-cols={String(cols)}
+      style={{
+        display: 'grid',
+        gridTemplateColumns: cols === 1 ? '1fr' : '1fr 1fr',
+        gap: 8,
+        marginTop: 10,
+      }}
+    >
+      {usable.map((item) => (
+        <NarrativePanel
+          key={item.title}
+          title={item.title}
+          body={item.body}
+          primaryColor={primaryColor}
+        />
+      ))}
+    </div>
+  );
+}
+
 function SignOffBlock({
   title,
   name,
   date,
   signature,
+  primaryColor,
 }: {
   title: string;
   name?: string | null;
   date?: string | null;
   signature?: string | null;
+  primaryColor: string;
 }) {
   const sig = (signature || name || '').trim().toLowerCase();
   return (
-    <div className="mt-8 pt-4 border-t border-slate-200 grid sm:grid-cols-3 gap-6" data-report-signoff>
-      <div>
-        <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">{title}</p>
-        <p className="text-sm font-medium text-slate-900">{name || '—'}</p>
-      </div>
-      <div>
-        <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Date</p>
-        <p className="text-sm text-slate-800">
-          {date
-            ? (() => {
-                try {
-                  return format(new Date(date), 'dd MMM yyyy');
-                } catch {
-                  return date;
-                }
-              })()
-            : '—'}
+    <div
+      data-report-signoff
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '1.2fr 0.9fr 1.4fr',
+        gap: 0,
+        marginTop: 14,
+        border: '1px solid #e2e8f0',
+        borderRadius: 6,
+        overflow: 'hidden',
+        pageBreakInside: 'avoid',
+      }}
+    >
+      <div
+        data-report-signoff-cell
+        style={{
+          padding: '10px 12px',
+          borderRight: '1px solid #e2e8f0',
+          background: '#fff',
+        }}
+      >
+        <p
+          style={{
+            margin: 0,
+            fontSize: 9,
+            fontWeight: 700,
+            letterSpacing: '0.05em',
+            textTransform: 'uppercase',
+            color: primaryColor,
+          }}
+        >
+          {title}
+        </p>
+        <p style={{ margin: '4px 0 0', fontSize: 13, fontWeight: 600, color: '#0f172a' }}>
+          {name || '—'}
         </p>
       </div>
-      <div>
-        <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Signature</p>
+      <div
+        data-report-signoff-cell
+        style={{
+          padding: '10px 12px',
+          borderRight: '1px solid #e2e8f0',
+          background: '#f8fafc',
+        }}
+      >
         <p
-          className="text-base text-slate-900 min-h-[2rem]"
-          style={{ fontFamily: '"Segoe Script","Brush Script MT",cursive,serif', fontStyle: 'italic' }}
+          style={{
+            margin: 0,
+            fontSize: 9,
+            fontWeight: 700,
+            letterSpacing: '0.05em',
+            textTransform: 'uppercase',
+            color: '#64748b',
+          }}
+        >
+          Date
+        </p>
+        <p style={{ margin: '4px 0 0', fontSize: 13, fontWeight: 600, color: '#0f172a' }}>
+          {fmtDate(date)}
+        </p>
+      </div>
+      <div data-report-signoff-cell style={{ padding: '10px 12px', background: '#fff' }}>
+        <p
+          style={{
+            margin: 0,
+            fontSize: 9,
+            fontWeight: 700,
+            letterSpacing: '0.05em',
+            textTransform: 'uppercase',
+            color: '#64748b',
+          }}
+        >
+          Signature
+        </p>
+        <p
+          data-report-signature
+          style={{
+            margin: '2px 0 0',
+            minHeight: 28,
+            fontSize: 18,
+            color: '#0f172a',
+            fontFamily: '"Segoe Script","Brush Script MT",cursive,serif',
+            fontStyle: 'italic',
+            lineHeight: 1.2,
+          }}
         >
           {sig || '—'}
         </p>
@@ -123,13 +373,65 @@ function SignOffBlock({
   );
 }
 
-function MetaGrid({ rows }: { rows: Array<[string, string]> }) {
+function CostStrip({
+  items,
+  primaryColor,
+}: {
+  items: Array<[string, string]>;
+  primaryColor: string;
+}) {
+  if (!items.length) return null;
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-4 text-xs" data-report-meta-grid>
-      {rows.map(([k, v]) => (
-        <div key={k} className="rounded border border-slate-200 px-3 py-2 bg-slate-50/80">
-          <p className="text-[10px] uppercase tracking-wide text-slate-500">{k}</p>
-          <p className="font-medium text-slate-900 mt-0.5 break-words">{v || '—'}</p>
+    <div
+      data-report-cost-strip
+      style={{
+        display: 'flex',
+        flexDirection: 'row',
+        flexWrap: 'nowrap',
+        gap: 0,
+        marginTop: 10,
+        border: `1px solid ${primaryColor}33`,
+        borderRadius: 6,
+        overflow: 'hidden',
+        background: '#fff',
+      }}
+    >
+      {items.map(([k, v], i) => (
+        <div
+          key={k}
+          data-report-cost-cell
+          style={{
+            flex: '1 1 0',
+            padding: '8px 10px',
+            borderRight: i === items.length - 1 ? 'none' : '1px solid #e2e8f0',
+            textAlign: 'center',
+            background: i === items.length - 1 ? `${primaryColor}0d` : '#fff',
+            minWidth: 0,
+          }}
+        >
+          <p
+            style={{
+              margin: 0,
+              fontSize: 9,
+              fontWeight: 700,
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
+              color: '#64748b',
+            }}
+          >
+            {k}
+          </p>
+          <p
+            style={{
+              margin: '3px 0 0',
+              fontSize: 13,
+              fontWeight: 700,
+              color: i === items.length - 1 ? primaryColor : '#0f172a',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {v || '—'}
+          </p>
         </div>
       ))}
     </div>
@@ -139,7 +441,6 @@ function MetaGrid({ rows }: { rows: Array<[string, string]> }) {
 function InspectionDoc({
   branding,
   row,
-  reportRef,
 }: {
   branding: ResolvedTenantBranding;
   row: VehicleInspection;
@@ -150,23 +451,23 @@ function InspectionDoc({
     row.checklistSections && row.checklistSections.length
       ? row.checklistSections
       : sectionsFromLegacy(row.truckHeadChecklist, row.trailerChecklist, category);
-  const title =
-    category === 'generator' ? 'Daily Inspection Report' : 'Inspection Report';
+  const title = category === 'generator' ? 'Daily Inspection Report' : 'Inspection Report';
+  const pc = branding.primaryColor;
 
   return (
-    <BrandedReportDocument branding={branding} className="p-8 max-w-[900px]">
+    <BrandedReportDocument branding={branding} className="p-6 max-w-[960px]">
       <BrandedReportHeader
         branding={branding}
         reportTitle={title}
         moduleLabel="Workshop"
         objectLabel={row.vehicleName}
       />
-      <MetaGrid
+      <MetaStrip
         rows={[
           ['Asset', row.vehicleName],
           ['Plate / ID', row.vehiclePlate || '—'],
           ['Category', category],
-          ['Inspection type', row.inspectionType],
+          ['Type', row.inspectionType],
           ['Status', statusLabel(row.overallStatus)],
           [
             category === 'vehicle' ? 'Odometer' : 'Engine hours',
@@ -175,21 +476,20 @@ function InspectionDoc({
               : `${row.engineHours ?? '—'} h`,
           ],
           ['Operator', row.driverName || '—'],
-          ['Inspection date', row.inspectionDate ? format(new Date(row.inspectionDate), 'dd MMM yyyy') : '—'],
+          ['Date', fmtDate(row.inspectionDate)],
         ]}
       />
-      <ChecklistTable sections={sections} primaryColor={branding.primaryColor} />
-      {row.notes ? (
-        <div className="mt-4 text-xs">
-          <p className="text-[10px] uppercase tracking-wide text-slate-500">Notes</p>
-          <p className="mt-1 text-slate-800 whitespace-pre-wrap">{row.notes}</p>
-        </div>
-      ) : null}
+      <ChecklistTable sections={sections} primaryColor={pc} />
+      <NarrativeRow
+        primaryColor={pc}
+        items={row.notes ? [{ title: 'Notes', body: row.notes }] : []}
+      />
       <SignOffBlock
         title="Inspected by"
         name={row.inspectorName}
         date={row.inspectorDate || row.inspectionDate}
         signature={row.inspectorSignature}
+        primaryColor={pc}
       />
       <BrandedReportFooter
         branding={branding}
@@ -210,19 +510,21 @@ function MaintenanceDoc({
 }) {
   const category = sanitizeWorkshopAssetCategory(row.assetCategory);
   const title =
-    category === 'generator' && (row.checklistSections?.some((s) => s.id === 'monthly-pm') || row.maintenanceType === 'preventive')
+    category === 'generator' &&
+    (row.checklistSections?.some((s) => s.id === 'monthly-pm') || row.maintenanceType === 'preventive')
       ? 'Monthly Preventive Maintenance Report'
       : 'Maintenance Report';
+  const pc = branding.primaryColor;
 
   return (
-    <BrandedReportDocument branding={branding} className="p-8 max-w-[900px]">
+    <BrandedReportDocument branding={branding} className="p-6 max-w-[960px]">
       <BrandedReportHeader
         branding={branding}
         reportTitle={title}
         moduleLabel="Workshop"
         objectLabel={row.vehicleName}
       />
-      <MetaGrid
+      <MetaStrip
         rows={[
           ['Asset', row.vehicleName],
           ['Plate / ID', row.vehiclePlate || '—'],
@@ -231,31 +533,34 @@ function MaintenanceDoc({
           ['Priority', row.priority],
           ['Status', row.status],
           ['Operator', row.driverName || '—'],
-          ['Start', row.startDate ? format(new Date(row.startDate), 'dd MMM yyyy') : '—'],
+          ['Start', fmtDate(row.startDate)],
+        ]}
+      />
+      <CostStrip
+        primaryColor={pc}
+        items={[
           ['Labor hours', String(row.laborHours ?? '—')],
           ['Labor cost', String(row.laborCost ?? '—')],
           ['Parts cost', String(row.partsCost ?? '—')],
           ['Total cost', String(row.totalCost ?? '—')],
         ]}
       />
-      <div className="mt-4 text-xs">
-        <p className="text-[10px] uppercase tracking-wide text-slate-500">Work description</p>
-        <p className="mt-1 text-slate-800 whitespace-pre-wrap">{row.description || '—'}</p>
-      </div>
+      <NarrativeRow
+        primaryColor={pc}
+        items={[
+          { title: 'Work description', body: row.description || '—' },
+          ...(row.notes ? [{ title: 'Notes', body: row.notes }] : []),
+        ]}
+      />
       {row.checklistSections?.length ? (
-        <ChecklistTable sections={row.checklistSections} primaryColor={branding.primaryColor} />
-      ) : null}
-      {row.notes ? (
-        <div className="mt-4 text-xs">
-          <p className="text-[10px] uppercase tracking-wide text-slate-500">Notes</p>
-          <p className="mt-1 text-slate-800 whitespace-pre-wrap">{row.notes}</p>
-        </div>
+        <ChecklistTable sections={row.checklistSections} primaryColor={pc} />
       ) : null}
       <SignOffBlock
         title="Maintained by / Technician"
         name={row.mechanicName}
         date={row.mechanicDate || row.startDate}
         signature={row.mechanicSignature}
+        primaryColor={pc}
       />
       <BrandedReportFooter
         branding={branding}
@@ -275,15 +580,22 @@ function BreakdownDoc({
   reportRef: string;
 }) {
   const category = sanitizeWorkshopAssetCategory(row.assetCategory);
+  const pc = branding.primaryColor;
+  const location =
+    row.location?.address ||
+    (row.location?.lat != null
+      ? `${row.location.lat.toFixed(5)}, ${row.location.lng.toFixed(5)}`
+      : '—');
+
   return (
-    <BrandedReportDocument branding={branding} className="p-8 max-w-[900px]">
+    <BrandedReportDocument branding={branding} className="p-6 max-w-[960px]">
       <BrandedReportHeader
         branding={branding}
         reportTitle="Breakdown Report"
         moduleLabel="Workshop"
         objectLabel={row.vehicleName}
       />
-      <MetaGrid
+      <MetaStrip
         rows={[
           ['Asset', row.vehicleName],
           ['Plate / ID', row.vehiclePlate || '—'],
@@ -291,46 +603,38 @@ function BreakdownDoc({
           ['Severity', row.severity],
           ['Failure system', row.failureSystem || '—'],
           ['Operator', row.driverName || '—'],
-          [
-            'Breakdown time',
-            row.breakdownTime ? format(new Date(row.breakdownTime), 'dd MMM yyyy HH:mm') : '—',
-          ],
-          [
-            'Location',
-            row.location?.address ||
-              (row.location?.lat != null
-                ? `${row.location.lat.toFixed(5)}, ${row.location.lng.toFixed(5)}`
-                : '—'),
-          ],
+          ['Breakdown time', fmtDate(row.breakdownTime, true)],
+          ['Location', location],
+        ]}
+      />
+      <CostStrip
+        primaryColor={pc}
+        items={[
           ['Downtime (h)', String(row.downtimeHours ?? '—')],
           ['Towing', String(row.towingCost ?? '—')],
           ['Repair', String(row.repairCost ?? '—')],
           ['Total cost', String(row.totalCost ?? '—')],
         ]}
       />
-      <div className="mt-4 text-xs space-y-3">
-        <div>
-          <p className="text-[10px] uppercase tracking-wide text-slate-500">Description</p>
-          <p className="mt-1 text-slate-800 whitespace-pre-wrap">{row.description || '—'}</p>
-        </div>
-        {row.cause ? (
-          <div>
-            <p className="text-[10px] uppercase tracking-wide text-slate-500">Cause</p>
-            <p className="mt-1 text-slate-800 whitespace-pre-wrap">{row.cause}</p>
-          </div>
-        ) : null}
-        {row.resolution ? (
-          <div>
-            <p className="text-[10px] uppercase tracking-wide text-slate-500">Resolution</p>
-            <p className="mt-1 text-slate-800 whitespace-pre-wrap">{row.resolution}</p>
-          </div>
-        ) : null}
-      </div>
+      <NarrativeRow
+        primaryColor={pc}
+        items={[
+          { title: 'Description', body: row.description || '—' },
+          ...(row.cause ? [{ title: 'Cause', body: row.cause }] : []),
+        ]}
+      />
+      {row.resolution ? (
+        <NarrativeRow
+          primaryColor={pc}
+          items={[{ title: 'Resolution', body: row.resolution }]}
+        />
+      ) : null}
       <SignOffBlock
         title="Reported by"
         name={row.reportedBy || row.driverName}
         date={row.reportedDate || row.breakdownTime}
         signature={row.reportedSignature}
+        primaryColor={pc}
       />
       <BrandedReportFooter
         branding={branding}
@@ -353,7 +657,7 @@ export async function printWorkshopReport(opts: {
   host.style.position = 'fixed';
   host.style.left = '-10000px';
   host.style.top = '0';
-  host.style.width = '900px';
+  host.style.width = '960px';
   host.style.background = '#fff';
   document.body.appendChild(host);
   const root = createRoot(host);

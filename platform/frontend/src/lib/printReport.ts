@@ -471,6 +471,172 @@ function reportStyles(opts: {
       margin: 0; font-size: 10px; font-weight: 600; color: #004225; white-space: nowrap;
     }
 
+    /* Workshop / form meta — compact horizontal fact strips */
+    [data-report-meta-grid] {
+      display: grid !important;
+      grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+      gap: 0 !important;
+      width: 100% !important;
+      margin: 10px 0 0 !important;
+      border: 1px solid #e2e8f0 !important;
+      border-radius: 6px !important;
+      overflow: hidden !important;
+      background: #fff !important;
+      page-break-inside: avoid;
+    }
+    [data-report-meta-grid][data-report-meta-cols="3"] {
+      grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    }
+    [data-report-meta-cell] {
+      display: flex !important;
+      flex-direction: row !important;
+      align-items: baseline !important;
+      justify-content: space-between !important;
+      gap: 8px !important;
+      padding: 7px 10px !important;
+      border-right: 1px solid #e2e8f0 !important;
+      border-bottom: 1px solid #e2e8f0 !important;
+      min-width: 0 !important;
+      background: #f8fafc !important;
+    }
+    [data-report-meta-cell]:nth-child(4n) { border-right: none !important; }
+    [data-report-meta-grid][data-report-meta-cols="3"] [data-report-meta-cell]:nth-child(3n) {
+      border-right: none !important;
+    }
+    [data-report-meta-label] {
+      flex: 0 0 auto !important;
+      font-size: 9px !important;
+      font-weight: 700 !important;
+      letter-spacing: 0.04em !important;
+      text-transform: uppercase !important;
+      color: #64748b !important;
+      white-space: nowrap !important;
+      margin: 0 !important;
+    }
+    [data-report-meta-value] {
+      flex: 1 1 auto !important;
+      font-size: 11px !important;
+      font-weight: 600 !important;
+      color: #0f172a !important;
+      text-align: right !important;
+      word-break: break-word !important;
+      line-height: 1.3 !important;
+      margin: 0 !important;
+    }
+
+    [data-report-cost-strip] {
+      display: flex !important;
+      flex-direction: row !important;
+      flex-wrap: nowrap !important;
+      width: 100% !important;
+      margin: 10px 0 0 !important;
+      border: 1px solid #e2e8f0 !important;
+      border-radius: 6px !important;
+      overflow: hidden !important;
+      page-break-inside: avoid;
+    }
+    [data-report-cost-cell] {
+      flex: 1 1 0 !important;
+      padding: 8px 10px !important;
+      border-right: 1px solid #e2e8f0 !important;
+      text-align: center !important;
+      min-width: 0 !important;
+      background: #fff !important;
+    }
+    [data-report-cost-cell]:last-child {
+      border-right: none !important;
+      background: #f0f7f3 !important;
+    }
+    [data-report-cost-cell] p { margin: 0 !important; }
+    [data-report-cost-cell] p:first-child {
+      font-size: 9px !important; font-weight: 700 !important;
+      letter-spacing: 0.04em !important; text-transform: uppercase !important; color: #64748b !important;
+    }
+    [data-report-cost-cell] p:last-child {
+      margin-top: 3px !important; font-size: 13px !important; font-weight: 700 !important;
+      color: #0f172a !important; font-variant-numeric: tabular-nums;
+    }
+    [data-report-cost-cell]:last-child p:last-child { color: ${primaryColor} !important; }
+
+    [data-report-narrative-grid] {
+      display: grid !important;
+      grid-template-columns: 1fr 1fr !important;
+      gap: 8px !important;
+      width: 100% !important;
+      margin: 10px 0 0 !important;
+    }
+    [data-report-narrative-grid][data-report-narrative-cols="1"] {
+      grid-template-columns: 1fr !important;
+    }
+    [data-report-narrative] {
+      border: 1px solid #e2e8f0 !important;
+      border-radius: 6px !important;
+      background: #f8fafc !important;
+      padding: 8px 12px !important;
+      min-width: 0 !important;
+      page-break-inside: avoid;
+    }
+    [data-report-narrative-title] {
+      margin: 0 !important;
+      font-size: 9px !important;
+      font-weight: 700 !important;
+      letter-spacing: 0.05em !important;
+      text-transform: uppercase !important;
+      color: ${primaryColor} !important;
+    }
+    [data-report-narrative-body] {
+      margin: 4px 0 0 !important;
+      font-size: 11px !important;
+      color: #1e293b !important;
+      line-height: 1.45 !important;
+      white-space: pre-wrap !important;
+    }
+
+    [data-report-signoff] {
+      display: grid !important;
+      grid-template-columns: 1.2fr 0.9fr 1.4fr !important;
+      gap: 0 !important;
+      width: 100% !important;
+      margin: 14px 0 0 !important;
+      border: 1px solid #e2e8f0 !important;
+      border-radius: 6px !important;
+      overflow: hidden !important;
+      page-break-inside: avoid;
+    }
+    [data-report-signoff-cell] {
+      padding: 10px 12px !important;
+      border-right: 1px solid #e2e8f0 !important;
+      min-width: 0 !important;
+      background: #fff !important;
+    }
+    [data-report-signoff-cell]:nth-child(2) { background: #f8fafc !important; }
+    [data-report-signoff-cell]:last-child { border-right: none !important; }
+    [data-report-signoff-cell] p { margin: 0 !important; }
+    [data-report-signoff-cell] p:first-child {
+      font-size: 9px !important; font-weight: 700 !important;
+      letter-spacing: 0.05em !important; text-transform: uppercase !important; color: #64748b !important;
+    }
+    [data-report-signoff-cell] p:nth-child(2) {
+      margin-top: 4px !important; font-size: 13px !important; font-weight: 600 !important; color: #0f172a !important;
+    }
+    [data-report-signature] {
+      margin-top: 2px !important; min-height: 28px !important; font-size: 18px !important;
+      font-family: "Segoe Script","Brush Script MT",cursive,serif !important;
+      font-style: italic !important; color: #0f172a !important; line-height: 1.2 !important;
+    }
+    [data-report-section-title] {
+      margin: 0 0 6px !important;
+      font-size: 12px !important;
+      font-weight: 700 !important;
+      color: #0f172a !important;
+      letter-spacing: 0.02em !important;
+      text-transform: uppercase !important;
+      border-left: 3px solid ${primaryColor} !important;
+      padding-left: 8px !important;
+    }
+    [data-report-checklist] { margin-top: 12px !important; }
+    [data-report-section] { margin-bottom: 12px !important; }
+
     /* KPI strip — match on-screen preview sizes */
     [data-report-kpi-grid] {
       display: grid !important;
