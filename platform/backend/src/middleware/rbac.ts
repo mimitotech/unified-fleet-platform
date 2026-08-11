@@ -10,11 +10,12 @@ const ROLE_MODULES: Record<string, string[]> = {
     'dashboard', 'monitoring', 'surveillance', 'drivers', 'routes', 'fuel',
     'emissions', 'workshop', 'alerts', 'trailers', 'sensors', 'geofencing', 'commands',
   ],
-  operator: ['dashboard', 'monitoring', 'alerts', 'routes'],
+  operator: ['dashboard', 'monitoring', 'alerts', 'routes', 'workshop'],
   viewer: ['dashboard', 'monitoring', 'alerts'],
 };
 
-const WRITE_ROLES = ['super_admin', 'platform_admin', 'tenant_admin', 'manager'];
+// Operators write workshop records (inspections / maintenance / breakdowns) in the field.
+const WRITE_ROLES = ['super_admin', 'platform_admin', 'tenant_admin', 'manager', 'operator'];
 const COMMAND_ROLES = ['super_admin', 'platform_admin', 'tenant_admin', 'manager'];
 
 const ADMIN_ROLES = new Set(['super_admin', 'platform_admin', 'tenant_admin']);

@@ -192,6 +192,34 @@ export async function ensureWorkshopSchema(): Promise<void> {
   await addColumn('assets', 'asset_category', "asset_category VARCHAR(32) NULL");
 
   await ensureChecklistTemplatesTable();
+  await ensureOperatorWorkshopAccess();
+}
+
+/** Operators handle field inspections / maintenance — grant workshop if missing. */
+async function ensureOperatorWorkshopAccess(): Promise<void> {
+  try {
+    await query(
+      `INSERT INTO user_modules (id, user_id, module_key, is_enabled)
+       SELECT UUID(), u.id, 'workshop', 1
+       FROM users u
+       WHERE u.role = 'operator'
+         AND u.is_active = 1
+         AND NOT EXISTS (
+           SELECT 1 FROM user_modules um
+           WHERE um.user_id = u.id AND um.module_key = 'workshop'
+         )`,
+    );
+    await query(
+      `UPDATE user_modules um
+       INNER JOIN users u ON u.id = um.user_id
+       SET um.is_enabled = 1
+       WHERE u.role = 'operator'
+         AND um.module_key = 'workshop'
+         AND um.is_enabled = 0`,
+    );
+  } catch (e) {
+    console.warn('[workshop] ensureOperatorWorkshopAccess:', (e as Error).message);
+  }
 }
 
 export async function getChecklistTemplateForCategory(

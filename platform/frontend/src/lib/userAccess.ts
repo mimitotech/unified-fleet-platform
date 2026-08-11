@@ -20,9 +20,10 @@ export const ROLE_ACCESS: Record<
     canCommand: true,
   },
   operator: {
-    description: 'Day-to-day monitoring — dashboard, live map, alerts, and routes (read-focused).',
-    modules: ['dashboard', 'monitoring', 'alerts', 'routes'],
-    canWrite: false,
+    description:
+      'Day-to-day operations — live map, alerts, routes, and workshop (inspections, maintenance, breakdowns).',
+    modules: ['dashboard', 'monitoring', 'alerts', 'routes', 'workshop'],
+    canWrite: true,
     canCommand: false,
   },
   viewer: {
