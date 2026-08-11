@@ -13,8 +13,8 @@ export const LIVE_POLL = {
   drivers: 20_000,
   routes: 20_000,
   geofences: 30_000,
-  /** Selected unit detail / sensors — snappier than fleet poll */
-  unitDetail: 5_000,
+  /** Selected unit detail / sensors — avoid hammering Wialon on every click refresh */
+  unitDetail: 15_000,
   unitTrack: 10_000,
   reports: 60_000,
 } as const;

@@ -9,6 +9,10 @@ import {
   tankCapacityFromItem,
   fuelPercentFromLitres,
 } from './wialonFuelSensorUtils.js';
+import {
+  evaluateWialonParamExpression,
+  roundSensorReading,
+} from './wialonParamExpr.js';
 
 type CalcSensor = { n: string; v: string; u?: string; t?: number };
 
@@ -27,37 +31,61 @@ function mapMaintenance(item: WialonSearchItem) {
   return wialonObjectValues(si)
     .filter((s) => s?.n)
     .map((s) => {
-      const overdue = s.cnm != null && s.nmt != null && s.cnm > s.nmt;
-      const delta = overdue && s.cnm != null && s.nmt != null ? Math.round(s.cnm - s.nmt) : 0;
-      const unit =
-        s.n?.toLowerCase().includes('service') || s.n?.toLowerCase().includes('day') ? 'days' : 'km';
+      const current = s.cnm;
+      const next = s.nmt;
+      const name = s.n!;
+      const isDays = /day/i.test(name);
+      const unitLabel = isDays ? 'days' : /hour|e\/h|eng/i.test(name) ? 'e/h' : 'km';
+      let detail = 'OK';
+      if (current != null && next != null && Number.isFinite(current) && Number.isFinite(next)) {
+        const delta = Math.round(current - next);
+        if (delta > 0) {
+          detail = `${delta} ${unitLabel} overdue`;
+        } else if (delta < 0) {
+          detail = `${Math.abs(delta)} ${unitLabel} left`;
+        } else {
+          detail = `Due now`;
+        }
+      }
       return {
         id: (s as { id?: number }).id,
-        name: s.n!,
-        counter: s.cnm,
-        threshold: s.nmt,
-        detail: overdue ? `${delta} ${unit} overdue` : 'OK',
+        name,
+        counter: current,
+        threshold: next,
+        detail,
+        overdue: current != null && next != null && current > next,
       };
     });
 }
 
 /**
  * Build the sensor list exactly as Wialon Hosting does:
- * `unit/calc_last_message` value when present, else the configured parameter
- * from the last message only (exact `def.param` key — no name aliases).
- * Never invent a placeholder value.
+ * `unit/calc_last_message` value when present, else evaluate the configured
+ * parameter formula against last-message params (Engine_Hours/const3600, etc.).
  */
 function mergeSensorValues(slice: WialonUnitSlice, calcSensors: CalcSensor[]) {
   const calcByName = new Map(calcSensors.map((s) => [s.n, s]));
-  const params = slice.lmsg?.params || {};
+  const params = (slice.lmsg?.params || {}) as Record<string, string | number | null | undefined>;
+  // Also fold prms when lmsg is thin
+  for (const p of slice.prms || []) {
+    if (p.key && params[p.key] == null && p.value !== '' && p.value != null) {
+      params[p.key] = p.value;
+    }
+  }
 
   const fromDefs = slice.sens.map((def) => {
     const calc = calcByName.get(def.name);
-    const paramVal =
-      def.param && params[def.param] != null && params[def.param] !== ''
-        ? String(params[def.param])
-        : undefined;
-    const value = calc?.v != null && calc.v !== '' ? String(calc.v) : paramVal ?? '';
+    let value = '';
+    if (calc?.v != null && String(calc.v).trim() !== '') {
+      value = String(calc.v);
+    } else if (def.param) {
+      const evaluated = evaluateWialonParamExpression(def.param, params);
+      if (evaluated != null) {
+        value = String(roundSensorReading(evaluated));
+      } else if (params[def.param] != null && params[def.param] !== '') {
+        value = String(params[def.param]);
+      }
+    }
     return {
       id: def.id,
       name: def.name,
@@ -160,6 +188,7 @@ export type WialonUnitDetail = WialonUnitSlice & {
     counter?: number;
     threshold?: number;
     detail: string;
+    overdue?: boolean;
   }>;
   video?: Record<string, unknown>;
   address?: string;

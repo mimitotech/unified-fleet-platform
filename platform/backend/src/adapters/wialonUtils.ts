@@ -21,7 +21,7 @@ export const WIALON_UNIT_FLAG = {
   PROFILE: 0x00800000,
 } as const;
 
-/** Fleet list — monitoring + props, fields, image, hw, trip detector, connection. */
+/** Fleet list — monitoring + props, fields, image, hw, trip detector, connection, service intervals. */
 export const WIALON_UNIT_FLAGS =
   WIALON_UNIT_FLAG.BASE |
   WIALON_UNIT_FLAG.CUSTOM_PROPS |
@@ -33,7 +33,8 @@ export const WIALON_UNIT_FLAGS =
   WIALON_UNIT_FLAG.COUNTERS |
   WIALON_UNIT_FLAG.TRIP_FUEL |
   WIALON_UNIT_FLAG.MSG_PARAMS |
-  WIALON_UNIT_FLAG.CONNECTION;
+  WIALON_UNIT_FLAG.CONNECTION |
+  WIALON_UNIT_FLAG.MAINTENANCE;
 
 /** Full unit detail — fleet flags + maintenance + profile. */
 export const WIALON_UNIT_DETAIL_FLAGS =

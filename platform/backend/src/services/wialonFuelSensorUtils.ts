@@ -1,5 +1,10 @@
 import type { WialonSearchItem } from '../adapters/wialonUtils.js';
 import { calculateSensorValue } from './wialonFuel.js';
+import {
+  collectUnitParamMap,
+  evaluateWialonParamExpression,
+  roundSensorReading,
+} from './wialonParamExpr.js';
 
 /** One live reading from a Wialon unit sensor (sens + prms), with the Wialon label. */
 export type WialonUnitSensorReading = {
@@ -108,8 +113,14 @@ function coerceNumeric(raw: unknown): number | null {
   return null;
 }
 
-/** Prefer live last-message param, then prms snapshot (Hosting often shows lmsg when prms is stale). */
+/** Prefer live last-message param, then prms snapshot (Hosting often shows lmsg when prms is stale).
+ *  Also evaluates Wialon formulas: Engine_Hours/const3600, io_29/const10, etc.
+ */
 function resolveSensorRaw(item: WialonSearchItem, param: string): number | null {
+  const params = collectUnitParamMap(item);
+  const evaluated = evaluateWialonParamExpression(param, params);
+  if (evaluated != null) return evaluated;
+  // Legacy exact-key fallback
   const fromLmsg = coerceNumeric(item.lmsg?.p?.[param]);
   if (fromLmsg != null) return fromLmsg;
   const prmsEntry = item.prms?.[param];
@@ -137,7 +148,7 @@ export function readAllUnitSensors(item: WialonSearchItem): WialonUnitSensorRead
 
     const typeStr = String(sensor.t ?? '');
     const isFuel = isFuelLevelSensor(sensor.n, sensor.t);
-    const value = Math.round(calculateSensorValue(raw, parseTbl(sensor.tbl)) * 10) / 10;
+    const value = roundSensorReading(calculateSensorValue(raw, parseTbl(sensor.tbl)));
     const unit = (sensor.u || defaultUnit(sensor.n, sensor.t, isFuel)).trim();
 
     readings.push({

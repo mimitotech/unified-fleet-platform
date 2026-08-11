@@ -251,7 +251,49 @@ export class AlertOrchestrator {
     }
 
     count += await this.promoteFuelEventsToAlerts();
+    try {
+      count += await this.syncWialonServiceIntervals();
+    } catch {
+      /* optional — service intervals from Wialon si */
+    }
     return count;
+  }
+
+  /**
+   * Mirror Wialon Hosting maintenance intervals (si) into Inbox as Service due
+   * when the interval is overdue (e.g. "86 days overdue", "Genset Service Interval").
+   */
+  private async syncWialonServiceIntervals(): Promise<number> {
+    const { loadTenantWialonCreds } = await import('../services/tenantWialonCredentials.js');
+    const { WialonHierarchyService } = await import('../services/WialonHierarchyService.js');
+    const { emitServiceDueAlert } = await import('../services/workshopAlertService.js');
+    const { wialonObjectValues } = await import('../adapters/wialonUtils.js');
+
+    const creds = await loadTenantWialonCreds(this.tenantId);
+    const accountId = Number(creds.accountId);
+    if (!Number.isFinite(accountId) || accountId <= 0) return 0;
+
+    const items = await WialonHierarchyService.getUnitsForAccount(creds, accountId, 10_000);
+    let inserted = 0;
+    for (const item of items) {
+      if (!item.si) continue;
+      const assetUuid = await this.resolveAssetUuid(String(item.id));
+      for (const s of wialonObjectValues(item.si)) {
+        if (!s?.n || s.cnm == null || s.nmt == null) continue;
+        if (!(s.cnm > s.nmt)) continue;
+        const delta = Math.round(s.cnm - s.nmt);
+        const unitLabel = /day/i.test(s.n) ? 'days' : /hour|e\/h|eng/i.test(s.n) ? 'e/h' : 'km';
+        await emitServiceDueAlert({
+          tenantId: this.tenantId,
+          assetId: assetUuid,
+          vehicleName: item.nm || `Unit ${item.id}`,
+          reason: `${s.n}: ${delta} ${unitLabel} overdue`,
+          sourceId: `wialon-si:${item.id}:${s.n}`,
+        });
+        inserted++;
+      }
+    }
+    return inserted;
   }
 
   /**

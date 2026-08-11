@@ -832,44 +832,24 @@ export class WialonLiveService {
       const item = result.item;
       if (!item) throw new Error('Unit not found');
 
-      const sensorIds = item.sens
-        ? Object.keys(item.sens)
-            .map((id) => Number(id))
-            .filter((id) => Number.isFinite(id) && id > 0)
-        : [];
-
-      // Sensors + optional video/fuel in parallel. Skip events/check_updates —
-      // that round-trip was the main delay; calibrated sensors already carry fuel.
-      const [hwTypes, calcSensors, video, fuelSettings] = await Promise.all([
+      // Parallel: HW cache + one calc_last_message. Local formula eval covers
+      // Engine_Hours/const3600 and io_29/const10 even when calc returns blank.
+      // Skip video/fuel-settings round-trips — they were the main click latency.
+      const [hwTypes, calcSensors] = await Promise.all([
         hwPromise,
         (async () => {
           try {
             const sens = await client.request<{
               sensors?: Array<{ n: string; v: string; u?: string; t?: number }>;
             }>('unit/calc_last_message', { unitId, sensors: [], flags: 1 });
-            if (sens.sensors?.length) return sens.sensors;
-          } catch {
-            /* retry below */
-          }
-          if (!sensorIds.length) return [] as Array<{ n: string; v: string; u?: string; t?: number }>;
-          try {
-            const sens = await client.request<{
-              sensors?: Array<{ n: string; v: string; u?: string; t?: number }>;
-            }>('unit/calc_last_message', { unitId, sensors: sensorIds, flags: 1 });
             return sens.sensors || [];
           } catch {
-            return [];
+            return [] as Array<{ n: string; v: string; u?: string; t?: number }>;
           }
         })(),
-        client
-          .request<Record<string, unknown>>('unit/get_video_settings', { itemId: unitId })
-          .catch(() => undefined),
-        client
-          .request<Record<string, unknown>>('unit/get_fuel_settings', { itemId: unitId })
-          .catch(() => undefined),
       ]);
 
-      return parseWialonUnitDetail(item, hwTypes, calcSensors, video, fuelSettings);
+      return parseWialonUnitDetail(item, hwTypes, calcSensors);
     });
   }
 
