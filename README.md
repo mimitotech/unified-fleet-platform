@@ -14,19 +14,21 @@ platform/          ← Hostinger Root directory = platform
   deploy/          Env templates + deploy docs
 ```
 
-## Production (Hostinger)
+## Production (Hostinger) — live
 
 | Setting | Value |
 |---------|--------|
+| **Domain** | **https://mams.mimitotracking.com** |
+| **MySQL** | **u632889724_mams** (user `u632889724_mams`) |
 | **Root directory** | **`platform`** |
-| Branch | `master` (or this feature branch) |
+| Branch | `master` |
 | Node | `22.x` |
 | Build command | `npm run build` |
 | Output directory | *(empty)* |
 | Entry file | **`hostinger-start.mjs`** |
 
 1. Import [`platform/database/mysql/ufp_complete_schema.sql`](platform/database/mysql/ufp_complete_schema.sql) in phpMyAdmin.
-2. Env vars: [`platform/deploy/hostinger.env.example`](platform/deploy/hostinger.env.example)
+2. Env vars: [`platform/deploy/hostinger.env.example`](platform/deploy/hostinger.env.example) — import in hPanel.
 3. Full guide: [`platform/deploy/HOSTINGER_DEPLOY.md`](platform/deploy/HOSTINGER_DEPLOY.md)
 
 ## Local development

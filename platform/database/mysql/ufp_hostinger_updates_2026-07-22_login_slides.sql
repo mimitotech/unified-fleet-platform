@@ -1,7 +1,7 @@
 -- =============================================================================
 -- MAMS Hostinger MySQL — Login page slideshow media
 -- Date: 2026-07-22 (login slides)
--- Database: u454222977_mams (phpMyAdmin)
+-- Database: u632889724_mams (phpMyAdmin)
 -- Safe to re-run: CREATE TABLE IF NOT EXISTS
 -- The Node app also auto-creates this table on startup.
 -- =============================================================================

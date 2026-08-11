@@ -62,11 +62,25 @@ function readParts(): ConnParts {
   return { user, password, database, port };
 }
 
+function poolLimits(): { connectionLimit: number; queueLimit: number } {
+  const connectionLimit = Math.min(
+    50,
+    Math.max(5, parseInt(process.env.DB_CONNECTION_LIMIT || '20', 10) || 20)
+  );
+  const queueLimit = Math.min(
+    500,
+    Math.max(0, parseInt(process.env.DB_QUEUE_LIMIT || '100', 10) || 100)
+  );
+  return { connectionLimit, queueLimit };
+}
+
 async function tryConnect(label: string, opts: mysql.PoolOptions): Promise<Pool> {
+  const limits = poolLimits();
   const p = mysql.createPool({
     ...opts,
     waitForConnections: true,
-    connectionLimit: 10,
+    connectionLimit: limits.connectionLimit,
+    queueLimit: limits.queueLimit,
     timezone: 'Z',
     supportBigNumbers: true,
     connectTimeout: 10000,
@@ -83,7 +97,10 @@ async function tryConnect(label: string, opts: mysql.PoolOptions): Promise<Pool>
     await p.end().catch(() => undefined);
     throw err;
   }
-  console.log('[mams-db] connected via', label);
+  console.log('[mams-db] connected via', label, {
+    connectionLimit: limits.connectionLimit,
+    queueLimit: limits.queueLimit,
+  });
   return p;
 }
 

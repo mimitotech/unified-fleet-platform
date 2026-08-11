@@ -1,6 +1,6 @@
 -- Unified Fleet Platform / MAMS — complete MySQL 8 / MariaDB schema
 -- Import into an EXISTING empty database via phpMyAdmin (Import tab).
--- Do not run CREATE DATABASE here — use your Hostinger DB (e.g. u454222977_mams).
+-- Do not run CREATE DATABASE here — use your Hostinger DB (e.g. u632889724_mams).
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
@@ -778,7 +778,7 @@ ON DUPLICATE KEY UPDATE label = VALUES(label);
 
 INSERT INTO system_settings (`key`, value) VALUES
   ('general', JSON_OBJECT('platformName','MAMS','defaultLanguage','en','defaultTimezone','Africa/Kampala')),
-  ('email', JSON_OBJECT('smtpHost','','smtpPort',587,'fromEmail','noreply@mams.frontstardigital.com','fromName','MAMS')),
+  ('email', JSON_OBJECT('smtpHost','','smtpPort',587,'fromEmail','noreply@mams.mimitotracking.com','fromName','MAMS')),
   ('webhooks', JSON_OBJECT('globalSecret','','events', JSON_ARRAY('alerts','status'))),
   ('backup', JSON_OBJECT('autoBackup',true,'frequency','daily','backupTime','02:00','retentionDays',30)),
   ('security', JSON_OBJECT('minPasswordLength',8,'requireSpecialChar',true,'sessionTimeoutMinutes',30,'twoFactorPolicy','optional'))

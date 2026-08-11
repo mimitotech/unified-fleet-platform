@@ -16,7 +16,12 @@ export function validateEnv(): void {
     Boolean(process.env.DB_USER && process.env.DB_NAME);
 
   if (isProd && !hasMysql) {
-    logger.error('MySQL is required in production. Set DB_USER/DB_NAME/DB_PASSWORD/DB_HOST or DATABASE_URL.');
+    logger.error('MySQL is required in production. Set DB_USER/DB_NAME/DB_PASSWORD or DATABASE_URL.');
+    process.exit(1);
+  }
+
+  if (isProd && process.env.DB_USER && process.env.DB_NAME && !process.env.DB_PASSWORD?.trim() && !process.env.DATABASE_URL?.includes('@')) {
+    logger.error('DB_PASSWORD is required in production when using DB_USER/DB_NAME.');
     process.exit(1);
   }
 

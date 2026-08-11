@@ -35,9 +35,11 @@ async function waitForDatabase(maxAttempts = 8, delayMs = 1500): Promise<boolean
 MySQL Access denied for this user/password.
 
 In Hostinger → Environment variables, set (and re-save):
-  DB_USER=u454222977_mams
+  DB_USER=u632889724_mams
   DB_PASSWORD=<exact password from hPanel → Databases — reset it if unsure>
-  DB_NAME=u454222977_mams
+  DB_NAME=u632889724_mams
+  API_PUBLIC_URL=https://mams.mimitotracking.com
+  FRONTEND_URL=https://mams.mimitotracking.com
 
 Remove DATABASE_URL (optional; DB_* is enough).
 Confirm the same user/password opens the DB in phpMyAdmin.

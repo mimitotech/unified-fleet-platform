@@ -1,4 +1,4 @@
--- Bootstrap Mimito platform admin (run ONCE in phpMyAdmin → SQL on u454222977_mams).
+-- Bootstrap Mimito platform admin (run ONCE in phpMyAdmin → SQL on u632889724_mams).
 -- Login: admin@mimitotracking.co.ug / MamsAdmin@@123
 -- WARNING: The UPDATE below resets that password every time this script is run.
 -- Do not re-run on production after the admin has changed their password.

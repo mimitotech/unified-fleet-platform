@@ -1,5 +1,5 @@
 -- =============================================================================
--- MAMS Hostinger MySQL updates — run in phpMyAdmin on database u454222977_mams
+-- MAMS Hostinger MySQL updates — run in phpMyAdmin on database u632889724_mams
 -- Date: 2026-07-22
 -- Safe to re-run: if a column/index already exists, skip that statement (ignore
 -- duplicate-column / duplicate-key errors) and continue with the rest.
