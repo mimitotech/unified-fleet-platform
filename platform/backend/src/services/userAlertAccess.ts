@@ -55,13 +55,16 @@ export async function ensureUserAlertAccessSchema(): Promise<void> {
   if (schemaReady) return;
   try {
     await query(`ALTER TABLE users ADD COLUMN allowed_alert_types JSON NULL`);
+    schemaReady = true;
   } catch (e) {
     const msg = (e as Error).message || '';
-    if (!/duplicate column|exists/i.test(msg)) {
-      console.warn('[user-alert-access] ensureSchema:', msg);
+    if (/duplicate column|exists/i.test(msg)) {
+      schemaReady = true;
+      return;
     }
+    console.warn('[user-alert-access] ensureSchema:', msg);
+    // Do not mark ready — next call can retry; callers may still insert without the column.
   }
-  schemaReady = true;
 }
 
 export function roleBypassesAlertAcl(role?: string | null): boolean {

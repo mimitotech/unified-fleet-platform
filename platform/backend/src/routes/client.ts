@@ -9,6 +9,7 @@ import { tenantMiddleware, requireTenant, type TenantRequest } from '../middlewa
 import { getAllowedModules } from '../middleware/rbac.js';
 import { success, error } from '../utils/response.js';
 import { assertStrongPassword, generateStrongPassword } from '../utils/passwordPolicy.js';
+import { createTenantUser } from '../services/UserCreateService.js';
 import { AssetOrchestrator } from '../orchestrators/AssetOrchestrator.js';
 import { AlertOrchestrator } from '../orchestrators/AlertOrchestrator.js';
 import { DashboardOrchestrator } from '../orchestrators/DashboardOrchestrator.js';
@@ -232,20 +233,9 @@ router.post('/users', requireTenant, async (req: TenantRequest, res) => {
     role?: string;
     allowedAlertTypes?: unknown;
   };
-  if (!email || !/\S+@\S+\.\S+/.test(email)) return error(res, 'A valid email is required');
   const userRole = role || 'viewer';
   if (!isValidTenantRole(userRole)) return error(res, 'Invalid role');
 
-  const explicitPassword = password != null ? String(password) : '';
-  const temporaryPassword = explicitPassword.trim()
-    ? explicitPassword
-    : generateStrongPassword({ length: 16 });
-  try {
-    assertStrongPassword(temporaryPassword);
-  } catch (e) {
-    return error(res, (e as Error).message);
-  }
-  const hash = await bcrypt.hash(temporaryPassword, 10);
   // Tenant admins are unrestricted. Everyone else gets an explicit allowlist
   // (default empty = see no alerts until the admin ticks types).
   const allowed = roleBypassesAlertAcl(userRole)
@@ -253,29 +243,20 @@ router.post('/users', requireTenant, async (req: TenantRequest, res) => {
     : (sanitizeAllowedAlertTypesInput(
         allowedAlertTypes === undefined ? [] : allowedAlertTypes,
       ) ?? []);
+
   try {
-    const { rows } = await query(
-      `INSERT INTO users (tenant_id, email, password_hash, full_name, role, force_password_change, allowed_alert_types)
-       VALUES ($1, $2, $3, $4, $5, true, $6)
-       RETURNING id, email, full_name, role, is_active, created_at, allowed_alert_types`,
-      [
-        req.tenantId,
-        email.toLowerCase().trim(),
-        hash,
-        fullName || email,
-        userRole,
-        allowed == null ? null : JSON.stringify(allowed),
-      ]
-    );
-    await AuditService.log({
-      tenantId: req.tenantId,
-      userId: req.user?.id,
-      userEmail: req.user?.email,
-      action: 'user.create',
-      resourceType: 'user',
-      resourceId: rows[0].id as string,
-      details: {
-        email,
+    const created = await createTenantUser({
+      tenantId: String(req.tenantId),
+      email: String(email || ''),
+      password,
+      fullName,
+      role: userRole,
+      allowedAlertTypesJson: allowed == null ? null : JSON.stringify(allowed),
+      forcePasswordChange: true,
+      actorUserId: req.user?.id,
+      actorEmail: req.user?.email,
+      auditAction: 'user.create',
+      auditDetails: {
         role: userRole,
         by: 'tenant_admin',
         allowedAlertTypes: allowed,
@@ -286,9 +267,9 @@ router.post('/users', requireTenant, async (req: TenantRequest, res) => {
     try {
       const { sendAccountCredentialsEmail } = await import('../services/EmailService.js');
       credentialsEmailed = await sendAccountCredentialsEmail({
-        to: email.toLowerCase().trim(),
-        fullName: fullName || email,
-        temporaryPassword,
+        to: created.email,
+        fullName: created.full_name,
+        temporaryPassword: created.temporaryPassword || String(password || ''),
         reason: 'created',
       });
     } catch {
@@ -298,19 +279,24 @@ router.post('/users', requireTenant, async (req: TenantRequest, res) => {
     return success(
       res,
       {
-        ...rows[0],
-        allowed_alert_types: parseAllowedAlertTypes(rows[0].allowed_alert_types),
-        temporaryPassword: credentialsEmailed ? undefined : password ? undefined : temporaryPassword,
+        id: created.id,
+        email: created.email,
+        full_name: created.full_name,
+        role: created.role,
+        is_active: created.is_active,
+        created_at: created.created_at,
+        allowed_alert_types: allowed,
+        temporaryPassword:
+          credentialsEmailed || password
+            ? undefined
+            : created.temporaryPassword,
         credentialsEmailed,
       },
       201,
     );
   } catch (e) {
-    const msg = (e as Error).message || '';
-    if (msg.includes('duplicate') || msg.includes('unique')) {
-      return error(res, 'A user with this email already exists', 409);
-    }
-    throw e;
+    const err = e as Error & { status?: number };
+    return error(res, err.message, err.status || 500);
   }
 });
 

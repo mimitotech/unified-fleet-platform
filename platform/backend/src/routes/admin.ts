@@ -26,6 +26,7 @@ import {
 import { publicUrlOrPath } from '../utils/publicUrl.js';
 import { normalizeUploadPath } from '../utils/normalizeUploadPath.js';
 import { assertStrongPassword, generateStrongPassword } from '../utils/passwordPolicy.js';
+import { createSystemUser, createTenantUser } from '../services/UserCreateService.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -435,31 +436,20 @@ router.post('/system-users', requireSuperAdmin, async (req: AuthRequest, res) =>
   const { email, password, fullName, role } = req.body;
   if (!email) return error(res, 'email required');
   const staffRole = role === 'super_admin' ? 'super_admin' : 'platform_admin';
-  const explicitPassword = password != null ? String(password) : '';
-  const finalPassword = explicitPassword.trim()
-    ? explicitPassword
-    : generateStrongPassword({ length: 16 });
   try {
-    assertStrongPassword(finalPassword);
+    const user = await createSystemUser({
+      email,
+      password,
+      fullName,
+      role: staffRole,
+      actorUserId: req.user?.id,
+      actorEmail: req.user?.email,
+    });
+    return success(res, user, 201);
   } catch (e) {
-    return error(res, (e as Error).message);
+    const err = e as Error & { status?: number };
+    return error(res, err.message, err.status || 500);
   }
-  const hash = await bcrypt.hash(finalPassword, 10);
-  const { rows } = await query(
-    `INSERT INTO users (tenant_id, email, password_hash, full_name, role)
-     VALUES (NULL, $1, $2, $3, $4)
-     RETURNING id, email, full_name, role, is_active, created_at`,
-    [String(email).toLowerCase().trim(), hash, fullName || email, staffRole]
-  );
-  await AuditService.log({
-    userId: req.user?.id,
-    userEmail: req.user?.email,
-    action: 'system_user.create',
-    resourceType: 'user',
-    resourceId: rows[0].id as string,
-    details: { email, role: staffRole },
-  });
-  return success(res, rows[0], 201);
 });
 
 router.patch('/system-users/:id', requireSuperAdmin, async (req: AuthRequest, res) => {
@@ -1162,46 +1152,25 @@ router.get('/tenants/:id/users/:userId', async (req, res) => {
 router.post('/tenants/:id/users', async (req: AuthRequest, res) => {
   const { email, password, fullName, role, modules } = req.body;
   if (!email || !String(email).trim()) return error(res, 'email required');
-  const explicitPassword = password != null ? String(password) : '';
-  let temporaryPassword: string | undefined;
-  const finalPassword = explicitPassword.trim()
-    ? explicitPassword
-    : (() => {
-        const pw = generateStrongPassword({ length: 16 });
-        temporaryPassword = pw;
-        return pw;
-      })();
-
   try {
-    assertStrongPassword(finalPassword);
+    const user = await createTenantUser({
+      tenantId: String(req.params.id),
+      email,
+      password,
+      fullName,
+      role,
+      modules: Array.isArray(modules) ? (modules as string[]) : undefined,
+      forcePasswordChange: true,
+      actorUserId: req.user?.id,
+      actorEmail: req.user?.email,
+      auditAction: 'user.create',
+      auditDetails: { by: 'admin' },
+    });
+    return success(res, user, 201);
   } catch (e) {
-    return error(res, (e as Error).message);
+    const err = e as Error & { status?: number };
+    return error(res, err.message, err.status || 500);
   }
-
-  const hash = await bcrypt.hash(finalPassword, 10);
-  const { rows } = await query(
-    `INSERT INTO users (tenant_id, email, password_hash, full_name, role)
-     VALUES ($1, $2, $3, $4, $5) RETURNING id, email, full_name, role, is_active`,
-    [req.params.id, email, hash, fullName || email, role || 'viewer']
-  );
-  if (Array.isArray(modules)) {
-    for (const mod of modules as string[]) {
-      await query(
-        `INSERT INTO user_modules (user_id, module_key, is_enabled) VALUES ($1, $2, true) ON CONFLICT DO NOTHING`,
-        [rows[0].id, mod]
-      );
-    }
-  }
-  await AuditService.log({
-    tenantId: String(req.params.id),
-    userId: req.user?.id,
-    userEmail: req.user?.email,
-    action: 'user.create',
-    resourceType: 'user',
-    resourceId: rows[0].id as string,
-    details: { email },
-  });
-  return success(res, { ...rows[0], temporaryPassword }, 201);
 });
 
 router.get('/tenants/:id/wialon/users', async (req, res) => {

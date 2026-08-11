@@ -163,7 +163,7 @@ export default function TenantDetail() {
 
   // Users
   const [newUser, setNewUser] = useState({ email: '', password: '', fullName: '', role: 'viewer' });
-  const [newUserModules, setNewUserModules] = useState<string[]>([]);
+  const [newUserModules, setNewUserModules] = useState<string[]>(() => defaultModulesForRole('viewer'));
   const [editingTenantUser, setEditingTenantUser] = useState<ClientUserRow | null>(null);
 
   // API keys
@@ -528,11 +528,16 @@ export default function TenantDetail() {
         ...newUser,
         modules: newUserModules.length ? newUserModules : undefined,
       }),
-    onSuccess: () => {
+    onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['tenantUsers', id] });
       setNewUser({ email: '', password: '', fullName: '', role: 'viewer' });
-      setNewUserModules([]);
-      notify.success('User created');
+      setNewUserModules(defaultModulesForRole('viewer'));
+      const temp = (data as { temporaryPassword?: string })?.temporaryPassword;
+      if (temp) {
+        notify.success('User created', `Temporary password: ${temp}`);
+      } else {
+        notify.success('User created');
+      }
     },
     onError: (e: Error) => notify.error('Create failed', e.message),
   });

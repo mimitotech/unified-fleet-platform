@@ -38,10 +38,15 @@ export default function SystemUsersPage() {
 
   const createUser = useMutation({
     mutationFn: () => adminApi.createSystemUser(form),
-    onSuccess: () => {
+    onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['systemUsers'] });
       setForm({ email: '', password: '', fullName: '', role: 'platform_admin' });
-      notify.success('System user created');
+      const temp = (data as { temporaryPassword?: string })?.temporaryPassword;
+      if (temp) {
+        notify.success('System user created', `Temporary password: ${temp}`);
+      } else {
+        notify.success('System user created');
+      }
     },
     onError: (e) => notify.error('Create failed', (e as Error).message),
   });
