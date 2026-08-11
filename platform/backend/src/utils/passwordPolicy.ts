@@ -45,7 +45,7 @@ export function generateStrongPassword(opts?: { length?: number }): string {
   const lower = 'abcdefghijkmnopqrstuvwxyz';
   const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
   const digits = '0123456789';
-  const symbols = '!@#$%^&*()-_=+[]{};:,.?';
+  const symbols = '!@#$%^*-_+=?';
 
   const pick = (alphabet: string) => alphabet[crypto.randomInt(0, alphabet.length)];
   const required = [pick(lower), pick(upper), pick(digits), pick(symbols)];

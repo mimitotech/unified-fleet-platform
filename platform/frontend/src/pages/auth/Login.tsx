@@ -335,7 +335,10 @@ export default function Login() {
       } else if (result.resetToken) {
         setResetToken(result.resetToken);
         setView('forgot-reset');
-        notify.success('Account found', 'Choose a new password to continue.');
+        notify.success(
+          'Continue password reset',
+          result.message || 'Choose a new password to continue.',
+        );
       } else {
         notify.error('Reset unavailable', 'No reset method available. Contact support.');
       }

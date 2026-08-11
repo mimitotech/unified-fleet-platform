@@ -145,8 +145,15 @@ export default function Settings() {
     mutationFn: (u: TenantUser) => clientApi.resetTenantUserPassword(u.id),
     onSuccess: (res, u) => {
       setResetUser(null);
-      const r = res as { temporaryPassword: string };
+      const r = res as { temporaryPassword?: string; credentialsEmailed?: boolean };
+      if (!r?.temporaryPassword) {
+        notify.error('Reset incomplete', 'Password was reset but temporary password was not returned. Try again.');
+        return;
+      }
       setTempPassword({ email: u.email, password: r.temporaryPassword });
+      if (r.credentialsEmailed) {
+        notify.success('Password reset', 'Temporary password emailed and shown below.');
+      }
     },
     onError: (e) => notify.error('Could not reset password', (e as Error).message),
   });

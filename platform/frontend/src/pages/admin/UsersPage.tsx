@@ -45,7 +45,11 @@ export default function AdminUsersPage() {
   const resetPassword = useMutation({
     mutationFn: (id: string) => adminApi.resetUserPassword(id),
     onSuccess: (data) => {
-      const d = data as { temporaryPassword: string };
+      const d = data as { temporaryPassword?: string };
+      if (!d?.temporaryPassword) {
+        notify.error('Reset incomplete', 'No temporary password returned. Try again.');
+        return;
+      }
       notify.info('Temporary password created', `Share securely: ${d.temporaryPassword}`);
     },
     onError: (e: Error) => notify.error('Reset failed', e.message),

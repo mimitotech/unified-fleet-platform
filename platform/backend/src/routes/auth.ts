@@ -257,13 +257,17 @@ router.post('/forgot-password', async (req, res) => {
     { expiresIn: '15m', algorithm: 'HS256' },
   );
 
-  const { isSmtpConfigured, sendPasswordResetEmail } = await import('../services/EmailService.js');
+  const { isSmtpConfiguredAsync, sendPasswordResetEmail } = await import('../services/EmailService.js');
 
   let emailed = false;
-  if (isSmtpConfigured() || process.env.NODE_ENV === 'production') {
+  let emailError: string | undefined;
+  const smtpReady = await isSmtpConfiguredAsync();
+  if (smtpReady) {
     try {
       emailed = await sendPasswordResetEmail(user.email, resetToken);
+      if (!emailed) emailError = 'SMTP send returned false';
     } catch (err) {
+      emailError = (err as Error).message;
       await AuditService.log({
         userId: user.id,
         userEmail: user.email,
@@ -271,12 +275,8 @@ router.post('/forgot-password', async (req, res) => {
         action: 'auth.forgot_password_email_failed',
         resourceType: 'user',
         resourceId: user.id,
-        details: { reason: (err as Error).message },
+        details: { reason: emailError },
       });
-      return error(res, 'Could not send reset email. Try again shortly or contact support.', 503);
-    }
-    if (!emailed) {
-      return error(res, 'Email is not configured on the server. Contact your administrator.', 503);
     }
   }
 
@@ -287,15 +287,23 @@ router.post('/forgot-password', async (req, res) => {
     action: 'auth.forgot_password_ok',
     resourceType: 'user',
     resourceId: user.id,
-    details: { emailed },
+    details: { emailed, emailError: emailError || null, smtpReady },
   });
 
-  // Production always emails the link — never return the token to the browser.
+  // Prefer email. If mail cannot be sent, fall back to in-browser reset so the flow still works.
   if (emailed) {
     return success(res, { emailed: true, email: user.email, expiresInMinutes: 15 });
   }
 
-  return success(res, { resetToken, email: user.email, expiresInMinutes: 15, emailed: false });
+  return success(res, {
+    resetToken,
+    email: user.email,
+    expiresInMinutes: 15,
+    emailed: false,
+    message: smtpReady
+      ? 'Could not send email. Continue here to set a new password.'
+      : 'Email is not configured. Continue here to set a new password.',
+  });
 });
 
 /**

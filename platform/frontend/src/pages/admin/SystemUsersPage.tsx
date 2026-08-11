@@ -54,9 +54,14 @@ export default function SystemUsersPage() {
   const resetPassword = useMutation({
     mutationFn: (id: string) => adminApi.resetSystemUserPassword(id),
     onSuccess: (data) => {
-      const d = data as { temporaryPassword: string };
+      const d = data as { temporaryPassword?: string };
+      if (!d?.temporaryPassword) {
+        notify.error('Reset incomplete', 'No temporary password returned. Try again.');
+        return;
+      }
       notify.success('Password reset', `Temporary password: ${d.temporaryPassword}`);
     },
+    onError: (e) => notify.error('Reset failed', (e as Error).message),
   });
 
   const list = (users as Array<Record<string, unknown>>) || [];

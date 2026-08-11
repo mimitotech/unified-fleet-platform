@@ -174,13 +174,16 @@ export const authApi = {
       body: JSON.stringify({ currentPassword, newPassword }),
     }),
   forgotPassword: (email: string) =>
-    api<{ resetToken?: string; emailed?: boolean; email: string; expiresInMinutes: number }>(
-      '/api/auth/forgot-password',
-      {
-        method: 'POST',
-        body: JSON.stringify({ email }),
-      },
-    ),
+    api<{
+      resetToken?: string;
+      emailed?: boolean;
+      email: string;
+      expiresInMinutes: number;
+      message?: string;
+    }>('/api/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
   resetPassword: (resetToken: string, newPassword: string, confirmPassword: string) =>
     api<{ reset: boolean }>('/api/auth/reset-password', {
       method: 'POST',
@@ -1591,10 +1594,13 @@ export const clientApi = {
   removeTenantUser: (userId: string) =>
     api(`/api/client/users/${userId}`, { method: 'DELETE' }),
   resetTenantUserPassword: (userId: string, password?: string) =>
-    api<{ reset: boolean; temporaryPassword: string }>(`/api/client/users/${userId}/reset-password`, {
-      method: 'POST',
-      body: JSON.stringify({ password }),
-    }),
+    api<{ reset: boolean; temporaryPassword: string; credentialsEmailed?: boolean }>(
+      `/api/client/users/${userId}/reset-password`,
+      {
+        method: 'POST',
+        body: JSON.stringify(password ? { password } : {}),
+      },
+    ),
 
   sendCommand: (assetId: string, command: string, params?: Record<string, unknown>) =>
     api(`/api/client/commands/${assetId}`, { method: 'POST', body: JSON.stringify({ command, params }) }),
@@ -1686,7 +1692,10 @@ export const adminApi = {
     data: { fullName?: string; role?: string; isActive?: boolean; modules?: string[] }
   ) => api(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   resetUserPassword: (id: string, password?: string) =>
-    api(`/api/admin/users/${id}/reset-password`, { method: 'POST', body: JSON.stringify({ password }) }),
+    api<{ reset: boolean; temporaryPassword: string }>(`/api/admin/users/${id}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify(password ? { password } : {}),
+    }),
   bulkUsers: (action: string, userIds: string[]) =>
     api('/api/admin/users/bulk', { method: 'POST', body: JSON.stringify({ action, userIds }) }),
 
@@ -1696,9 +1705,9 @@ export const adminApi = {
   updateSystemUser: (id: string, data: Record<string, unknown>) =>
     api(`/api/admin/system-users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   resetSystemUserPassword: (id: string, password?: string) =>
-    api(`/api/admin/system-users/${id}/reset-password`, {
+    api<{ reset: boolean; temporaryPassword: string }>(`/api/admin/system-users/${id}/reset-password`, {
       method: 'POST',
-      body: JSON.stringify({ password }),
+      body: JSON.stringify(password ? { password } : {}),
     }),
 
   listTenants: (params?: { search?: string; status?: string; sort?: string; page?: number }) => {

@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { query, withTransaction } from '../config/database.js';
 import { authMiddleware, requireAdminAccess, requireSuperAdmin, type AuthRequest } from '../middleware/auth.js';
@@ -25,8 +24,8 @@ import {
 } from '../utils/userAccess.js';
 import { publicUrlOrPath } from '../utils/publicUrl.js';
 import { normalizeUploadPath } from '../utils/normalizeUploadPath.js';
-import { assertStrongPassword, generateStrongPassword } from '../utils/passwordPolicy.js';
 import { createSystemUser, createTenantUser } from '../services/UserCreateService.js';
+import { resetSystemUserPassword, resetUserPasswordById } from '../services/PasswordResetService.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -373,21 +372,10 @@ router.post('/users/:id/reset-password', async (req: AuthRequest, res) => {
   try {
     const userId = String(req.params.id);
     await assertCanManageClientUser(req, userId);
-    const explicitPassword = req.body.password != null ? String(req.body.password) : '';
-    const newPassword = explicitPassword.trim()
-      ? explicitPassword
-      : generateStrongPassword({ length: 16 });
-
-    try {
-      assertStrongPassword(newPassword);
-    } catch (e) {
-      return error(res, (e as Error).message);
-    }
-    const hash = await bcrypt.hash(newPassword, 10);
-    await query(
-      `UPDATE users SET password_hash = $2, force_password_change = true, updated_at = NOW() WHERE id = $1`,
-      [userId, hash]
-    );
+    const result = await resetUserPasswordById(userId, {
+      password: req.body?.password,
+      forcePasswordChange: true,
+    });
     await AuditService.log({
       userId: req.user?.id,
       userEmail: req.user?.email,
@@ -395,10 +383,10 @@ router.post('/users/:id/reset-password', async (req: AuthRequest, res) => {
       resourceType: 'user',
       resourceId: userId,
     });
-    return success(res, { reset: true, temporaryPassword: newPassword });
+    return success(res, { reset: true, temporaryPassword: result.temporaryPassword });
   } catch (e) {
     const err = e as Error & { status?: number };
-    return error(res, err.message, err.status || 500);
+    return error(res, err.message || 'Could not reset password', err.status || 500);
   }
 });
 
@@ -470,24 +458,13 @@ router.patch('/system-users/:id', requireSuperAdmin, async (req: AuthRequest, re
 });
 
 router.post('/system-users/:id/reset-password', requireSuperAdmin, async (req: AuthRequest, res) => {
-  const explicitPassword = req.body.password != null ? String(req.body.password) : '';
-  const newPassword = explicitPassword.trim()
-    ? explicitPassword
-    : generateStrongPassword({ length: 16 });
   try {
-    assertStrongPassword(newPassword);
+    const result = await resetSystemUserPassword(String(req.params.id), req.body?.password);
+    return success(res, { reset: true, temporaryPassword: result.temporaryPassword });
   } catch (e) {
-    return error(res, (e as Error).message);
+    const err = e as Error & { status?: number };
+    return error(res, err.message || 'Could not reset password', err.status || 500);
   }
-  const hash = await bcrypt.hash(newPassword, 10);
-  const { rows } = await query(
-    `UPDATE users SET password_hash = $2, updated_at = NOW()
-     WHERE id = $1 AND tenant_id IS NULL AND role IN ('super_admin', 'platform_admin')
-     RETURNING id`,
-    [req.params.id, hash]
-  );
-  if (!rows[0]) return error(res, 'System user not found', 404);
-  return success(res, { reset: true, temporaryPassword: newPassword });
 });
 
 // ─── Tenants ─────────────────────────────────────────────────────────────────

@@ -1,6 +1,4 @@
 import { Router } from 'express';
-import bcrypt from 'bcryptjs';
-import crypto from 'crypto';
 import { query } from '../config/database.js';
 import { AuditService } from '../services/AuditService.js';
 import { isValidTenantRole } from '../utils/userAccess.js';
@@ -8,8 +6,8 @@ import { authMiddleware } from '../middleware/auth.js';
 import { tenantMiddleware, requireTenant, type TenantRequest } from '../middleware/tenant.js';
 import { getAllowedModules } from '../middleware/rbac.js';
 import { success, error } from '../utils/response.js';
-import { assertStrongPassword, generateStrongPassword } from '../utils/passwordPolicy.js';
 import { createTenantUser } from '../services/UserCreateService.js';
+import { resetUserPasswordById } from '../services/PasswordResetService.js';
 import { AssetOrchestrator } from '../orchestrators/AssetOrchestrator.js';
 import { AlertOrchestrator } from '../orchestrators/AlertOrchestrator.js';
 import { DashboardOrchestrator } from '../orchestrators/DashboardOrchestrator.js';
@@ -395,49 +393,46 @@ router.post('/users/:userId/reset-password', requireTenant, async (req: TenantRe
   if (userId === req.user?.id) {
     return error(res, 'Use the change password form in Account to update your own password');
   }
-  const explicitPassword = req.body?.password != null ? String(req.body.password) : '';
-  const temporaryPassword = explicitPassword.trim()
-    ? explicitPassword
-    : generateStrongPassword({ length: 16 });
-  try {
-    assertStrongPassword(temporaryPassword);
-  } catch (e) {
-    return error(res, (e as Error).message);
-  }
-  const hash = await bcrypt.hash(temporaryPassword, 10);
-  const { rows } = await query(
-    `UPDATE users SET password_hash = $3, force_password_change = true, updated_at = NOW()
-     WHERE id = $2 AND tenant_id = $1 RETURNING id, email`,
-    [req.tenantId, userId, hash]
-  );
-  if (!rows[0]) return error(res, 'User not found', 404);
-  await AuditService.log({
-    tenantId: req.tenantId,
-    userId: req.user?.id,
-    userEmail: req.user?.email,
-    action: 'user.reset_password',
-    resourceType: 'user',
-    resourceId: userId,
-    details: { by: 'tenant_admin' },
-  });
 
-  let credentialsEmailed = false;
   try {
-    const { sendAccountCredentialsEmail } = await import('../services/EmailService.js');
-    credentialsEmailed = await sendAccountCredentialsEmail({
-      to: String(rows[0].email),
-      temporaryPassword,
-      reason: 'reset',
+    const result = await resetUserPasswordById(userId, {
+      password: req.body?.password,
+      tenantId: req.tenantId,
+      forcePasswordChange: true,
     });
-  } catch {
-    credentialsEmailed = false;
-  }
 
-  return success(res, {
-    reset: true,
-    temporaryPassword: credentialsEmailed ? undefined : temporaryPassword,
-    credentialsEmailed,
-  });
+    await AuditService.log({
+      tenantId: req.tenantId,
+      userId: req.user?.id,
+      userEmail: req.user?.email,
+      action: 'user.reset_password',
+      resourceType: 'user',
+      resourceId: userId,
+      details: { by: 'tenant_admin' },
+    });
+
+    let credentialsEmailed = false;
+    try {
+      const { sendAccountCredentialsEmail } = await import('../services/EmailService.js');
+      credentialsEmailed = await sendAccountCredentialsEmail({
+        to: result.email,
+        temporaryPassword: result.temporaryPassword,
+        reason: 'reset',
+      });
+    } catch {
+      credentialsEmailed = false;
+    }
+
+    // Always return the temp password to the admin UI so reset never looks broken.
+    return success(res, {
+      reset: true,
+      temporaryPassword: result.temporaryPassword,
+      credentialsEmailed,
+    });
+  } catch (e) {
+    const err = e as Error & { status?: number };
+    return error(res, err.message || 'Could not reset password', err.status || 500);
+  }
 });
 
 // Dashboard KPIs

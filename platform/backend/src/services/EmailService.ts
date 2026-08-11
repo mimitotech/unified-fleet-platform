@@ -164,6 +164,15 @@ function brandShell(title: string, bodyHtml: string): string {
 </body></html>`;
 }
 
+function escapeHtml(value: string): string {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export async function sendPasswordResetEmail(to: string, resetToken: string): Promise<boolean> {
   const base = getPublicBaseUrl();
   const link = `${base}/auth/login?resetToken=${encodeURIComponent(resetToken)}`;
@@ -219,8 +228,8 @@ export async function sendAccountCredentialsEmail(opts: {
     text,
     html: brandShell(
       title,
-      `<p>${lead}</p>
-       <p><strong>Email:</strong> ${opts.to}<br/><strong>Temporary password:</strong> ${opts.temporaryPassword}</p>
+      `<p>${escapeHtml(lead)}</p>
+       <p><strong>Email:</strong> ${escapeHtml(opts.to)}<br/><strong>Temporary password:</strong> <code>${escapeHtml(opts.temporaryPassword)}</code></p>
        <p style="margin:20px 0;"><a href="${loginUrl}" style="display:inline-block;background:#004225;color:#fff;text-decoration:none;padding:12px 18px;border-radius:6px;font-weight:600;">Sign in to MAMS</a></p>
        <p style="font-size:13px;color:#6b7280;">Change your password after signing in.</p>`,
     ),
