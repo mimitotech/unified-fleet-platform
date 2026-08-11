@@ -1,3 +1,5 @@
+import { getTenantSlug, getToken } from '@/lib/api';
+
 const API_URL = import.meta.env.VITE_API_URL || '';
 
 /** Single fetch size — scaled in UI; keeps cache stable across map/list. */
@@ -29,8 +31,10 @@ export function subscribeFleetIconCache(listener: () => void): () => void {
 
 function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
-  const token = localStorage.getItem('ufp_token');
-  const tenant = localStorage.getItem('ufp_tenant_slug');
+  const token = getToken();
+  // Must match api() tenant resolution (URL → session preview → localStorage).
+  // localStorage-only broke View Client icons (question marks) for system staff.
+  const tenant = getTenantSlug();
   if (token) headers.Authorization = `Bearer ${token}`;
   if (tenant) headers['X-Tenant-Slug'] = tenant;
   return headers;

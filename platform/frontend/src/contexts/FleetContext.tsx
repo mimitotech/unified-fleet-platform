@@ -11,30 +11,33 @@ const FleetReadyContext = createContext(false);
 
 export function FleetProvider({ children }: { children: ReactNode }) {
   const { isAuthenticated } = useAuth();
-  const { connected } = useWialonContext();
+  const { connected, configured, isLoading } = useWialonContext();
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    if (!isAuthenticated || !connected) {
+    if (!isAuthenticated) {
       resetFleetService();
       setReady(false);
       return;
     }
 
-    let cancelled = false;
-    void getFleetService()
-      .initialize()
-      .then((ok) => {
-        if (!cancelled) setReady(ok);
-      })
-      .catch(() => {
-        if (!cancelled) setReady(false);
-      });
+    // Wait for context; once Wialon is configured+connected, unlock fuel queries.
+    // Do not block the whole Fuel module on a slow initialize() — that left tabs empty.
+    if (isLoading) return;
 
-    return () => {
-      cancelled = true;
-    };
-  }, [isAuthenticated, connected]);
+    if (!configured || !connected) {
+      resetFleetService();
+      setReady(false);
+      return;
+    }
+
+    setReady(true);
+    void getFleetService().initialize().catch(() => {
+      /* still allow live API queries — initialize is best-effort */
+    });
+
+    return undefined;
+  }, [isAuthenticated, connected, configured, isLoading]);
 
   return (
     <FleetReadyContext.Provider value={isAuthenticated && connected && ready}>
