@@ -1,4 +1,8 @@
 import { safeArray } from './safeArray';
+import {
+  readTenantPreviewSlugFromLocation,
+  readTenantPreviewSlugFromSession,
+} from '@/lib/adminTenantPreview';
 
 export type {
   FuelSensorSlotValue,
@@ -77,7 +81,16 @@ function getToken(): string | null {
 }
 
 function getTenantSlug(): string | null {
-  return localStorage.getItem('ufp_tenant_slug');
+  // Admin View Client: URL wins, then this-tab session preview, then login slug.
+  const fromUrl = readTenantPreviewSlugFromLocation();
+  if (fromUrl) return fromUrl;
+  const fromSession = readTenantPreviewSlugFromSession();
+  if (fromSession) return fromSession;
+  try {
+    return localStorage.getItem('ufp_tenant_slug');
+  } catch {
+    return null;
+  }
 }
 
 export { getToken, getTenantSlug };
@@ -519,7 +532,7 @@ export const clientApi = {
         lmsg?: { time?: number; params?: Record<string, string | number> };
         position?: { lat: number; lng: number; speed: number; time: number; course?: number };
       }>;
-    }>('/api/client/fleet/snapshot').then((snap) => ({
+    }>('/api/client/fleet/snapshot', { timeoutMs: 90_000 }).then((snap) => ({
       ...snap,
       units: safeArray(snap?.units),
       counts: snap?.counts ?? {

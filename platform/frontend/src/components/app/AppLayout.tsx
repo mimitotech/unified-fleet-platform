@@ -24,6 +24,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { clientFacingText } from '@/lib/clientFacingText';
 import { isNoiseAlertTitle } from '@/lib/alertNoise';
+import { withTenantPreviewSearch } from '@/lib/adminTenantPreview';
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -178,7 +179,10 @@ export function AppLayout({ children, title, subtitle, actions }: AppLayoutProps
               <DropdownMenuContent align="end" className="w-[min(20rem,calc(100vw-1.5rem))] p-0">
                 <div className="px-3 py-2 border-b flex items-center justify-between">
                   <p className="text-sm font-semibold">Alerts</p>
-                  <Link to="/app/alerts" className="text-xs text-primary hover:underline">
+                  <Link
+                    to={withTenantPreviewSearch('/app/alerts')}
+                    className="text-xs text-primary hover:underline"
+                  >
                     View all
                   </Link>
                 </div>
@@ -231,7 +235,12 @@ export function AppLayout({ children, title, subtitle, actions }: AppLayoutProps
                   <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
                   <p className="text-xs text-primary font-medium truncate mt-1">{branding.name}</p>
                 </div>
-                <DropdownMenuItem onClick={() => navigate('/app/settings')}>
+                <DropdownMenuItem
+                  onClick={() => {
+                    const dest = withTenantPreviewSearch('/app/settings');
+                    navigate(`${dest.pathname}${dest.search || ''}`);
+                  }}
+                >
                   <Settings className="w-4 h-4 mr-2" />Settings
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => { signOut(); navigate('/auth/login'); }}>

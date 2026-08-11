@@ -7,6 +7,7 @@ import {
   resetToPlatformBranding,
 } from '@/lib/tenantBrandingCache';
 import { clearAllMapViewports } from '@/lib/mapViewport';
+import { isSystemRole } from '@/lib/systemRoles';
 
 interface AuthContextValue {
   user: User | null;
@@ -45,7 +46,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then((u) => {
         setUser(u);
         setMapSessionKey(buildMapSessionKey(u));
-        if (u.tenantSlug) setAuth(token, u.tenantSlug);
+        // System staff View Client: never overwrite preview slug from /me.
+        if (isSystemRole(u.role)) {
+          localStorage.setItem('ufp_token', token);
+        } else if (u.tenantSlug) {
+          setAuth(token, u.tenantSlug);
+        }
       })
       .catch(() => {
         clearAuth();

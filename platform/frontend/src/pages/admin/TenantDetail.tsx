@@ -37,7 +37,6 @@ import { WialonUserImportCard } from '@/components/admin/WialonUserImportCard';
 import { defaultModulesForRole } from '@/lib/userAccess';
 import { FUEL_TABLE_COLUMN_DEFS } from '@/lib/fuelModuleConfig';
 import { getClientPortalUrl } from '@/lib/portalUrl';
-import { getToken, setAuth } from '@/lib/api';
 import { format } from 'date-fns';
 
 type Tenant = Record<string, unknown>;
@@ -675,8 +674,7 @@ export default function TenantDetail() {
                 notify.error('Missing slug', 'Save the client slug before viewing the app');
                 return;
               }
-              const token = getToken();
-              if (token) setAuth(token, slug);
+              // Open with ?tenant= only — do not mutate shared localStorage (steals other tabs).
               window.open(getClientPortalUrl(slug), '_blank', 'noopener,noreferrer');
             }}
           >

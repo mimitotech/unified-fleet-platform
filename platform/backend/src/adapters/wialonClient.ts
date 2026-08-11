@@ -30,11 +30,11 @@ export interface WialonClientConfig {
 }
 
 const WIALON_FETCH_TIMEOUT_MS = Math.min(
-  60_000,
-  Math.max(8_000, parseInt(process.env.WIALON_FETCH_TIMEOUT_MS || '25000', 10) || 25_000),
+  90_000,
+  Math.max(15_000, parseInt(process.env.WIALON_FETCH_TIMEOUT_MS || '45000', 10) || 45_000),
 );
 
-async function wialonFetch(url: string, timeoutMs = WIALON_FETCH_TIMEOUT_MS): Promise<Response> {
+export async function wialonFetch(url: string, timeoutMs = WIALON_FETCH_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {

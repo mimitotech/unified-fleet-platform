@@ -433,7 +433,9 @@ export default function Settings() {
                     role: editUser.id === user?.id ? undefined : editForm.role,
                     allowedAlertTypes: roleBypassesAlertAcl(editForm.role)
                       ? null
-                      : editForm.allowedAlertTypes,
+                      : editForm.allowedAlertTypes.length
+                        ? editForm.allowedAlertTypes
+                        : null,
                   },
                 })
               }

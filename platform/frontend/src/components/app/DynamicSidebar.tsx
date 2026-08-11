@@ -12,6 +12,7 @@ import { BRAND } from '@/lib/branding';
 import { useAuth } from '@/providers/AuthProvider';
 import { useSidebar } from '@/providers/SidebarContext';
 import { Skeleton } from '@/components/ui/skeleton';
+import { withTenantPreviewSearch } from '@/lib/adminTenantPreview';
 
 const ICON_MAP: Record<string, React.ElementType> = {
   LayoutDashboard, Map, Video, Users, Route, Fuel, Wrench, BarChart3,
@@ -128,7 +129,7 @@ export function DynamicSidebar() {
             return (
               <Link
                 key={mod.moduleKey}
-                to={path}
+                to={withTenantPreviewSearch(path, location.search)}
                 title={iconOnly ? `${mod.label}${dataHidden ? ' (data hidden)' : ''}` : undefined}
                 className={cn(
                   'flex items-center rounded-lg transition-all duration-200',
@@ -153,7 +154,7 @@ export function DynamicSidebar() {
           })}
 
           <Link
-            to="/app/settings"
+            to={withTenantPreviewSearch('/app/settings', location.search)}
             title={collapsed && !isCompact ? 'Settings' : undefined}
             className={cn(
               'flex items-center rounded-lg transition-all duration-200 mt-2 border-t border-sidebar-border/60 pt-2',

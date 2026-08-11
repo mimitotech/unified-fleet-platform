@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { getPool, query, queryWithConn } from '../config/database.js';
+import { query } from '../config/database.js';
 import { AssetOrchestrator } from '../orchestrators/AssetOrchestrator.js';
 import { AlertOrchestrator } from '../orchestrators/AlertOrchestrator.js';
 import { FuelSyncService } from './FuelSyncService.js';
@@ -36,46 +36,17 @@ export function getSyncSchedulerStatus() {
 }
 
 /**
- * Named MySQL locks are connection-scoped. Hold one pool connection for the
- * entire critical section so GET_LOCK / work / RELEASE_LOCK share the same conn.
- * On lock-API failure, skip work (do not run unlocked).
+ * Hostinger runs a single Node process — in-process flags already serialize cycles.
+ * Do NOT hold a MySQL pool connection for GET_LOCK across long Wialon work
+ * (that starves live API / icons / dashboard under load).
  */
-async function withMysqlLock(name: string, work: () => Promise<void>): Promise<boolean> {
-  let conn;
+async function withSyncGate(name: string, work: () => Promise<void>): Promise<boolean> {
   try {
-    conn = await getPool().getConnection();
+    await work();
+    return true;
   } catch (err) {
-    logger.warn(`[SyncScheduler] pool getConnection failed for ${name}`, err);
-    return false;
-  }
-
-  try {
-    try {
-      const { rows } = await queryWithConn<{ got: number | string }>(conn, `SELECT GET_LOCK($1, 0) AS got`, [
-        name,
-      ]);
-      const got = Number(rows[0]?.got);
-      if (got !== 1) {
-        logger.debug(`[SyncScheduler] lock busy: ${name}`);
-        return false;
-      }
-    } catch (err) {
-      logger.warn(`[SyncScheduler] GET_LOCK failed for ${name} — skip cycle`, err);
-      return false;
-    }
-
-    try {
-      await work();
-      return true;
-    } finally {
-      try {
-        await queryWithConn(conn, `SELECT RELEASE_LOCK($1)`, [name]);
-      } catch {
-        /* ignore */
-      }
-    }
-  } finally {
-    conn.release();
+    logger.warn(`[SyncScheduler] ${name} failed`, err);
+    throw err;
   }
 }
 
@@ -87,7 +58,7 @@ async function runTenantCycle(): Promise<void> {
   tenantCycleRunning = true;
   lastTenantCycleError = null;
   try {
-    await withMysqlLock('mams_tenant_sync', async () => {
+    await withSyncGate('mams_tenant_sync', async () => {
       const tenants = await listActiveTenants();
       let assetCount = 0;
       let snapshotCount = 0;
@@ -137,7 +108,7 @@ async function runFuelDbCycle(): Promise<void> {
   }
   fuelDbCycleRunning = true;
   try {
-    await withMysqlLock('mams_fuel_db_sync', async () => {
+    await withSyncGate('mams_fuel_db_sync', async () => {
       const count = await FuelSyncService.syncAllConnectedTenantsToDb();
       if (count > 0) logger.info(`[FuelSync] synced fuel reports to database for ${count} tenants`);
     });
@@ -156,7 +127,7 @@ async function runDomainCycle(): Promise<void> {
   }
   domainCycleRunning = true;
   try {
-    await withMysqlLock('mams_domain_sync', async () => {
+    await withSyncGate('mams_domain_sync', async () => {
       const count = await DomainSyncService.syncAllConnectedTenants();
       if (count > 0) logger.info(`[DomainSync] synced trips/eco for ${count} Wialon tenants`);
     });
@@ -177,7 +148,7 @@ async function runAlertCycle(): Promise<void> {
   alertCycleRunning = true;
   lastAlertCycleError = null;
   try {
-    await withMysqlLock('mams_alert_sync', async () => {
+    await withSyncGate('mams_alert_sync', async () => {
       const purged = await AlertOrchestrator.purgeNoiseAlertsGlobally();
       if (purged > 0) {
         logger.info(`[AlertSync] purged ${purged} Engine_Hours / counter noise alerts`);

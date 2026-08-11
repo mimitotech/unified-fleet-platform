@@ -3,7 +3,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { notify } from '@/lib/notify';
 import { getAdminUrl, getClientLoginUrl, getClientPortalUrl } from '@/lib/portalUrl';
-import { getToken, setAuth } from '@/lib/api';
 import { Copy, ExternalLink } from 'lucide-react';
 
 type Props = {
@@ -26,8 +25,7 @@ function openClientApp(slug: string) {
     notify.error('Missing slug', 'Save the client slug before opening the app');
     return;
   }
-  const token = getToken();
-  if (token) setAuth(token, trimmed);
+  // ?tenant= binds the new tab — never overwrite shared localStorage from admin.
   window.open(getClientPortalUrl(trimmed), '_blank', 'noopener,noreferrer');
 }
 

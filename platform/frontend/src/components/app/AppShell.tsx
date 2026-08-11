@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/providers/AuthProvider';
 import { preloadFleetUnitIcons } from '@/lib/fleetIconCache';
-import { clientApi, getTenantSlug, getToken, setAuth } from '@/lib/api';
+import { clientApi, getTenantSlug } from '@/lib/api';
 import { snapshotToUnits } from '@/lib/fleetUnits';
 import { ThemeProvider } from '@/components/shared/ThemeProvider';
 import { FleetProvider } from '@/contexts/FleetContext';
@@ -43,10 +43,9 @@ function useAdminTenantPreviewScope(): string {
       return;
     }
 
-    const token = getToken();
     const prev = getTenantSlug();
     syncTenantPreviewFromUrl(location.search);
-    if (token) setAuth(token, urlSlug);
+    // Do not call setAuth here — that writes shared localStorage and steals other tabs.
 
     if (prev !== urlSlug) {
       qc.clear();
@@ -60,6 +59,7 @@ function useAdminTenantPreviewScope(): string {
 
 export function AppShell() {
   const { isAuthenticated, isLoading, user } = useAuth();
+  const location = useLocation();
   const tenantScope = useAdminTenantPreviewScope();
 
   useEffect(() => {
@@ -75,7 +75,8 @@ export function AppShell() {
   if (isLoading) return <AppBootLoader />;
   if (!isAuthenticated) return <Navigate to="/auth/login" replace />;
   if (needsTermsAcceptance(user)) {
-    return <Navigate to={`/auth/terms?next=${encodeURIComponent('/app/dashboard')}`} replace />;
+    const next = encodeURIComponent(`${location.pathname}${location.search}` || '/app/dashboard');
+    return <Navigate to={`/auth/terms?next=${next}`} replace />;
   }
   return (
     <ErrorBoundary fallbackTitle="Application error">
