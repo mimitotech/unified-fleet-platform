@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link, Navigate } from 'react-router-dom';
+import { useParams, Link, Navigate, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { adminApi } from '@/lib/api';
@@ -50,6 +50,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 
 export default function TenantDetail() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const { user: authUser } = useAuth();
   const isValidId = !!id && UUID_RE.test(id);
@@ -130,6 +131,7 @@ export default function TenantDetail() {
     maxVehicles: 1000, maxUsers: 50, maxStorageGb: 100,
     assignedManagerId: '' as string | null,
   });
+  const [purgeConfirmSlug, setPurgeConfirmSlug] = useState('');
 
   // Branding
   const [branding, setBranding] = useState({
@@ -316,8 +318,8 @@ export default function TenantDetail() {
       withToast(
         adminApi.linkWialonAccount(id!, accountId, accountName, userIds, motherAccountId),
         {
-          loading: 'Linking Wialon account…',
-          success: 'Account linked and synced',
+          loading: 'Linking Wialon account & syncing units/users (may take a few minutes)…',
+          success: 'Account linked',
         }
       ),
     onSuccess: (data, vars) => {
@@ -328,14 +330,43 @@ export default function TenantDetail() {
       const created = data?.sync?.usersCreated ?? data?.provision?.created ?? 0;
       const updated = data?.sync?.usersUpdated ?? data?.provision?.updated ?? 0;
       const usersTotal = data?.sync?.usersTotal ?? data?.userCount ?? 0;
-      notify.success(
-        'Wialon account linked',
-        `${data?.accountName || vars.accountName}: ${vehicles} vehicles, ${usersTotal} Wialon users (${created} new, ${updated} updated)`
-      );
+      const detail = `${data?.accountName || vars.accountName}: ${vehicles} vehicles, ${usersTotal} users (${created} new, ${updated} updated)`;
+      if (data?.syncOk === false || data?.syncWarning) {
+        notify.info(
+          'Account saved — sync incomplete',
+          data.syncWarning || `${detail}. Re-link or use Sync to finish resources/reports.`
+        );
+      } else if (data?.reportsReset) {
+        notify.success(
+          'Wialon account switched',
+          `${detail}. Fuel report selections were cleared — re-pick reports under Fuel Module.`
+        );
+      } else {
+        notify.success('Wialon account linked', detail);
+      }
       qc.invalidateQueries({ queryKey: ['integrations', id] });
       qc.invalidateQueries({ queryKey: ['wialon-hierarchy', id] });
       qc.invalidateQueries({ queryKey: ['wialon-center-hierarchy'] });
       qc.invalidateQueries({ queryKey: ['tenant-users', id] });
+      qc.invalidateQueries({ queryKey: ['tenantWialonReportCatalog', id] });
+      qc.invalidateQueries({ queryKey: ['tenantFuelModuleConfig', id] });
+      qc.invalidateQueries({ queryKey: ['adminTenant', id] });
+    },
+  });
+
+  const purgeTenant = useMutation({
+    mutationFn: () =>
+      withToast(adminApi.purgeTenant(id!, purgeConfirmSlug.trim()), {
+        loading: 'Deleting client permanently…',
+        success: 'Client deleted',
+      }),
+    onSuccess: (data) => {
+      notify.success(
+        'Client permanently deleted',
+        `${data.slug} and ${data.usersDeleted} user(s) removed`
+      );
+      qc.invalidateQueries({ queryKey: ['adminTenants'] });
+      navigate('/admin/tenants');
     },
   });
 
@@ -800,6 +831,53 @@ export default function TenantDetail() {
             </CardContent>
           </Card>
           <LoadingButton loading={saveGeneral.isPending} onClick={() => saveGeneral.mutate()}>Save Changes</LoadingButton>
+
+          <Card className="border-destructive/40">
+            <CardHeader>
+              <CardTitle className="text-destructive">Danger zone</CardTitle>
+              <CardDescription>
+                Permanently delete this client and all of its users, vehicles, and integrations.
+                This cannot be undone. Prefer setting Status to Inactive if you only want to disable access.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div>
+                <Label>
+                  Type slug <span className="font-mono text-foreground">{general.slug || String(t?.slug || '')}</span> to confirm
+                </Label>
+                <Input
+                  className="mt-1 max-w-md"
+                  value={purgeConfirmSlug}
+                  onChange={(e) => setPurgeConfirmSlug(e.target.value)}
+                  placeholder={general.slug || 'client-slug'}
+                  autoComplete="off"
+                />
+              </div>
+              <LoadingButton
+                variant="destructive"
+                loading={purgeTenant.isPending}
+                disabled={
+                  !purgeConfirmSlug.trim() ||
+                  purgeConfirmSlug.trim().toLowerCase() !==
+                    String(general.slug || t?.slug || '').trim().toLowerCase()
+                }
+                onClick={() => {
+                  const slug = String(general.slug || t?.slug || '');
+                  if (
+                    !confirm(
+                      `Permanently delete client "${general.name || t?.name}" (${slug})?\n\nAll users for this client will also be deleted. This cannot be undone.`
+                    )
+                  ) {
+                    return;
+                  }
+                  purgeTenant.mutate();
+                }}
+              >
+                <Trash2 className="h-4 w-4 mr-1" />
+                Delete client permanently
+              </LoadingButton>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* FUEL MODULE */}
@@ -1116,14 +1194,26 @@ export default function TenantDetail() {
                           <LoadingButton
                             loading={linkWialonAccount.isPending}
                             disabled={!wialonAccountId}
-                            onClick={() =>
+                            onClick={() => {
+                              const currentId = integ?.wialon_resource_id
+                                ? String(integ.wialon_resource_id)
+                                : '';
+                              if (currentId && currentId !== wialonAccountId) {
+                                if (
+                                  !confirm(
+                                    `Switch Wialon account from "${integ?.wialon_account_name || currentId}" to "${wialonAccountName || wialonAccountId}"?\n\nVehicles and users will re-sync. Fuel report selections will be cleared so you can re-bind reports for the new account.`
+                                  )
+                                ) {
+                                  return;
+                                }
+                              }
                               linkWialonAccount.mutate({
                                 accountId: wialonAccountId,
                                 accountName: wialonAccountName,
                                 userIds: wialonUserIds.length ? wialonUserIds : undefined,
                                 motherAccountId: wialonMotherAccountId || undefined,
-                              })
-                            }
+                              });
+                            }}
                           >
                             {integ?.wialon_resource_id ? 'Re-link & sync account' : 'Link account & sync'}
                           </LoadingButton>

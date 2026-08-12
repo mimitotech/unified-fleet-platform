@@ -192,6 +192,18 @@ export class WialonAccountLinkService {
   ) {
     await PlatformIntegrationService.assertAccountAvailable(accountId, tenantId);
 
+    const { rows: prevRows } = await query<{ wialon_resource_id: number | string | null }>(
+      `SELECT wialon_resource_id FROM data_sources
+       WHERE tenant_id = $1 AND source_type = 'wialon' LIMIT 1`,
+      [tenantId]
+    );
+    const previousAccountId =
+      prevRows[0]?.wialon_resource_id != null && String(prevRows[0].wialon_resource_id) !== ''
+        ? Number(prevRows[0].wialon_resource_id)
+        : null;
+    const accountChanged =
+      previousAccountId != null && !Number.isNaN(previousAccountId) && previousAccountId !== accountId;
+
     const resolvedMother = motherAccountId || (await import('./tenantWialonCredentials.js').then((m) => m.getTenantMotherAccountId(tenantId)));
     const motherId = resolvedMother || (await import('./WialonMotherAccountService.js').then((m) => m.WialonMotherAccountService.getDefaultId()));
     if (!motherId) throw new Error('Select a Wialon mother account before linking a tenant');
@@ -217,6 +229,7 @@ export class WialonAccountLinkService {
       counts: {
         ...((baseMeta.counts as Record<string, number> | undefined) || {}),
         units: units.length,
+        users: users.length,
       },
       baseUrl: platformMeta?.baseUrl || 'https://hst-api.wialon.com/wialon/ajax.html',
       scopedAccountId: accountId,
@@ -225,6 +238,7 @@ export class WialonAccountLinkService {
       motherAccountName: platformMeta?.name,
       linkedAt: new Date().toISOString(),
       source: 'wialon_center',
+      previousAccountId: accountChanged ? previousAccountId : undefined,
     };
 
     const tenantCreds = encryptCredentials({ accountId: String(accountId) });
@@ -256,44 +270,96 @@ export class WialonAccountLinkService {
       [tenantId, accountId, resolvedName, motherId, JSON.stringify(wialonMeta), units.length]
     );
 
-    const userIds = selectedUserIds?.length ? selectedUserIds : users.map((u) => u.id);
-    let provision = { accountId, accountName: resolvedName, created: 0, updated: 0, deactivated: 0, users: [] as WialonProvisionedUser[] };
-    if (userIds.length) {
-      provision = await WialonUserProvisionService.provisionUsers(
-        tenantId,
-        accountId,
-        users.filter((u) => userIds.includes(u.id)),
-        userIds
-      );
+    // Switching accounts invalidates old report template bindings for Fuel / modules.
+    if (accountChanged) {
+      await query(
+        `UPDATE tenant_fuel_module_configs
+         SET selected_reports = JSON_ARRAY(), updated_at = NOW()
+         WHERE tenant_id = $1`,
+        [tenantId]
+      ).catch(() => undefined);
     }
+    const { WialonReportResolverService } = await import('./WialonReportResolverService.js');
+    WialonReportResolverService.invalidate({ tenantId });
+    if (previousAccountId != null && !Number.isNaN(previousAccountId)) {
+      WialonReportResolverService.invalidate({ tenantId, accountId: previousAccountId });
+    }
+    WialonReportResolverService.invalidate({ tenantId, accountId });
 
+    const userIds = selectedUserIds?.length ? selectedUserIds : users.map((u) => u.id);
+    let provision = {
+      accountId,
+      accountName: resolvedName,
+      created: 0,
+      updated: 0,
+      deactivated: 0,
+      users: [] as WialonProvisionedUser[],
+    };
+    let syncOk = true;
+    let syncWarning: string | undefined;
     let sync = {
       vehicles: units.length,
       drivers: 0,
       geofences: 0,
-      usersCreated: provision.created,
-      usersUpdated: provision.updated,
-      usersTotal: users.length,
+      usersCreated: 0,
+      usersUpdated: 0,
+      usersTotal: userIds.length,
     };
+
     try {
+      // Single sync path: assets + prune out-of-scope + selected users (no double provision).
       const syncResult = await import('./WialonSyncService.js').then((m) =>
-        m.WialonSyncService.syncTenant(tenantId, { credentials: creds, units })
+        m.WialonSyncService.syncTenant(tenantId, {
+          credentials: creds,
+          units,
+          wialonUserIds: userIds,
+        })
       );
       sync = {
         ...syncResult,
         vehicles: syncResult.vehicles > 0 ? syncResult.vehicles : units.length,
-        usersCreated: syncResult.usersCreated ?? provision.created,
-        usersUpdated: syncResult.usersUpdated ?? provision.updated,
-        usersTotal: syncResult.usersTotal ?? users.length,
+        usersCreated: syncResult.usersCreated ?? 0,
+        usersUpdated: syncResult.usersUpdated ?? 0,
+        usersTotal: syncResult.usersTotal ?? userIds.length,
+      };
+      provision = {
+        ...provision,
+        created: sync.usersCreated ?? 0,
+        updated: sync.usersUpdated ?? 0,
       };
       await query(
-        `UPDATE data_sources SET last_error = NULL WHERE tenant_id = $1 AND source_type = 'wialon'`,
-        [tenantId]
+        `UPDATE data_sources SET
+           last_error = NULL,
+           wialon_session_meta = JSON_MERGE_PATCH(COALESCE(wialon_session_meta, '{}'), $2),
+           updated_at = NOW()
+         WHERE tenant_id = $1 AND source_type = 'wialon'`,
+        [
+          tenantId,
+          JSON.stringify({
+            syncWarning: null,
+            syncWarningAt: null,
+            syncOk: true,
+            lastFullLinkAt: new Date().toISOString(),
+          }),
+        ]
       );
     } catch (syncErr) {
-      const warn = `Sync after link: ${(syncErr as Error).message}`;
+      syncOk = false;
+      syncWarning = `Sync after link: ${(syncErr as Error).message}`;
       for (const unit of units) {
         await upsertWialonUnit(tenantId, unit).catch(() => undefined);
+      }
+      if (userIds.length) {
+        try {
+          provision = await WialonUserProvisionService.provisionUsers(
+            tenantId,
+            accountId,
+            users.filter((u) => userIds.includes(u.id)),
+            userIds
+          );
+        } catch {
+          /* provision best-effort if full sync failed */
+        }
       }
       await query(
         `UPDATE data_sources SET
@@ -304,7 +370,12 @@ export class WialonAccountLinkService {
          WHERE tenant_id = $1 AND source_type = 'wialon'`,
         [
           tenantId,
-          JSON.stringify({ syncWarning: warn, syncWarningAt: new Date().toISOString() }),
+          JSON.stringify({
+            syncWarning,
+            syncWarningAt: new Date().toISOString(),
+            syncOk: false,
+            lastFullLinkAt: new Date().toISOString(),
+          }),
         ]
       );
       sync = {
@@ -313,7 +384,7 @@ export class WialonAccountLinkService {
         geofences: 0,
         usersCreated: provision.created,
         usersUpdated: provision.updated,
-        usersTotal: users.length,
+        usersTotal: userIds.length,
       };
     }
     await import('../orchestrators/AssetOrchestrator.js').then((m) =>
@@ -325,6 +396,11 @@ export class WialonAccountLinkService {
       accountName: resolvedName,
       unitCount: units.length,
       userCount: users.length,
+      previousAccountId: accountChanged ? previousAccountId : null,
+      accountChanged,
+      reportsReset: accountChanged,
+      syncOk,
+      syncWarning,
       provision,
       sync,
     };

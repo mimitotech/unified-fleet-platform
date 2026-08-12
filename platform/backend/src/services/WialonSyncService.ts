@@ -11,7 +11,12 @@ import type { WialonCredentialsInput } from './WialonHierarchyService.js';
 export class WialonSyncService {
   static async syncTenant(
     tenantId: string,
-    options?: { credentials?: WialonCredentialsInput; units?: import('../adapters/wialonUtils.js').WialonSearchItem[] }
+    options?: {
+      credentials?: WialonCredentialsInput;
+      units?: import('../adapters/wialonUtils.js').WialonSearchItem[];
+      /** When set, only these Wialon users stay active for the tenant. */
+      wialonUserIds?: number[];
+    }
   ): Promise<{
     vehicles: number;
     drivers: number;
@@ -128,11 +133,17 @@ export class WialonSyncService {
     const wialonUsers = await WialonHierarchyService.getUsersForAccount(scopedCreds, accountId).catch(() => []);
     let provision = { created: 0, updated: 0, deactivated: 0, users: [] as Awaited<ReturnType<typeof WialonUserProvisionService.provisionUsers>>['users'] };
     if (wialonUsers.length) {
+      const selected =
+        Array.isArray(options?.wialonUserIds) && options.wialonUserIds.length
+          ? options.wialonUserIds
+          : wialonUsers.map((u) => u.id);
+      const selectedSet = new Set(selected);
+      const toProvision = wialonUsers.filter((u) => selectedSet.has(u.id));
       provision = await WialonUserProvisionService.provisionUsers(
         tenantId,
         accountId,
-        wialonUsers,
-        wialonUsers.map((u) => u.id)
+        toProvision,
+        selected,
       );
     }
 
@@ -164,7 +175,10 @@ export class WialonSyncService {
       geofences: geofencesSynced,
       usersCreated: provision.created,
       usersUpdated: provision.updated,
-      usersTotal: wialonUsers.length,
+      usersTotal:
+        Array.isArray(options?.wialonUserIds) && options.wialonUserIds.length
+          ? options.wialonUserIds.length
+          : wialonUsers.length,
     };
   }
 

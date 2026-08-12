@@ -115,6 +115,9 @@ export async function api<T>(
       ? setTimeout(() => controller.abort(), timeoutMs)
       : null;
 
+  const isLinkPath = path.includes('/wialon/link-account');
+  const isLongOp = Boolean(timeoutMs && timeoutMs >= 120_000);
+
   let res: Response;
   try {
     res = await fetch(`${API_URL}${path}`, {
@@ -124,6 +127,16 @@ export async function api<T>(
     });
   } catch (err) {
     if (controller?.signal.aborted) {
+      if (isLinkPath) {
+        throw new Error(
+          'Linking is taking longer than expected. Refresh this client page — the account may already be linked. If not, try Link again.'
+        );
+      }
+      if (isLongOp) {
+        throw new Error(
+          'Request timed out — this can take several minutes. Refresh and check whether it finished, or try again with a narrower range.'
+        );
+      }
       throw new Error('Request timed out — fuel reports can take several minutes. Try again or narrow the date range.');
     }
     throw new Error(
@@ -141,19 +154,23 @@ export async function api<T>(
     try {
       json = JSON.parse(text) as { error?: string; data?: T };
     } catch {
-      throw new Error(
-        res.ok
-          ? 'Unexpected server response'
-          : import.meta.env.DEV
-            ? 'MAMS server unavailable — ensure Postgres is running (Docker Desktop) and restart with npm run dev'
-            : 'MAMS server unavailable. Please refresh the page or try again shortly.'
-      );
+      // Gateway HTML/empty bodies often look like "server unavailable" even when the app is up.
+      if (res.status === 502 || res.status === 503 || res.status === 504 || !res.ok) {
+        throw new Error(
+          isLinkPath
+            ? 'The link request was cut off (gateway timeout). Refresh this page — the account may already be saved. If Integrations still shows the old account, try Link again.'
+            : 'The server took too long or returned a non-JSON error. Refresh and try again shortly.'
+        );
+      }
+      throw new Error(res.ok ? 'Unexpected server response' : 'Unexpected server response. Please refresh and try again.');
     }
   } else if (!res.ok) {
     throw new Error(
-      import.meta.env.DEV
-        ? 'MAMS server unavailable — ensure Postgres is running (Docker Desktop) and restart with npm run dev'
-        : 'MAMS server unavailable. Please refresh the page or try again shortly.'
+      res.status === 502 || res.status === 503 || res.status === 504
+        ? 'The server gateway timed out. Refresh and check whether your last action completed.'
+        : import.meta.env.DEV
+          ? 'MAMS server unavailable — ensure the API and database are running, then retry'
+          : 'MAMS server unavailable. Please refresh the page or try again shortly.'
     );
   }
 
@@ -1729,6 +1746,12 @@ export const adminApi = {
   updateTenant: (id: string, data: Record<string, unknown>) =>
     api(`/api/admin/tenants/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteTenant: (id: string) => api(`/api/admin/tenants/${id}`, { method: 'DELETE' }),
+  /** Permanent delete — requires confirmSlug matching the tenant slug. Cascades users and tenant data. */
+  purgeTenant: (id: string, confirmSlug: string) =>
+    api<{ deleted: boolean; slug: string; usersDeleted: number }>(`/api/admin/tenants/${id}/purge`, {
+      method: 'POST',
+      body: JSON.stringify({ confirmSlug }),
+    }),
 
   getIntegrations: (id: string) => api<unknown[]>(`/api/admin/tenants/${id}/integrations`),
   saveIntegration: (id: string, sourceType: string, credentials: Record<string, unknown>) =>
@@ -1908,11 +1931,25 @@ export const adminApi = {
       accountName: string;
       unitCount: number;
       userCount: number;
+      previousAccountId?: number | null;
+      accountChanged?: boolean;
+      reportsReset?: boolean;
+      syncOk?: boolean;
+      syncWarning?: string;
       provision: { created: number; updated: number; deactivated: number };
-      sync: { vehicles: number; drivers: number; geofences: number };
+      sync: {
+        vehicles: number;
+        drivers: number;
+        geofences: number;
+        usersCreated?: number;
+        usersUpdated?: number;
+        usersTotal?: number;
+      };
     }>(`/api/admin/tenants/${tenantId}/wialon/link-account`, {
       method: 'POST',
       body: JSON.stringify({ accountId, accountName, wialonUserIds, motherAccountId }),
+      // Full account link + vehicle/user sync can exceed default gateway patience; keep client waiting.
+      timeoutMs: 10 * 60 * 1000,
     }),
   getWialonAccountUnits: (tenantId: string, accountId: string) =>
     api<{ count: number; units: Array<{ id: number; name: string }> }>(

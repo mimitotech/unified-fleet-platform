@@ -665,6 +665,48 @@ router.delete('/tenants/:id', async (req: AuthRequest, res) => {
   return success(res, { deactivated: true });
 });
 
+/** Permanent delete: tenant + cascaded users and client data. Requires confirmSlug = tenant.slug. */
+router.post('/tenants/:id/purge', async (req: AuthRequest, res) => {
+  const tenantId = String(req.params.id);
+  const confirmSlug = String(req.body?.confirmSlug || '').trim().toLowerCase();
+  const { rows } = await query<{ id: string; slug: string; name: string }>(
+    `SELECT id, slug, name FROM tenants WHERE id = $1`,
+    [tenantId]
+  );
+  if (!rows[0]) return error(res, 'Client not found', 404);
+  const expected = String(rows[0].slug || '').trim().toLowerCase();
+  if (!confirmSlug || confirmSlug !== expected) {
+    return error(
+      res,
+      `Type the client slug "${rows[0].slug}" exactly to confirm permanent deletion`,
+      400
+    );
+  }
+
+  const { rows: userCountRows } = await query<{ n: number }>(
+    `SELECT COUNT(*)::int AS n FROM users WHERE tenant_id = $1`,
+    [tenantId]
+  );
+  const usersDeleted = Number(userCountRows[0]?.n || 0);
+
+  await query(`DELETE FROM tenants WHERE id = $1`, [tenantId]);
+
+  await AuditService.log({
+    userId: req.user?.id,
+    userEmail: req.user?.email,
+    action: 'tenant.purge',
+    resourceType: 'tenant',
+    resourceId: tenantId,
+    details: {
+      slug: rows[0].slug,
+      name: rows[0].name,
+      usersDeleted,
+    },
+  });
+
+  return success(res, { deleted: true, slug: rows[0].slug, usersDeleted });
+});
+
 router.post('/tenants/bulk', async (req, res) => {
   const { action, tenantIds } = req.body as { action: string; tenantIds: string[] };
   if (!Array.isArray(tenantIds)) return error(res, 'tenantIds required');
