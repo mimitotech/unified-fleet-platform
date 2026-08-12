@@ -45,8 +45,7 @@ export default function WialonCenter() {
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ['wialon-center-status'],
     queryFn: () => adminApi.getWialonCenterStatus(),
-    staleTime: 60_000,
-    refetchInterval: 60_000,
+    staleTime: 5 * 60_000,
   });
 
   const mothers = status?.motherAccounts || [];
@@ -61,15 +60,14 @@ export default function WialonCenter() {
     queryKey: ['wialon-center-hierarchy', activeMotherId],
     queryFn: () => adminApi.getWialonCenterHierarchy(activeMotherId),
     enabled: Boolean(activeMotherId),
-    staleTime: 60_000,
-    refetchInterval: 60_000,
+    staleTime: 5 * 60_000,
   });
 
   const { data: accountDetail, isLoading: accountLoading } = useQuery({
     queryKey: ['wialon-center-account', activeMotherId, selectedAccountId],
     queryFn: () => adminApi.getWialonCenterAccount(selectedAccountId!, activeMotherId),
     enabled: Boolean(selectedAccountId && activeMotherId),
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
   });
 
   const activeMother = mothers.find((m) => m.id === activeMotherId);

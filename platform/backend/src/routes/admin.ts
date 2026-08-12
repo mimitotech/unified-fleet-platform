@@ -308,7 +308,7 @@ router.get('/users', async (req: AuthRequest, res) => {
      INNER JOIN tenants t ON t.id = u.tenant_id
      ${where}
      ORDER BY u.created_at DESC
-     LIMIT 200`,
+     LIMIT 2000`,
     params
   );
   return success(res, rows);
@@ -479,17 +479,19 @@ router.post('/system-users/:id/reset-password', requireSuperAdmin, async (req: A
 // ─── Tenants ─────────────────────────────────────────────────────────────────
 
 router.get('/tenants', async (req: AuthRequest, res) => {
-  const result = await AdminOrchestrator.listTenantsWithStats({
-    search: String(req.query.search || ''),
-    status: String(req.query.status || 'all'),
-    integration: String(req.query.integration || ''),
-    sort: String(req.query.sort || 'name'),
-    page: parseInt(String(req.query.page || '1'), 10),
-    limit: parseInt(String(req.query.limit || '25'), 10),
-    managerId: req.user?.role === 'platform_admin' ? req.user.id : undefined,
-    groupByManager: isSuperAdmin(req.user?.role),
-  });
-  return success(res, result);
+    const page = parseInt(String(req.query.page || '1'), 10);
+    const limit = Math.min(1000, Math.max(1, parseInt(String(req.query.limit || '500'), 10)));
+    const result = await AdminOrchestrator.listTenantsWithStats({
+      search: String(req.query.search || ''),
+      status: String(req.query.status || 'all'),
+      integration: String(req.query.integration || ''),
+      sort: String(req.query.sort || 'name'),
+      page,
+      limit,
+      managerId: req.user?.role === 'platform_admin' ? req.user.id : undefined,
+      groupByManager: isSuperAdmin(req.user?.role),
+    });
+    return success(res, result);
 });
 
 router.post('/tenants', async (req: AuthRequest, res) => {
@@ -852,7 +854,7 @@ router.put('/tenants/:id/integrations/:sourceType', async (req: AuthRequest, res
     assets = await adapter.getAssets();
 
     if (sourceType === 'wialon') {
-      const probe = await WialonHierarchyService.probe({
+      const probe = await WialonHierarchyService.probeAccountsOnly({
         token: String(credentials.token),
         baseUrl: credentials.baseUrl as string | undefined,
         operateAs: credentials.operateAs as string | number | undefined,
@@ -982,23 +984,44 @@ router.post('/tenants/:id/activate', async (req: AuthRequest, res) => {
 
 router.post('/tenants/:id/integrations/:sourceType/sync', async (req: AuthRequest, res) => {
   try {
-    const result = await AdminOrchestrator.syncIntegration(
-      String(req.params.id),
-      req.params.sourceType as SourceType
-    );
+    const tenantId = String(req.params.id);
+    const sourceType = req.params.sourceType as SourceType;
+
+    // Wialon sync can take minutes for large fleets — never block the HTTP request.
+    if (sourceType === 'wialon') {
+      const { queueWialonLinkSync } = await import('../services/WialonLinkSyncQueue.js');
+      queueWialonLinkSync({ tenantId });
+      await AuditService.log({
+        tenantId,
+        userId: req.user?.id,
+        userEmail: req.user?.email,
+        action: 'integration.sync',
+        resourceType: 'data_source',
+        resourceId: sourceType,
+        details: { queued: true },
+      });
+      return success(res, {
+        success: true,
+        queued: true,
+        vehiclesSynced: 0,
+        message: 'Wialon sync started in the background',
+      });
+    }
+
+    const result = await AdminOrchestrator.syncIntegration(tenantId, sourceType);
     await AuditService.log({
-      tenantId: String(req.params.id),
+      tenantId,
       userId: req.user?.id,
       userEmail: req.user?.email,
       action: 'integration.sync',
       resourceType: 'data_source',
-      resourceId: String(req.params.sourceType),
+      resourceId: sourceType,
       details: result,
     });
     await AuditService.logActivity(
-      String(req.params.id),
+      tenantId,
       'integration_sync',
-      `${req.params.sourceType} sync completed`,
+      `${sourceType} sync completed`,
       `${result.vehiclesSynced} vehicles synced`
     );
     return success(res, result);

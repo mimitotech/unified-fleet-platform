@@ -37,7 +37,7 @@ type TrustLogo = {
 
 type AuthView = 'login' | 'forgot-email' | 'forgot-sent' | 'forgot-reset';
 
-const WIALON_HOSTING_URL = 'https://hosting.wialon.com';
+const WIALON_HOSTING_URL = 'https://login.mimitotracking.co.ug/';
 
 const DEFAULT_SLIDES: Slide[] = [
   {

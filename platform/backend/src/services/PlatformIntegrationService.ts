@@ -118,7 +118,7 @@ export class PlatformIntegrationService {
     const creds: WialonCredentialsInput = { token };
     if (credentials.baseUrl) creds.baseUrl = String(credentials.baseUrl).trim();
 
-    const probe = await WialonHierarchyService.probe(creds);
+    const probe = await WialonHierarchyService.probeAccountsOnly(creds, { force: true });
     const meta = {
       ...WialonHierarchyService.buildSessionMeta(probe),
       baseUrl: creds.baseUrl || 'https://hst-api.wialon.com/wialon/ajax.html',

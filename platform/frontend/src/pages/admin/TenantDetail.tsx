@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, Link, Navigate, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { AdminLayout } from '@/components/admin/AdminLayout';
@@ -132,6 +132,7 @@ export default function TenantDetail() {
     assignedManagerId: '' as string | null,
   });
   const [purgeConfirmSlug, setPurgeConfirmSlug] = useState('');
+  const linkToastId = useRef<string | number | undefined>(undefined);
 
   // Branding
   const [branding, setBranding] = useState({
@@ -314,35 +315,26 @@ export default function TenantDetail() {
       accountName: string;
       userIds?: number[];
       motherAccountId?: string;
-    }) =>
-      withToast(
-        adminApi.linkWialonAccount(id!, accountId, accountName, userIds, motherAccountId),
-        {
-          loading: 'Linking Wialon account & syncing units/users (may take a few minutes)…',
-          success: 'Account linked',
-        }
-      ),
+    }) => adminApi.linkWialonAccount(id!, accountId, accountName, userIds, motherAccountId),
+    onMutate: () => {
+      linkToastId.current = notify.loading('Saving Wialon account link…');
+    },
     onSuccess: (data, vars) => {
+      notify.dismiss(linkToastId.current);
+      linkToastId.current = undefined;
       setWialonAccountId(vars.accountId);
       setWialonAccountName(vars.accountName);
       setWialonOperateAs('');
-      const vehicles = data?.sync?.vehicles ?? data?.unitCount ?? 0;
-      const created = data?.sync?.usersCreated ?? data?.provision?.created ?? 0;
-      const updated = data?.sync?.usersUpdated ?? data?.provision?.updated ?? 0;
-      const usersTotal = data?.sync?.usersTotal ?? data?.userCount ?? 0;
-      const detail = `${data?.accountName || vars.accountName}: ${vehicles} vehicles, ${usersTotal} users (${created} new, ${updated} updated)`;
-      if (data?.syncOk === false || data?.syncWarning) {
-        notify.info(
-          'Account saved — sync incomplete',
-          data.syncWarning || `${detail}. Re-link or use Sync to finish resources/reports.`
-        );
-      } else if (data?.reportsReset) {
+      if (data?.reportsReset) {
         notify.success(
           'Wialon account switched',
-          `${detail}. Fuel report selections were cleared — re-pick reports under Fuel Module.`
+          `${data.accountName || vars.accountName} saved. Vehicles & users sync in the background — re-pick Fuel reports if needed.`
         );
       } else {
-        notify.success('Wialon account linked', detail);
+        notify.success(
+          'Account linked',
+          `${data.accountName || vars.accountName} saved. Syncing vehicles & users in the background…`
+        );
       }
       qc.invalidateQueries({ queryKey: ['integrations', id] });
       qc.invalidateQueries({ queryKey: ['wialon-hierarchy', id] });
@@ -352,7 +344,45 @@ export default function TenantDetail() {
       qc.invalidateQueries({ queryKey: ['tenantFuelModuleConfig', id] });
       qc.invalidateQueries({ queryKey: ['adminTenant', id] });
     },
+    onError: (err) => {
+      notify.dismiss(linkToastId.current);
+      linkToastId.current = undefined;
+      notify.error('Link failed', (err as Error).message);
+    },
   });
+
+  // Poll while background link sync is pending/running so UI updates without a long blocking request.
+  const wialonIntegForPoll = (integrations as Array<Record<string, unknown>> | undefined)?.find(
+    (i) => i.source_type === 'wialon'
+  );
+  const linkSyncStatus = String(
+    (wialonIntegForPoll?.wialon_session_meta as { syncStatus?: string } | undefined)?.syncStatus || ''
+  );
+  const prevLinkSyncStatus = useRef(linkSyncStatus);
+  useEffect(() => {
+    if (!id || !isValidId) return;
+    if (linkSyncStatus !== 'pending' && linkSyncStatus !== 'running') return;
+    const timer = window.setInterval(() => {
+      qc.invalidateQueries({ queryKey: ['integrations', id] });
+      qc.invalidateQueries({ queryKey: ['tenant-users', id] });
+      qc.invalidateQueries({ queryKey: ['adminTenant', id] });
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [id, isValidId, linkSyncStatus, qc]);
+
+  useEffect(() => {
+    const prev = prevLinkSyncStatus.current;
+    prevLinkSyncStatus.current = linkSyncStatus;
+    if (prev !== 'pending' && prev !== 'running') return;
+    if (linkSyncStatus === 'ok') {
+      notify.success('Wialon sync complete', 'Vehicles and users are ready for this client.');
+      qc.invalidateQueries({ queryKey: ['tenantWialonReportCatalog', id] });
+    } else if (linkSyncStatus === 'error') {
+      const warn = (wialonIntegForPoll?.wialon_session_meta as { syncWarning?: string } | undefined)
+        ?.syncWarning;
+      notify.error('Wialon sync needs attention', warn || 'Re-link or use Sync on Integrations.');
+    }
+  }, [linkSyncStatus, id, qc, wialonIntegForPoll]);
 
   const purgeTenant = useMutation({
     mutationFn: () =>
@@ -1110,6 +1140,16 @@ export default function TenantDetail() {
                   {integ?.last_sync_at && (
                     <p className="text-xs text-muted-foreground">Last sync: {new Date(String(integ.last_sync_at)).toLocaleString()}</p>
                   )}
+                  {source === 'wialon' && (linkSyncStatus === 'pending' || linkSyncStatus === 'running') && (
+                    <p className="text-xs text-amber-700 dark:text-amber-400 rounded border border-amber-200 bg-amber-50 dark:bg-amber-950/30 p-2">
+                      Syncing vehicles and users in the background… this page updates automatically.
+                    </p>
+                  )}
+                  {source === 'wialon' && linkSyncStatus === 'ok' && integ?.last_sync_at && (
+                    <p className="text-xs text-emerald-700 dark:text-emerald-400">
+                      Background sync finished successfully.
+                    </p>
+                  )}
                   {integ?.last_error && !integ?.connection_verified_at && (
                     <p className="text-xs text-destructive">{String(integ.last_error)}</p>
                   )}
@@ -1215,7 +1255,7 @@ export default function TenantDetail() {
                               });
                             }}
                           >
-                            {integ?.wialon_resource_id ? 'Re-link & sync account' : 'Link account & sync'}
+                            {integ?.wialon_resource_id ? 'Re-link account' : 'Link account'}
                           </LoadingButton>
                         </>
                       ) : (

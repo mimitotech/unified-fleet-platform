@@ -116,6 +116,8 @@ export async function api<T>(
       : null;
 
   const isLinkPath = path.includes('/wialon/link-account');
+  const isHierarchyPath =
+    path.includes('/wialon/hierarchy') || path.includes('/centers/wialon/hierarchy');
   const isLongOp = Boolean(timeoutMs && timeoutMs >= 120_000);
 
   let res: Response;
@@ -159,7 +161,9 @@ export async function api<T>(
         throw new Error(
           isLinkPath
             ? 'The link request was cut off (gateway timeout). Refresh this page — the account may already be saved. If Integrations still shows the old account, try Link again.'
-            : 'The server took too long or returned a non-JSON error. Refresh and try again shortly.'
+            : isHierarchyPath
+              ? 'Loading the Wialon account list timed out. Wait a moment and refresh — large mother accounts are cached after the first successful load.'
+              : 'The server took too long or returned a non-JSON error. Refresh and try again shortly.'
         );
       }
       throw new Error(res.ok ? 'Unexpected server response' : 'Unexpected server response. Please refresh and try again.');
@@ -1728,12 +1732,13 @@ export const adminApi = {
       body: JSON.stringify(password ? { password } : {}),
     }),
 
-  listTenants: (params?: { search?: string; status?: string; sort?: string; page?: number }) => {
+  listTenants: (params?: { search?: string; status?: string; sort?: string; page?: number; limit?: number }) => {
     const q = new URLSearchParams();
     if (params?.search) q.set('search', params.search);
     if (params?.status) q.set('status', params.status);
     if (params?.sort) q.set('sort', params.sort);
     if (params?.page) q.set('page', String(params.page));
+    q.set('limit', String(params?.limit ?? 500));
     return api<{ tenants: unknown[]; total: number; byManager?: Array<{ managerId: string | null; managerName: string; tenants: unknown[] }> }>(
       `/api/admin/tenants?${q}`
     );
@@ -1854,7 +1859,8 @@ export const adminApi = {
     }),
   getWialonCenterHierarchy: (motherId?: string) =>
     api<WialonProbeResult & { motherAccountId?: string }>(
-      `/api/admin/centers/wialon/hierarchy${motherId ? `?motherId=${encodeURIComponent(motherId)}` : ''}`
+      `/api/admin/centers/wialon/hierarchy${motherId ? `?motherId=${encodeURIComponent(motherId)}` : ''}`,
+      { timeoutMs: 90_000 }
     ),
   getWialonCenterAccount: (accountId: string, motherId?: string) =>
     api<{
@@ -1867,7 +1873,8 @@ export const adminApi = {
       sampleUnits: string[];
       assignedTenant: { tenantId: string; tenantName: string; tenantSlug: string } | null;
     }>(
-      `/api/admin/centers/wialon/accounts/${accountId}${motherId ? `?motherId=${encodeURIComponent(motherId)}` : ''}`
+      `/api/admin/centers/wialon/accounts/${accountId}${motherId ? `?motherId=${encodeURIComponent(motherId)}` : ''}`,
+      { timeoutMs: 120_000 }
     ),
   testWialonCenterAccount: (accountId: string, exceptTenantId?: string, motherAccountId?: string) =>
     api<{ ok: boolean; unitCount: number; userCount: number }>(
@@ -1875,6 +1882,7 @@ export const adminApi = {
       {
         method: 'POST',
         body: JSON.stringify({ exceptTenantId, motherAccountId }),
+        timeoutMs: 120_000,
       }
     ),
   getWialonCenterUnits: (accountId?: string, motherId?: string) => {
@@ -1935,6 +1943,8 @@ export const adminApi = {
       accountChanged?: boolean;
       reportsReset?: boolean;
       syncOk?: boolean;
+      syncStatus?: 'pending' | 'running' | 'ok' | 'error';
+      syncQueued?: boolean;
       syncWarning?: string;
       provision: { created: number; updated: number; deactivated: number };
       sync: {
@@ -1948,8 +1958,8 @@ export const adminApi = {
     }>(`/api/admin/tenants/${tenantId}/wialon/link-account`, {
       method: 'POST',
       body: JSON.stringify({ accountId, accountName, wialonUserIds, motherAccountId }),
-      // Full account link + vehicle/user sync can exceed default gateway patience; keep client waiting.
-      timeoutMs: 10 * 60 * 1000,
+      // Link is save-first; response should be seconds, not minutes.
+      timeoutMs: 45_000,
     }),
   getWialonAccountUnits: (tenantId: string, accountId: string) =>
     api<{ count: number; units: Array<{ id: number; name: string }> }>(

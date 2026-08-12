@@ -18,11 +18,15 @@ const router = Router();
 router.use(authMiddleware);
 router.use(requireAdminAccess);
 
-/** Probe any token without saving (platform admin) */
+/** Probe any token without saving (platform admin) — light account list by default. */
 router.post('/wialon/probe', async (req: AuthRequest, res) => {
   try {
-    const creds = parseWialonCredsFromBody((req.body.credentials || req.body) as Record<string, unknown>);
-    const probe = await WialonHierarchyService.probe(creds);
+    const body = (req.body.credentials || req.body) as Record<string, unknown>;
+    const creds = parseWialonCredsFromBody(body);
+    const full = String(body.full || req.query.full || '') === '1';
+    const probe = full
+      ? await WialonHierarchyService.probe(creds)
+      : await WialonHierarchyService.probeAccountsOnly(creds, { force: true });
     return success(res, probe);
   } catch (e) {
     return error(res, (e as Error).message);
@@ -39,7 +43,39 @@ router.use('/tenants/:id', requireTenantAccess('id'));
 router.get('/tenants/:id/wialon/hierarchy', async (req, res) => {
   try {
     const creds = await loadTenantWialonCreds(String(req.params.id));
-    const probe = await WialonHierarchyService.probe(creds);
+    const accountId = Number(creds.accountId);
+    if (accountId && !Number.isNaN(accountId)) {
+      const [units, users] = await Promise.all([
+        WialonHierarchyService.getUnitsForAccount(creds, accountId),
+        WialonHierarchyService.getUsersForAccount(creds, accountId),
+      ]);
+      return success(res, {
+        sessionUser: { id: 0, nm: 'tenant', bact: accountId },
+        accountTier: 'user',
+        dealerRights: false,
+        counts: {
+          units: units.length,
+          accounts: 1,
+          users: users.length,
+          resources: 0,
+          routes: 0,
+          unitGroups: 0,
+        },
+        accounts: [
+          {
+            id: accountId,
+            name: String(accountId),
+            isAccount: true,
+            unitCount: units.length,
+            userCount: users.length,
+            enabled: true,
+          },
+        ],
+        users,
+        scopedAccountId: accountId,
+      });
+    }
+    const probe = await WialonHierarchyService.probeAccountsOnly(creds);
     return success(res, probe);
   } catch (e) {
     return error(res, (e as Error).message);
@@ -51,7 +87,7 @@ router.post('/tenants/:id/wialon/probe', async (req, res) => {
     const creds = req.body?.token
       ? parseWialonCredsFromBody((req.body.credentials || req.body) as Record<string, unknown>)
       : await loadTenantWialonCreds(String(req.params.id));
-    const probe = await WialonHierarchyService.probe(creds);
+    const probe = await WialonHierarchyService.probeAccountsOnly(creds, { force: true });
     return success(res, probe);
   } catch (e) {
     return error(res, (e as Error).message);

@@ -220,11 +220,17 @@ export async function searchUnitsForAccount(
             : items;
         const active = filterActiveWialonUnits(filtered);
         mergeUnitsById(byId, active);
-        // This flag set worked for this spec — try the next search shape.
+        // Billing-scoped hit is complete — skip remaining strategies (major link/sync speedup).
+        if (active.length && spec.propValueMask !== '*') {
+          return [...byId.values()].slice(0, limit);
+        }
         if (active.length || filtered.length) break;
       } catch (err) {
         lastErr = err as Error;
       }
+    }
+    if (byId.size && spec.propValueMask !== '*') {
+      return [...byId.values()].slice(0, limit);
     }
   }
 

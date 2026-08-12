@@ -12,7 +12,7 @@ import { WialonAccountTreePicker } from '@/components/admin/WialonAccountTreePic
 import { Network, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
-const WIALON_POLL_MS = 60_000;
+const WIALON_POLL_MS = 5 * 60_000; // cache hierarchy; do not hammer mother accounts every minute
 
 type Props = {
   selectedMotherAccountId?: string;
@@ -54,7 +54,6 @@ export function WialonTenantLinkPanel({
     queryKey: ['wialon-center-status'],
     queryFn: () => adminApi.getWialonCenterStatus(),
     staleTime: WIALON_POLL_MS,
-    refetchInterval: WIALON_POLL_MS,
   });
 
   const { data: hierarchy, isLoading, refetch, isFetching } = useQuery({
@@ -62,7 +61,6 @@ export function WialonTenantLinkPanel({
     queryFn: () => adminApi.getWialonCenterHierarchy(motherId),
     enabled: Boolean(motherId),
     staleTime: WIALON_POLL_MS,
-    refetchInterval: WIALON_POLL_MS,
   });
 
   const { data: accountDetail, isLoading: accountLoading } = useQuery({

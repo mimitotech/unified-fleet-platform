@@ -7,15 +7,37 @@ import { loadTenantWialonCreds } from './tenantWialonCredentials.js';
 import { upsertWialonUnit } from './wialonUnitSync.js';
 
 import type { WialonCredentialsInput } from './WialonHierarchyService.js';
+import type { WialonSearchItem } from '../adapters/wialonUtils.js';
+
+const UNIT_UPSERT_CONCURRENCY = 8;
+
+async function mapPool<T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<void>
+): Promise<void> {
+  if (!items.length) return;
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const idx = next++;
+      if (idx >= items.length) return;
+      await fn(items[idx]);
+    }
+  });
+  await Promise.all(workers);
+}
 
 export class WialonSyncService {
   static async syncTenant(
     tenantId: string,
     options?: {
       credentials?: WialonCredentialsInput;
-      units?: import('../adapters/wialonUtils.js').WialonSearchItem[];
+      units?: WialonSearchItem[];
       /** When set, only these Wialon users stay active for the tenant. */
       wialonUserIds?: number[];
+      /** Skip drivers/geofences (used by fast link background job). */
+      skipOptionalDomain?: boolean;
     }
   ): Promise<{
     vehicles: number;
@@ -30,8 +52,9 @@ export class WialonSyncService {
     const { rows: ds } = await query<{
       wialon_resource_id: number | null;
       wialon_account_name: string | null;
+      wialon_session_meta: Record<string, unknown> | null;
     }>(
-      `SELECT wialon_resource_id, wialon_account_name FROM data_sources
+      `SELECT wialon_resource_id, wialon_account_name, wialon_session_meta FROM data_sources
        WHERE tenant_id = $1 AND source_type = 'wialon' AND is_active = true`,
       [tenantId]
     );
@@ -47,6 +70,16 @@ export class WialonSyncService {
 
     const creds = options?.credentials ?? (await loadTenantWialonCreds(tenantId));
     const scopedCreds = { ...creds, accountId: String(accountId) };
+
+    const metaUserIds = Array.isArray(ds[0].wialon_session_meta?.selectedWialonUserIds)
+      ? (ds[0].wialon_session_meta!.selectedWialonUserIds as unknown[])
+          .map((id) => Number(id))
+          .filter((n) => Number.isFinite(n))
+      : [];
+    const selectedUserIds =
+      Array.isArray(options?.wialonUserIds) && options.wialonUserIds.length
+        ? options.wialonUserIds
+        : metaUserIds;
 
     let units = options?.units;
     if (!units) {
@@ -70,80 +103,100 @@ export class WialonSyncService {
       }
     }
 
-    const activeExternalIds: string[] = [];
+    const activeExternalIds = units.map((u) => String(u.id));
 
-    for (const unit of units) {
-      activeExternalIds.push(String(unit.id));
+    await mapPool(units, UNIT_UPSERT_CONCURRENCY, async (unit) => {
       await upsertWialonUnit(tenantId, unit);
-    }
+    });
 
     await this.pruneOutOfScopeAssets(tenantId, activeExternalIds);
 
     let driversSynced = 0;
     let geofencesSynced = 0;
-    const adapter = new WialonAdapter(scopedCreds);
-    try {
-      await adapter.connect();
 
+    if (!options?.skipOptionalDomain) {
+      const adapter = new WialonAdapter(scopedCreds);
       try {
-        const drivers = await adapter.getDrivers();
-        for (const d of drivers) {
-          await query(
-            `INSERT INTO drivers (tenant_id, name, license_number, phone, email, status)
-             VALUES ($1, $2, $3, $4, $5, 'available')
-             ON CONFLICT (tenant_id, license_number) DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, updated_at = NOW()`,
-            [tenantId, d.name, d.licenseNumber || d.id, d.phone || '', d.email || null]
-          );
-          driversSynced++;
-        }
-      } catch {
-        /* optional */
-      }
+        await adapter.connect();
 
-      try {
-        const zones = await adapter.getGeofences();
-        for (const z of zones) {
-          const { rows: existing } = await query<{ id: string }>(
-            `SELECT id FROM geofences WHERE tenant_id = $1 AND name = $2 AND deleted_at IS NULL LIMIT 1`,
-            [tenantId, z.name]
-          );
-          if (existing[0]) {
+        try {
+          const drivers = await adapter.getDrivers();
+          for (const d of drivers) {
             await query(
-              `UPDATE geofences SET type = $2, center = $3, radius = $4, points = $5, updated_at = NOW() WHERE id = $1`,
-              [existing[0].id, z.type, z.center ? JSON.stringify(z.center) : null, z.radius, z.points ? JSON.stringify(z.points) : null]
+              `INSERT INTO drivers (tenant_id, name, license_number, phone, email, status)
+               VALUES ($1, $2, $3, $4, $5, 'available')
+               ON CONFLICT (tenant_id, license_number) DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, updated_at = NOW()`,
+              [tenantId, d.name, d.licenseNumber || d.id, d.phone || '', d.email || null]
             );
-          } else {
-            await query(
-              `INSERT INTO geofences (tenant_id, name, type, center, radius, points, color, is_active)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, true)`,
-              [tenantId, z.name, z.type, z.center ? JSON.stringify(z.center) : null, z.radius, z.points ? JSON.stringify(z.points) : null, z.color || '#3B82F6']
-            );
+            driversSynced++;
           }
-          geofencesSynced++;
+        } catch {
+          /* optional */
+        }
+
+        try {
+          const zones = await adapter.getGeofences();
+          for (const z of zones) {
+            const { rows: existing } = await query<{ id: string }>(
+              `SELECT id FROM geofences WHERE tenant_id = $1 AND name = $2 AND deleted_at IS NULL LIMIT 1`,
+              [tenantId, z.name]
+            );
+            if (existing[0]) {
+              await query(
+                `UPDATE geofences SET type = $2, center = $3, radius = $4, points = $5, updated_at = NOW() WHERE id = $1`,
+                [
+                  existing[0].id,
+                  z.type,
+                  z.center ? JSON.stringify(z.center) : null,
+                  z.radius,
+                  z.points ? JSON.stringify(z.points) : null,
+                ]
+              );
+            } else {
+              await query(
+                `INSERT INTO geofences (tenant_id, name, type, center, radius, points, color, is_active)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, true)`,
+                [
+                  tenantId,
+                  z.name,
+                  z.type,
+                  z.center ? JSON.stringify(z.center) : null,
+                  z.radius,
+                  z.points ? JSON.stringify(z.points) : null,
+                  z.color || '#3B82F6',
+                ]
+              );
+            }
+            geofencesSynced++;
+          }
+        } catch {
+          /* optional */
         }
       } catch {
-        /* optional */
+        /* drivers/geofences optional when Wialon API rejects resource search */
+      } finally {
+        await adapter.disconnect().catch(() => undefined);
       }
-    } catch {
-      /* drivers/geofences optional when Wialon API rejects resource search */
-    } finally {
-      await adapter.disconnect().catch(() => undefined);
     }
 
-    const wialonUsers = await WialonHierarchyService.getUsersForAccount(scopedCreds, accountId).catch(() => []);
-    let provision = { created: 0, updated: 0, deactivated: 0, users: [] as Awaited<ReturnType<typeof WialonUserProvisionService.provisionUsers>>['users'] };
+    const wialonUsers = await WialonHierarchyService.getUsersForAccount(scopedCreds, accountId).catch(
+      () => []
+    );
+    let provision = {
+      created: 0,
+      updated: 0,
+      deactivated: 0,
+      users: [] as Awaited<ReturnType<typeof WialonUserProvisionService.provisionUsers>>['users'],
+    };
     if (wialonUsers.length) {
-      const selected =
-        Array.isArray(options?.wialonUserIds) && options.wialonUserIds.length
-          ? options.wialonUserIds
-          : wialonUsers.map((u) => u.id);
+      const selected = selectedUserIds.length ? selectedUserIds : wialonUsers.map((u) => u.id);
       const selectedSet = new Set(selected);
       const toProvision = wialonUsers.filter((u) => selectedSet.has(u.id));
       provision = await WialonUserProvisionService.provisionUsers(
         tenantId,
         accountId,
         toProvision,
-        selected,
+        selected
       );
     }
 
@@ -175,10 +228,7 @@ export class WialonSyncService {
       geofences: geofencesSynced,
       usersCreated: provision.created,
       usersUpdated: provision.updated,
-      usersTotal:
-        Array.isArray(options?.wialonUserIds) && options.wialonUserIds.length
-          ? options.wialonUserIds.length
-          : wialonUsers.length,
+      usersTotal: selectedUserIds.length ? selectedUserIds.length : wialonUsers.length,
     };
   }
 
@@ -192,8 +242,10 @@ export class WialonSyncService {
          AND NOT (am.external_id = ANY($2::text[]))`,
       [tenantId, activeExternalIds]
     );
-    for (const row of staleMappings) {
-      await query(`DELETE FROM asset_mappings WHERE asset_id = $1 AND source_type = 'wialon'`, [row.asset_id]);
+    await mapPool(staleMappings, 4, async (row) => {
+      await query(`DELETE FROM asset_mappings WHERE asset_id = $1 AND source_type = 'wialon'`, [
+        row.asset_id,
+      ]);
       const { rows: remaining } = await query<{ n: number }>(
         `SELECT COUNT(*)::int AS n FROM asset_mappings WHERE asset_id = $1`,
         [row.asset_id]
@@ -201,6 +253,6 @@ export class WialonSyncService {
       if ((remaining[0]?.n || 0) === 0) {
         await query(`DELETE FROM assets WHERE id = $1 AND tenant_id = $2`, [row.asset_id, tenantId]);
       }
-    }
+    });
   }
 }

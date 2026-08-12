@@ -5,7 +5,6 @@ import { encryptCredentials } from '../utils/encryption.js';
 import { WialonHierarchyService } from './WialonHierarchyService.js';
 import { PlatformIntegrationService } from './PlatformIntegrationService.js';
 import { loadTenantWialonCreds } from './tenantWialonCredentials.js';
-import { upsertWialonUnit } from './wialonUnitSync.js';
 import { generateStrongPassword } from '../utils/passwordPolicy.js';
 
 export interface WialonProvisionedUser {
@@ -183,6 +182,10 @@ export class WialonUserProvisionService {
 }
 
 export class WialonAccountLinkService {
+  /**
+   * Fast link: persist account binding immediately, then queue background sync.
+   * Avoids probe + unit fetch on the HTTP hot path (those caused multi-minute timeouts).
+   */
   static async linkAccount(
     tenantId: string,
     accountId: number,
@@ -204,33 +207,28 @@ export class WialonAccountLinkService {
     const accountChanged =
       previousAccountId != null && !Number.isNaN(previousAccountId) && previousAccountId !== accountId;
 
-    const resolvedMother = motherAccountId || (await import('./tenantWialonCredentials.js').then((m) => m.getTenantMotherAccountId(tenantId)));
-    const motherId = resolvedMother || (await import('./WialonMotherAccountService.js').then((m) => m.WialonMotherAccountService.getDefaultId()));
+    const resolvedMother =
+      motherAccountId ||
+      (await import('./tenantWialonCredentials.js').then((m) => m.getTenantMotherAccountId(tenantId)));
+    const motherId =
+      resolvedMother ||
+      (await import('./WialonMotherAccountService.js').then((m) => m.WialonMotherAccountService.getDefaultId()));
     if (!motherId) throw new Error('Select a Wialon mother account before linking a tenant');
 
-    const platformCreds = await import('./WialonMotherAccountService.js').then((m) =>
+    // Ensure mother credentials exist (no full probe — hierarchy UI already validated the account).
+    await import('./WialonMotherAccountService.js').then((m) =>
       m.WialonMotherAccountService.loadCreds(motherId)
     );
-    const creds = { ...platformCreds, accountId: String(accountId) };
-    const probe = await WialonHierarchyService.probe(creds);
 
-    const resolvedName =
-      accountName ||
-      probe.accounts.find((a) => a.id === accountId)?.name ||
-      String(accountId);
+    const platformMeta = await import('./WialonMotherAccountService.js').then((m) =>
+      m.WialonMotherAccountService.get(motherId)
+    );
+    const resolvedName = (accountName && accountName.trim()) || String(accountId);
+    const userIds = Array.isArray(selectedUserIds)
+      ? selectedUserIds.filter((n) => Number.isFinite(n))
+      : [];
 
-    const units = await WialonHierarchyService.getUnitsForAccount(creds, accountId);
-    const users = await WialonHierarchyService.getUsersForAccount(creds, accountId);
-
-    const platformMeta = motherId ? await import('./WialonMotherAccountService.js').then((m) => m.WialonMotherAccountService.get(motherId)) : null;
-    const baseMeta = WialonHierarchyService.buildSessionMeta(probe);
     const wialonMeta = {
-      ...baseMeta,
-      counts: {
-        ...((baseMeta.counts as Record<string, number> | undefined) || {}),
-        units: units.length,
-        users: users.length,
-      },
       baseUrl: platformMeta?.baseUrl || 'https://hst-api.wialon.com/wialon/ajax.html',
       scopedAccountId: accountId,
       scopedAccountName: resolvedName,
@@ -239,6 +237,10 @@ export class WialonAccountLinkService {
       linkedAt: new Date().toISOString(),
       source: 'wialon_center',
       previousAccountId: accountChanged ? previousAccountId : undefined,
+      syncStatus: 'pending',
+      syncOk: false,
+      syncQueued: true,
+      selectedWialonUserIds: userIds,
     };
 
     const tenantCreds = encryptCredentials({ accountId: String(accountId) });
@@ -262,15 +264,13 @@ export class WialonAccountLinkService {
          wialon_operate_as = NULL,
          wialon_mother_account_id = $4,
          wialon_session_meta = $5::jsonb,
-         preview_asset_count = $6,
          connection_verified_at = NOW(),
          last_error = NULL,
          updated_at = NOW()
        WHERE tenant_id = $1 AND source_type = 'wialon'`,
-      [tenantId, accountId, resolvedName, motherId, JSON.stringify(wialonMeta), units.length]
+      [tenantId, accountId, resolvedName, motherId, JSON.stringify(wialonMeta)]
     );
 
-    // Switching accounts invalidates old report template bindings for Fuel / modules.
     if (accountChanged) {
       await query(
         `UPDATE tenant_fuel_module_configs
@@ -279,6 +279,7 @@ export class WialonAccountLinkService {
         [tenantId]
       ).catch(() => undefined);
     }
+
     const { WialonReportResolverService } = await import('./WialonReportResolverService.js');
     WialonReportResolverService.invalidate({ tenantId });
     if (previousAccountId != null && !Number.isNaN(previousAccountId)) {
@@ -286,123 +287,44 @@ export class WialonAccountLinkService {
     }
     WialonReportResolverService.invalidate({ tenantId, accountId });
 
-    const userIds = selectedUserIds?.length ? selectedUserIds : users.map((u) => u.id);
-    let provision = {
-      accountId,
-      accountName: resolvedName,
-      created: 0,
-      updated: 0,
-      deactivated: 0,
-      users: [] as WialonProvisionedUser[],
-    };
-    let syncOk = true;
-    let syncWarning: string | undefined;
-    let sync = {
-      vehicles: units.length,
-      drivers: 0,
-      geofences: 0,
-      usersCreated: 0,
-      usersUpdated: 0,
-      usersTotal: userIds.length,
-    };
-
-    try {
-      // Single sync path: assets + prune out-of-scope + selected users (no double provision).
-      const syncResult = await import('./WialonSyncService.js').then((m) =>
-        m.WialonSyncService.syncTenant(tenantId, {
-          credentials: creds,
-          units,
-          wialonUserIds: userIds,
-        })
-      );
-      sync = {
-        ...syncResult,
-        vehicles: syncResult.vehicles > 0 ? syncResult.vehicles : units.length,
-        usersCreated: syncResult.usersCreated ?? 0,
-        usersUpdated: syncResult.usersUpdated ?? 0,
-        usersTotal: syncResult.usersTotal ?? userIds.length,
-      };
-      provision = {
-        ...provision,
-        created: sync.usersCreated ?? 0,
-        updated: sync.usersUpdated ?? 0,
-      };
-      await query(
-        `UPDATE data_sources SET
-           last_error = NULL,
-           wialon_session_meta = JSON_MERGE_PATCH(COALESCE(wialon_session_meta, '{}'), $2),
-           updated_at = NOW()
-         WHERE tenant_id = $1 AND source_type = 'wialon'`,
-        [
-          tenantId,
-          JSON.stringify({
-            syncWarning: null,
-            syncWarningAt: null,
-            syncOk: true,
-            lastFullLinkAt: new Date().toISOString(),
-          }),
-        ]
-      );
-    } catch (syncErr) {
-      syncOk = false;
-      syncWarning = `Sync after link: ${(syncErr as Error).message}`;
-      for (const unit of units) {
-        await upsertWialonUnit(tenantId, unit).catch(() => undefined);
-      }
-      if (userIds.length) {
-        try {
-          provision = await WialonUserProvisionService.provisionUsers(
-            tenantId,
-            accountId,
-            users.filter((u) => userIds.includes(u.id)),
-            userIds
-          );
-        } catch {
-          /* provision best-effort if full sync failed */
-        }
-      }
-      await query(
-        `UPDATE data_sources SET
-           last_error = NULL,
-           last_sync_at = NOW(),
-           wialon_session_meta = JSON_MERGE_PATCH(COALESCE(wialon_session_meta, '{}'), $2),
-           updated_at = NOW()
-         WHERE tenant_id = $1 AND source_type = 'wialon'`,
-        [
-          tenantId,
-          JSON.stringify({
-            syncWarning,
-            syncWarningAt: new Date().toISOString(),
-            syncOk: false,
-            lastFullLinkAt: new Date().toISOString(),
-          }),
-        ]
-      );
-      sync = {
-        vehicles: units.length,
-        drivers: 0,
-        geofences: 0,
-        usersCreated: provision.created,
-        usersUpdated: provision.updated,
-        usersTotal: userIds.length,
-      };
-    }
     await import('../orchestrators/AssetOrchestrator.js').then((m) =>
       m.AssetOrchestrator.invalidateTenantCache(tenantId)
     );
 
+    const { queueWialonLinkSync } = await import('./WialonLinkSyncQueue.js');
+    queueWialonLinkSync({
+      tenantId,
+      wialonUserIds: userIds.length ? userIds : undefined,
+    });
+
     return {
       accountId,
       accountName: resolvedName,
-      unitCount: units.length,
-      userCount: users.length,
+      unitCount: 0,
+      userCount: userIds.length,
       previousAccountId: accountChanged ? previousAccountId : null,
       accountChanged,
       reportsReset: accountChanged,
-      syncOk,
-      syncWarning,
-      provision,
-      sync,
+      syncOk: false,
+      syncStatus: 'pending' as const,
+      syncQueued: true,
+      syncWarning: undefined as string | undefined,
+      provision: {
+        accountId,
+        accountName: resolvedName,
+        created: 0,
+        updated: 0,
+        deactivated: 0,
+        users: [] as WialonProvisionedUser[],
+      },
+      sync: {
+        vehicles: 0,
+        drivers: 0,
+        geofences: 0,
+        usersCreated: 0,
+        usersUpdated: 0,
+        usersTotal: userIds.length,
+      },
     };
   }
 }

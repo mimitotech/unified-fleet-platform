@@ -125,7 +125,7 @@ router.post('/centers/wialon/test', async (req, res) => {
       token,
       baseUrl: body.baseUrl ? String(body.baseUrl) : undefined,
     };
-    const probe = await WialonHierarchyService.probe(creds);
+    const probe = await WialonHierarchyService.probeAccountsOnly(creds, { force: true });
     return success(res, { connected: true, probe });
   } catch (e) {
     return error(res, (e as Error).message);
@@ -137,14 +137,15 @@ router.get('/centers/wialon/hierarchy', async (req, res) => {
     const motherId = await resolveMotherId(
       (req.query.motherId as string) || (req.query.motherAccountId as string) || undefined
     );
+    const force = String(req.query.refresh || '') === '1' || String(req.query.force || '') === '1';
     const creds = await WialonMotherAccountService.loadCreds(motherId);
-    const probe = await WialonHierarchyService.probe(creds);
+    const probe = await WialonHierarchyService.probeAccountsOnly(creds, { force });
     const assignments = await WialonMotherAccountService.getAccountAssignments(motherId);
     const accounts = probe.accounts.map((a) => ({
       ...a,
       assignedTenant: assignments.get(a.id) || null,
     }));
-    return success(res, { ...probe, accounts, motherAccountId: motherId });
+    return success(res, { ...probe, accounts, motherAccountId: motherId, light: true });
   } catch (e) {
     return error(res, (e as Error).message);
   }
@@ -153,14 +154,15 @@ router.get('/centers/wialon/hierarchy', async (req, res) => {
 router.get('/centers/wialon/mothers/:motherId/hierarchy', async (req, res) => {
   try {
     const motherId = String(req.params.motherId);
+    const force = String(req.query.refresh || '') === '1' || String(req.query.force || '') === '1';
     const creds = await WialonMotherAccountService.loadCreds(motherId);
-    const probe = await WialonHierarchyService.probe(creds);
+    const probe = await WialonHierarchyService.probeAccountsOnly(creds, { force });
     const assignments = await WialonMotherAccountService.getAccountAssignments(motherId);
     const accounts = probe.accounts.map((a) => ({
       ...a,
       assignedTenant: assignments.get(a.id) || null,
     }));
-    return success(res, { ...probe, accounts, motherAccountId: motherId });
+    return success(res, { ...probe, accounts, motherAccountId: motherId, light: true });
   } catch (e) {
     return error(res, (e as Error).message);
   }
@@ -182,8 +184,13 @@ router.get('/centers/wialon/accounts/:accountId', async (req, res) => {
       WialonMotherAccountService.getAccountAssignments(motherId),
     ]);
 
-    const probe = await WialonHierarchyService.probe(scopedCreds);
-    const accountName = probe.accounts.find((a) => a.id === accountId)?.name || String(accountId);
+    const cachedName = (await WialonHierarchyService.probeAccountsOnly(creds).catch(() => null))
+      ?.accounts.find((a) => a.id === accountId)?.name;
+    const accountName =
+      cachedName ||
+      (req.query.name ? String(req.query.name) : '') ||
+      units[0]?.nm ||
+      String(accountId);
 
     return success(res, {
       accountId,

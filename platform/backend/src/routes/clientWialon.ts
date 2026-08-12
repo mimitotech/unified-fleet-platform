@@ -3,7 +3,6 @@ import { query } from '../config/database.js';
 import { requireTenant, type TenantRequest } from '../middleware/tenant.js';
 import { success, error } from '../utils/response.js';
 import { WialonHierarchyService } from '../services/WialonHierarchyService.js';
-import { WialonSyncService } from '../services/WialonSyncService.js';
 import { WialonLiveService } from '../services/WialonLiveService.js';
 import {
   getTenantWialonRow,
@@ -105,12 +104,44 @@ router.get('/wialon/context', requireTenant, async (req: TenantRequest, res) => 
   });
 });
 
-/** Live hierarchy probe — tenant admins only (mirrors platform admin tree). */
+/** Live hierarchy for this tenant's linked account only (not the full mother tree). */
 router.get('/wialon/hierarchy', requireTenant, async (req: TenantRequest, res) => {
   if (!isTenantAdmin(req)) return error(res, 'Forbidden', 403);
   try {
     const creds = await loadTenantWialonCreds(req.tenantId!);
-    const probe = await WialonHierarchyService.probe(creds);
+    const accountId = Number(creds.accountId);
+    if (accountId && !Number.isNaN(accountId)) {
+      const [units, users] = await Promise.all([
+        WialonHierarchyService.getUnitsForAccount(creds, accountId),
+        WialonHierarchyService.getUsersForAccount(creds, accountId),
+      ]);
+      return success(res, {
+        sessionUser: { id: 0, nm: 'tenant', bact: accountId },
+        accountTier: 'user',
+        dealerRights: false,
+        counts: {
+          units: units.length,
+          accounts: 1,
+          users: users.length,
+          resources: 0,
+          routes: 0,
+          unitGroups: 0,
+        },
+        accounts: [
+          {
+            id: accountId,
+            name: String(creds.accountId),
+            isAccount: true,
+            unitCount: units.length,
+            userCount: users.length,
+            enabled: true,
+          },
+        ],
+        users,
+        scopedAccountId: accountId,
+      });
+    }
+    const probe = await WialonHierarchyService.probeAccountsOnly(creds);
     return success(res, probe);
   } catch (e) {
     return error(res, (e as Error).message);
@@ -122,13 +153,12 @@ router.post('/wialon/sync', requireTenant, async (req: TenantRequest, res) => {
   if (!isTenantAdmin(req)) return error(res, 'Forbidden', 403);
   try {
     await loadTenantWialonCreds(req.tenantId!);
-    const result = await WialonSyncService.syncTenant(req.tenantId!);
-    await query(
-      `UPDATE data_sources SET last_sync_at = NOW(), last_error = NULL, updated_at = NOW()
-       WHERE tenant_id = $1 AND source_type = 'wialon'`,
-      [req.tenantId!]
-    );
-    return success(res, result);
+    const { queueWialonLinkSync } = await import('../services/WialonLinkSyncQueue.js');
+    queueWialonLinkSync({ tenantId: req.tenantId! });
+    return success(res, {
+      queued: true,
+      message: 'Wialon sync started in the background',
+    });
   } catch (e) {
     await query(
       `UPDATE data_sources SET last_error = $2, updated_at = NOW()

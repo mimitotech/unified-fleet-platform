@@ -131,6 +131,157 @@ async function fillAccountUnitCounts(
 }
 
 export class WialonHierarchyService {
+  private static hierarchyCache = new Map<string, { at: number; result: WialonProbeResult }>();
+  private static readonly HIERARCHY_TTL_MS = 5 * 60_000;
+
+  private static cacheKey(credentials: WialonCredentialsInput): string {
+    return `${credentials.baseUrl || ''}|${String(credentials.token || '').slice(0, 32)}|${credentials.operateAs || ''}`;
+  }
+
+  static invalidateHierarchyCache(credentials?: WialonCredentialsInput): void {
+    if (!credentials) {
+      this.hierarchyCache.clear();
+      return;
+    }
+    this.hierarchyCache.delete(this.cacheKey(credentials));
+  }
+
+  /**
+   * Fast mother-account listing for Wialon Center / client link UI.
+   * Loads billing accounts (+ light user list) only — no units / no per-account unit fan-out.
+   * Required for 100–500+ accounts under a mother without gateway timeouts.
+   */
+  static async probeAccountsOnly(
+    credentials: WialonCredentialsInput,
+    opts?: { force?: boolean }
+  ): Promise<WialonProbeResult> {
+    const key = this.cacheKey(credentials);
+    if (!opts?.force) {
+      const hit = this.hierarchyCache.get(key);
+      if (hit && Date.now() - hit.at < this.HIERARCHY_TTL_MS) {
+        return hit.result;
+      }
+    }
+
+    const client = new WialonClient({
+      token: credentials.token,
+      baseUrl: credentials.baseUrl,
+      operateAs: credentials.operateAs,
+    });
+
+    try {
+      await client.connect();
+      const sessionUser = client.getSessionUser();
+      if (!sessionUser) throw new Error('Wialon login succeeded but user context is missing');
+
+      let dealerRights = false;
+      let currentAccount: WialonProbeResult['currentAccount'];
+
+      try {
+        const acctData = await client.request<{
+          dealerRights?: number;
+          plan?: string;
+          enabled?: number;
+          balance?: string;
+          daysCounter?: number;
+          parentAccountId?: number;
+          parentAccountName?: string;
+        }>('core/get_account_data', { type: 1 });
+        dealerRights = acctData.dealerRights === 1;
+        if (sessionUser.bact) {
+          currentAccount = {
+            id: sessionUser.bact,
+            name: sessionUser.nm,
+            parentAccountId: acctData.parentAccountId,
+            parentAccountName: acctData.parentAccountName,
+            enabled: acctData.enabled === 1,
+            plan: acctData.plan,
+            balance: acctData.balance,
+            daysCounter: acctData.daysCounter,
+          };
+        }
+      } catch {
+        /* optional */
+      }
+
+      const accountResources = await searchAll(
+        client,
+        {
+          itemsType: 'avl_resource',
+          propName: 'rel_is_account',
+          propValueMask: '1',
+          sortType: 'sys_name',
+          propType: 'property',
+        },
+        WIALON_RESOURCE_ACCOUNT_FLAGS
+      );
+
+      const accounts: WialonAccountNode[] = accountResources.map((r) => ({
+        id: r.id,
+        name: r.nm,
+        isAccount: true,
+        parentAccountId: r.bpact,
+        parentAccountName: undefined,
+        unitCount: undefined,
+        enabled: true,
+      }));
+
+      const usersById = new Map<number, WialonSearchItem>();
+      try {
+        const creatorUsers = await searchAll(
+          client,
+          {
+            itemsType: 'user',
+            propName: 'sys_user_creator',
+            propValueMask: String(sessionUser.id),
+            sortType: 'sys_name',
+            propType: 'creatortree',
+          },
+          WIALON_USER_FLAGS
+        );
+        for (const u of creatorUsers) usersById.set(u.id, u);
+      } catch {
+        /* optional — account list still usable without users */
+      }
+
+      const userNodes: WialonUserNode[] = [...usersById.values()].map((u) => ({
+        id: u.id,
+        name: u.nm,
+        accountId: u.bact,
+        creatorId: u.crt,
+        lastLogin: u.ld,
+        email: u.prp?.email || u.prp?.e_mail || undefined,
+      }));
+
+      for (const acct of accounts) {
+        acct.userCount = userNodes.filter((un) => un.accountId === acct.id).length;
+      }
+
+      const accountTier = tierFromProbe(sessionUser, accounts.length, dealerRights);
+      const result: WialonProbeResult = {
+        sessionUser,
+        accountTier,
+        dealerRights,
+        counts: {
+          units: 0,
+          accounts: accounts.length,
+          users: userNodes.length,
+          resources: 0,
+          routes: 0,
+          unitGroups: 0,
+        },
+        accounts,
+        users: userNodes,
+        currentAccount,
+      };
+
+      this.hierarchyCache.set(key, { at: Date.now(), result });
+      return result;
+    } finally {
+      await client.disconnect();
+    }
+  }
+
   static async probe(credentials: WialonCredentialsInput): Promise<WialonProbeResult> {
     const client = new WialonClient({
       token: credentials.token,
@@ -279,10 +430,12 @@ export class WialonHierarchyService {
       }
 
       // When bact is missing/wrong, every client shows 0 while mother totals are fine.
-      // Fall back to per-account billing/accounttree search (same as account detail).
+      // Fall back to per-account billing/accounttree search — but NEVER for large mother trees
+      // (that is O(N accounts × unit search) and times out Hostinger at 100–200+ clients).
       const attributed = accounts.reduce((s, a) => s + (a.unitCount || 0), 0);
       const needAccurate =
         accounts.length > 0 &&
+        accounts.length <= 40 &&
         units.length > 0 &&
         (attributed === 0 || attributed < Math.floor(units.length * 0.3));
       if (needAccurate || !Number.isNaN(scopedAccountId)) {
@@ -419,12 +572,7 @@ export class WialonHierarchyService {
         sortType: 'sys_name',
         propType: 'property',
       },
-      {
-        itemsType: 'user',
-        propName: 'sys_name',
-        propValueMask: '*',
-        sortType: 'sys_name',
-      },
+      // Do NOT search sys_name=* under mother tokens — at 200+ accounts that loads the whole fleet.
     ];
 
     try {
@@ -433,12 +581,8 @@ export class WialonHierarchyService {
       for (const spec of searchSpecs) {
         try {
           const users = await searchAll(client, spec, WIALON_USER_FLAGS);
-          const filtered =
-            spec.propValueMask === '*'
-              ? users.filter((u) => Number(u.bact) === accountId)
-              : users;
-          if (filtered.length) {
-            return filtered.map(mapUser);
+          if (users.length) {
+            return users.map(mapUser);
           }
         } catch {
           /* try next Wialon search shape */

@@ -138,7 +138,8 @@ export class WialonMotherAccountService {
     const creds: WialonCredentialsInput = { token };
     if (input.baseUrl?.trim()) creds.baseUrl = input.baseUrl.trim();
 
-    const probe = await WialonHierarchyService.probe(creds);
+    const probe = await WialonHierarchyService.probeAccountsOnly(creds, { force: true });
+    WialonHierarchyService.invalidateHierarchyCache();
     const meta = {
       ...WialonHierarchyService.buildSessionMeta(probe),
       baseUrl: creds.baseUrl || 'https://hst-api.wialon.com/wialon/ajax.html',
@@ -176,7 +177,8 @@ export class WialonMotherAccountService {
     if (input.token?.trim()) {
       const creds: WialonCredentialsInput = { token: input.token.trim() };
       if (baseUrl) creds.baseUrl = baseUrl;
-      const probe = await WialonHierarchyService.probe(creds);
+      const probe = await WialonHierarchyService.probeAccountsOnly(creds, { force: true });
+      WialonHierarchyService.invalidateHierarchyCache(creds);
       meta = {
         ...WialonHierarchyService.buildSessionMeta(probe),
         baseUrl: creds.baseUrl || 'https://hst-api.wialon.com/wialon/ajax.html',
@@ -235,7 +237,7 @@ export class WialonMotherAccountService {
 
   static async probe(id: string) {
     const creds = await this.loadCreds(id);
-    return WialonHierarchyService.probe(creds);
+    return WialonHierarchyService.probeAccountsOnly(creds, { force: true });
   }
 
   static async getAccountAssignments(motherId?: string): Promise<

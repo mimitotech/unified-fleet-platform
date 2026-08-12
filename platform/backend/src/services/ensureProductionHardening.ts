@@ -135,4 +135,26 @@ export async function ensureProductionHardening(): Promise<void> {
     'idx_activity_tenant_created',
     `ALTER TABLE activity_feed ADD KEY idx_activity_tenant_created (tenant_id, created_at)`,
   );
+
+  // Scale indexes for 100–500+ linked Wialon clients / multi-mother lookups
+  await trySql(
+    'idx_data_sources_mother',
+    `ALTER TABLE data_sources ADD KEY idx_data_sources_mother (wialon_mother_account_id)`,
+  );
+  await trySql(
+    'idx_data_sources_type_active_resource',
+    `ALTER TABLE data_sources ADD KEY idx_data_sources_type_active_resource (source_type, is_active, wialon_resource_id)`,
+  );
+  await trySql(
+    'idx_tenants_active_status',
+    `ALTER TABLE tenants ADD KEY idx_tenants_active_status (is_active, status)`,
+  );
+  await trySql(
+    'idx_users_tenant_active',
+    `ALTER TABLE users ADD KEY idx_users_tenant_active (tenant_id, is_active)`,
+  );
+  await trySql(
+    'idx_assets_tenant_updated',
+    `ALTER TABLE assets ADD KEY idx_assets_tenant_updated (tenant_id, updated_at)`,
+  );
 }

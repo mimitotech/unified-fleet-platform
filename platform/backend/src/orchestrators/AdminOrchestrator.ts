@@ -314,7 +314,7 @@ export class AdminOrchestrator {
     groupByManager?: boolean;
   }) {
     const page = filters.page || 1;
-    const limit = filters.limit || 25;
+    const limit = Math.min(1000, Math.max(1, filters.limit || 500));
     const offset = (page - 1) * limit;
     const params: unknown[] = [];
     let where = 'WHERE 1=1';
