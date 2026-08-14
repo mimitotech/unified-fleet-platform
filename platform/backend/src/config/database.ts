@@ -63,13 +63,14 @@ function readParts(): ConnParts {
 }
 
 function poolLimits(): { connectionLimit: number; queueLimit: number } {
-  const connectionLimit = Math.min(
-    15,
-    Math.max(5, parseInt(process.env.DB_CONNECTION_LIMIT || '12', 10) || 12)
-  );
+  // Hostinger shared MySQL has a low per-user connection cap (often ~25–50 for the
+  // whole account). Keep the Node pool small so phpMyAdmin / other tools + this app
+  // never exhaust the account, and so API requests are not starved by sync jobs.
+  const requested = parseInt(process.env.DB_CONNECTION_LIMIT || '8', 10) || 8;
+  const connectionLimit = Math.min(10, Math.max(4, requested));
   const queueLimit = Math.min(
-    200,
-    Math.max(0, parseInt(process.env.DB_QUEUE_LIMIT || '80', 10) || 80)
+    80,
+    Math.max(10, parseInt(process.env.DB_QUEUE_LIMIT || '40', 10) || 40)
   );
   return { connectionLimit, queueLimit };
 }
@@ -79,6 +80,22 @@ export function getPoolLimits(): { connectionLimit: number; queueLimit: number }
   return poolLimits();
 }
 
+function isTransientDbError(err: unknown): boolean {
+  const e = err as { code?: string; errno?: number; message?: string };
+  const code = String(e?.code || '');
+  const msg = String(e?.message || err || '');
+  return (
+    code === 'PROTOCOL_CONNECTION_LOST' ||
+    code === 'ECONNRESET' ||
+    code === 'ETIMEDOUT' ||
+    code === 'EPIPE' ||
+    code === 'ER_CON_COUNT_ERROR' ||
+    code === 'PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR' ||
+    code === 'PROTOCOL_ENQUEUE_AFTER_QUIT' ||
+    /queue limit|too many connections|connection lost|server closed the connection/i.test(msg)
+  );
+}
+
 async function tryConnect(label: string, opts: mysql.PoolOptions): Promise<Pool> {
   const limits = poolLimits();
   const p = mysql.createPool({
@@ -86,10 +103,13 @@ async function tryConnect(label: string, opts: mysql.PoolOptions): Promise<Pool>
     waitForConnections: true,
     connectionLimit: limits.connectionLimit,
     queueLimit: limits.queueLimit,
+    maxIdle: Math.min(limits.connectionLimit, 4),
+    idleTimeout: 60_000,
     timezone: 'Z',
     supportBigNumbers: true,
-    connectTimeout: 10000,
+    connectTimeout: 10_000,
     enableKeepAlive: true,
+    keepAliveInitialDelay: 10_000,
   });
   try {
     const conn = await p.getConnection();
@@ -551,6 +571,7 @@ export async function connectDatabase(): Promise<void> {
     poolReady = createWorkingPool()
       .then((p) => {
         pool = p;
+        startPoolKeepalive();
         return p;
       })
       .catch((err) => {
@@ -561,11 +582,50 @@ export async function connectDatabase(): Promise<void> {
   await poolReady;
 }
 
+let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Lightweight ping so Hostinger / proxy idle drops do not leave dead sockets in the pool. */
+function startPoolKeepalive(): void {
+  if (keepaliveTimer) return;
+  keepaliveTimer = setInterval(() => {
+    void (async () => {
+      if (!pool) return;
+      let conn: PoolConnection | null = null;
+      try {
+        conn = await pool.getConnection();
+        await conn.query('SELECT 1');
+      } catch (err) {
+        console.warn('[mams-db] keepalive ping failed:', (err as Error).message);
+      } finally {
+        conn?.release();
+      }
+    })();
+  }, 45_000);
+  // Don't keep the process alive solely for keepalive
+  if (typeof keepaliveTimer.unref === 'function') keepaliveTimer.unref();
+}
+
 export async function query<T extends QueryResultRow = QueryResultRow>(
   text: string,
   params: unknown[] = []
 ): Promise<QueryResult<T>> {
-  return queryWithConn(getPool(), text, params) as Promise<QueryResult<T>>;
+  const maxAttempts = 3;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return (await queryWithConn(getPool(), text, params)) as QueryResult<T>;
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= maxAttempts || !isTransientDbError(err)) throw err;
+      const backoff = 80 * attempt * attempt;
+      console.warn(
+        `[mams-db] transient query error (attempt ${attempt}/${maxAttempts}), retry in ${backoff}ms:`,
+        (err as Error).message
+      );
+      await new Promise((r) => setTimeout(r, backoff));
+    }
+  }
+  throw lastErr;
 }
 
 export async function withTransaction<T>(fn: (q: typeof query) => Promise<T>): Promise<T> {

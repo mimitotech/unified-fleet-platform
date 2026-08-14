@@ -62,10 +62,10 @@ export function validateEnv(): void {
       );
     }
 
-    const rawLimit = parseInt(process.env.DB_CONNECTION_LIMIT || '12', 10);
-    if (Number.isFinite(rawLimit) && rawLimit > 15) {
+    const rawLimit = parseInt(process.env.DB_CONNECTION_LIMIT || '8', 10);
+    if (Number.isFinite(rawLimit) && rawLimit > 10) {
       logger.warn(
-        `DB_CONNECTION_LIMIT=${rawLimit} is high for Hostinger shared MySQL — clamping to 15 at runtime.`,
+        `DB_CONNECTION_LIMIT=${rawLimit} is high for Hostinger shared MySQL — clamping to 10 at runtime (prefer 8).`,
       );
     }
   }

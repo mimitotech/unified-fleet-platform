@@ -35,7 +35,7 @@ PORT=3000
 DB_USER=u632889724_mams
 DB_PASSWORD=<exact password from hPanel → Databases>
 DB_NAME=u632889724_mams
-DB_CONNECTION_LIMIT=12
+DB_CONNECTION_LIMIT=8
 DB_QUEUE_LIMIT=80
 API_PUBLIC_URL=https://mams.mimitotracking.com
 FRONTEND_URL=https://mams.mimitotracking.com
@@ -55,7 +55,7 @@ IMAP_PORT=993
 REDIS_DISABLED=1
 ```
 
-Keep `DB_CONNECTION_LIMIT` ≤ **15** on Hostinger shared MySQL (`max_user_connections`). The app clamps higher values at runtime.
+Keep `DB_CONNECTION_LIMIT` ≤ **10** on Hostinger shared MySQL (`max_user_connections`); prefer **8**. The app clamps higher values at runtime.
 
 On an existing database, import `database/mysql/ufp_production_hardening_2026-08-11.sql` once (or rely on boot-time index ensure).
 
@@ -84,7 +84,7 @@ Optional: `UPLOAD_DIR=/absolute/persistent/path` if Hostinger gives you durable 
 
 ## Concurrency / stability
 
-- MySQL pool: `DB_CONNECTION_LIMIT` (default 20) + `DB_QUEUE_LIMIT` (default 100).
+- MySQL pool: `DB_CONNECTION_LIMIT` (prefer 8, clamped to 10) + `DB_QUEUE_LIMIT` (default 40).
 - Redis off on Hostinger (`REDIS_DISABLED=1`) — in-process caches only.
 - Workshop alert backfill is per-tenant throttled so many open browsers cannot stampede MySQL.
 - HTTP app attaches **before** DB connect so nginx does not 504 during brief MySQL blips.
