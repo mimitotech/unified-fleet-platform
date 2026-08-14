@@ -98,24 +98,54 @@ export function isSmtpConfigured(): boolean {
   return Boolean(readSmtpConfigFromEnv());
 }
 
+function buildTransport(cfg: SmtpConfig): Transporter {
+  return nodemailer.createTransport({
+    host: cfg.host,
+    port: cfg.port,
+    secure: cfg.secure,
+    auth: { user: cfg.user, pass: cfg.password },
+    connectionTimeout: 15_000,
+    greetingTimeout: 15_000,
+    socketTimeout: 20_000,
+    tls: { servername: cfg.host },
+  });
+}
+
+/** Hostinger sometimes blocks 465 from Node apps — fall back to 587 STARTTLS. */
+function alternateSmtpConfig(cfg: SmtpConfig): SmtpConfig | null {
+  if (cfg.port === 465) {
+    return { ...cfg, port: 587, secure: false };
+  }
+  if (cfg.port === 587) {
+    return { ...cfg, port: 465, secure: true };
+  }
+  return null;
+}
+
 async function getTransporter(): Promise<{ transport: Transporter; cfg: SmtpConfig } | null> {
   const cfg = await resolveSmtpConfig();
   if (!cfg) return null;
 
   const key = `${cfg.host}|${cfg.port}|${cfg.user}|${cfg.password.length}`;
   if (!transporter || key !== cachedKey) {
-    transporter = nodemailer.createTransport({
-      host: cfg.host,
-      port: cfg.port,
-      secure: cfg.secure,
-      auth: { user: cfg.user, pass: cfg.password },
-      connectionTimeout: 15_000,
-      greetingTimeout: 15_000,
-      socketTimeout: 20_000,
-    });
+    transporter = buildTransport(cfg);
     cachedKey = key;
   }
   return { transport: transporter, cfg };
+}
+
+async function sendWithTransport(
+  transport: Transporter,
+  cfg: SmtpConfig,
+  opts: { to: string; subject: string; text: string; html?: string }
+): Promise<void> {
+  await transport.sendMail({
+    from: `"${cfg.fromName}" <${cfg.fromEmail}>`,
+    to: opts.to,
+    subject: opts.subject,
+    text: opts.text,
+    html: opts.html || opts.text.replace(/\n/g, '<br/>'),
+  });
 }
 
 export async function sendMail(opts: {
@@ -126,24 +156,53 @@ export async function sendMail(opts: {
 }): Promise<boolean> {
   const ready = await getTransporter();
   if (!ready) {
-    logger.warn('[mail] SMTP not configured — skip send', { to: opts.to, subject: opts.subject });
+    logger.warn('[mail] SMTP not configured — skip send', {
+      to: opts.to,
+      subject: opts.subject,
+      envHost: Boolean(process.env.SMTP_HOST?.trim()),
+      envUser: Boolean(process.env.SMTP_USER?.trim() || process.env.SMTP_FROM_EMAIL?.trim()),
+      envPassLen: (process.env.SMTP_PASSWORD || '').length,
+    });
     return false;
   }
 
   const { transport, cfg } = ready;
   try {
-    await transport.sendMail({
-      from: `"${cfg.fromName}" <${cfg.fromEmail}>`,
-      to: opts.to,
-      subject: opts.subject,
-      text: opts.text,
-      html: opts.html || opts.text.replace(/\n/g, '<br/>'),
-    });
-    logger.info('[mail] sent', { to: opts.to, subject: opts.subject });
+    await sendWithTransport(transport, cfg, opts);
+    logger.info('[mail] sent', { to: opts.to, subject: opts.subject, via: `${cfg.host}:${cfg.port}` });
     return true;
-  } catch (err) {
-    logger.error('[mail] send failed', { to: opts.to, subject: opts.subject, err: (err as Error).message });
-    throw err;
+  } catch (primaryErr) {
+    const alt = alternateSmtpConfig(cfg);
+    if (!alt) {
+      logger.error('[mail] send failed', {
+        to: opts.to,
+        subject: opts.subject,
+        via: `${cfg.host}:${cfg.port}`,
+        err: (primaryErr as Error).message,
+      });
+      throw primaryErr;
+    }
+    logger.warn('[mail] primary SMTP failed — trying alternate port', {
+      from: `${cfg.host}:${cfg.port}`,
+      to: `${alt.host}:${alt.port}`,
+      err: (primaryErr as Error).message,
+    });
+    try {
+      const altTransport = buildTransport(alt);
+      await sendWithTransport(altTransport, alt, opts);
+      transporter = altTransport;
+      cachedKey = `${alt.host}|${alt.port}|${alt.user}|${alt.password.length}`;
+      logger.info('[mail] sent', { to: opts.to, subject: opts.subject, via: `${alt.host}:${alt.port}` });
+      return true;
+    } catch (altErr) {
+      logger.error('[mail] send failed on both SMTP ports', {
+        to: opts.to,
+        subject: opts.subject,
+        primary: (primaryErr as Error).message,
+        alternate: (altErr as Error).message,
+      });
+      throw primaryErr;
+    }
   }
 }
 
@@ -280,11 +339,52 @@ export async function isSmtpConfiguredAsync(): Promise<boolean> {
 
 export async function verifySmtpConnection(): Promise<{ ok: boolean; message: string }> {
   const ready = await getTransporter();
-  if (!ready) return { ok: false, message: 'SMTP not configured' };
+  if (!ready) {
+    return {
+      ok: false,
+      message: `SMTP not configured (env host=${Boolean(process.env.SMTP_HOST?.trim())} user=${Boolean(
+        process.env.SMTP_USER?.trim() || process.env.SMTP_FROM_EMAIL?.trim()
+      )} passLen=${(process.env.SMTP_PASSWORD || '').length})`,
+    };
+  }
   try {
     await ready.transport.verify();
     return { ok: true, message: `SMTP OK (${ready.cfg.host}:${ready.cfg.port})` };
   } catch (err) {
+    const alt = alternateSmtpConfig(ready.cfg);
+    if (alt) {
+      try {
+        const altTransport = buildTransport(alt);
+        await altTransport.verify();
+        transporter = altTransport;
+        cachedKey = `${alt.host}|${alt.port}|${alt.user}|${alt.password.length}`;
+        return { ok: true, message: `SMTP OK via fallback (${alt.host}:${alt.port})` };
+      } catch (altErr) {
+        return {
+          ok: false,
+          message: `${(err as Error).message} | fallback ${alt.port}: ${(altErr as Error).message}`,
+        };
+      }
+    }
     return { ok: false, message: (err as Error).message };
   }
+}
+
+/** Safe status for /health — never includes password. */
+export async function getSmtpPublicStatus(): Promise<{
+  configured: boolean;
+  host: string | null;
+  port: number | null;
+  fromEmail: string | null;
+}> {
+  const cfg = await resolveSmtpConfig();
+  if (!cfg) {
+    return { configured: false, host: null, port: null, fromEmail: null };
+  }
+  return {
+    configured: true,
+    host: cfg.host,
+    port: cfg.port,
+    fromEmail: cfg.fromEmail,
+  };
 }

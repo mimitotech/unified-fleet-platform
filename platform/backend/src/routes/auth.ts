@@ -297,9 +297,16 @@ router.post('/forgot-password', async (req, res) => {
       resourceId: user.id,
       details: { reason: emailError || 'send_failed' },
     });
+    // Keep user-facing text safe; include a short technical hint for admins reading Network tab.
+    const hint =
+      emailError && /timeout|ETIMEDOUT|ECONNREFUSED|ENOTFOUND|ESOCKET/i.test(emailError)
+        ? ' (SMTP connection blocked or timed out from the server)'
+        : emailError && /auth|invalid login|535|534/i.test(emailError)
+          ? ' (SMTP authentication failed — check mailbox password)'
+          : '';
     return error(
       res,
-      'Password reset email could not be sent. Please contact your MIMITO MAMS administrator for assistance.',
+      `Password reset email could not be sent. Please contact your MIMITO MAMS administrator for assistance.${hint}`,
       503
     );
   }

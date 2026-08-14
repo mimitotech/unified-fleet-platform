@@ -71,14 +71,17 @@ export function createApp() {
       await query('SELECT 1');
       const { getPoolLimits } = await import('./config/database.js');
       const { getSyncSchedulerStatus } = await import('./services/SyncScheduler.js');
+      const { getSmtpPublicStatus } = await import('./services/EmailService.js');
       const pool = getPoolLimits();
       const sync = getSyncSchedulerStatus();
+      const smtp = await getSmtpPublicStatus();
       res.json({
         status: 'ok',
         database: 'connected',
         engine: 'mysql',
         latencyMs: Date.now() - t0,
         pool,
+        smtp,
         sync: {
           alertCycleRunning: sync.alertCycleRunning,
           tenantCycleRunning: sync.tenantCycleRunning,

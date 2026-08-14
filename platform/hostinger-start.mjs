@@ -31,6 +31,13 @@ console.log('[mams-start] PORT=', port);
 console.log('[mams-start] DB_USER=', process.env.DB_USER || '(unset)');
 console.log('[mams-start] DB_NAME=', process.env.DB_NAME || '(unset)');
 console.log('[mams-start] DB_PASSWORD length=', (process.env.DB_PASSWORD || '').length);
+console.log(
+  '[mams-start] SMTP=',
+  process.env.SMTP_HOST || '(unset)',
+  process.env.SMTP_USER || process.env.SMTP_FROM_EMAIL || '(no-user)',
+  'passLen=',
+  (process.env.SMTP_PASSWORD || '').length
+);
 
 if (!existsSync(serverBundle)) {
   console.error('[mams-start] FATAL: backend/dist/index.js missing — run npm run build');
