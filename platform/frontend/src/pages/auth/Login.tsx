@@ -328,22 +328,25 @@ export default function Login() {
       setEmail(result.email);
       setNewPassword('');
       setConfirmPassword('');
+      setResetToken('');
       if (result.emailed) {
-        setResetToken('');
         setView('forgot-sent');
-        notify.success('Check your email', 'We sent a password reset link.');
-      } else if (result.resetToken) {
-        setResetToken(result.resetToken);
-        setView('forgot-reset');
         notify.success(
-          'Continue password reset',
-          result.message || 'Choose a new password to continue.',
+          'Check your email',
+          result.message || 'We sent a temporary password. Sign in and change it.'
         );
       } else {
-        notify.error('Reset unavailable', 'No reset method available. Contact support.');
+        notify.error(
+          'Reset unavailable',
+          'Password reset email could not be sent. Please contact your MIMITO MAMS administrator for assistance.'
+        );
       }
     } catch (err) {
-      notify.error('Reset unavailable', (err as Error).message);
+      notify.error(
+        'Reset unavailable',
+        (err as Error).message ||
+          'Password reset email could not be sent. Please contact your MIMITO MAMS administrator for assistance.'
+      );
     } finally {
       setLoading(false);
     }
@@ -530,7 +533,7 @@ export default function Login() {
                 {view === 'forgot-email' && (
                   <form onSubmit={handleForgotEmail} className="space-y-3.5">
                     <p className="text-xs font-medium leading-relaxed text-slate-600">
-                      Enter the email on your account. We will send a secure reset link to that address.
+                      Enter the email on your account. We will email a temporary one-time password you can use to sign in, then change.
                     </p>
                     <div className="space-y-1">
                       <Label htmlFor="forgot-email" className="text-xs font-bold text-primary">
@@ -556,7 +559,7 @@ export default function Login() {
                       loadingText="Sending..."
                     >
                       <KeyRound className="mr-1.5 h-4 w-4" />
-                      Send reset link
+                      Email temporary password
                     </LoadingButton>
                     <button
                       type="button"
@@ -573,10 +576,11 @@ export default function Login() {
                 {view === 'forgot-sent' && (
                   <div className="space-y-3.5">
                     <p className="text-xs font-medium leading-relaxed text-slate-600">
-                      If an account exists for <span className="font-bold text-primary">{email}</span>, we
-                      sent a password reset link from{' '}
-                      <span className="font-semibold">mams@mimitotracking.com</span>. Open the email and
-                      choose a new password within 15 minutes.
+                      We emailed a temporary password for{' '}
+                      <span className="font-bold text-primary">{email}</span> from{' '}
+                      <span className="font-semibold">mams@mimitotracking.com</span>. Sign in with that
+                      password, then change it immediately. If you do not receive the email, contact your
+                      MIMITO MAMS administrator.
                     </p>
                     <button
                       type="button"

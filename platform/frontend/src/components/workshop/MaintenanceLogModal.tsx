@@ -31,9 +31,11 @@ import { FleetUnitSelect } from '@/components/fleet/FleetUnitSelect';
 import { clientApi } from '@/lib/api';
 import {
   emptySignOff,
+  signOffFromUser,
   WorkshopSignOffFields,
   type WorkshopSignOffValue,
 } from '@/components/workshop/WorkshopSignOffFields';
+import { useAuth } from '@/providers/AuthProvider';
 import {
   instantiateChecklistSections,
 } from '@/lib/workshopChecklists';
@@ -222,6 +224,7 @@ export function MaintenanceLogModal({
   linkedBreakdownId,
   editData,
 }: MaintenanceLogModalProps) {
+  const { user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState<MaintenanceLogFormData>(initialFormState);
   const [selectedUnit, setSelectedUnit] = useState<FleetUnit | null>(null);
@@ -235,6 +238,7 @@ export function MaintenanceLogModal({
         setFormData({ ...editData, partsUsed: editData.partsUsed ?? [] });
         setSelectedUnit(null);
       } else {
+        const sign = signOffFromUser(user?.fullName);
         setFormData({
           ...initialFormState,
           vehicleId: defaultVehicleId || '',
@@ -242,6 +246,10 @@ export function MaintenanceLogModal({
           breakdownId: linkedBreakdownId,
           maintenanceType: linkedBreakdownId ? 'breakdown' : 'repair',
           startDate: new Date().toISOString().split('T')[0],
+          driverName: sign.name,
+          mechanicName: sign.name,
+          mechanicDate: sign.date,
+          mechanicSignature: sign.signature,
         });
         setSelectedUnit(null);
       }
@@ -249,7 +257,7 @@ export function MaintenanceLogModal({
     } else if (!open) {
       setIsInitialized(false);
     }
-  }, [open, isInitialized, editData, defaultVehicleId, linkedInspectionId, linkedBreakdownId]);
+  }, [open, isInitialized, editData, defaultVehicleId, linkedInspectionId, linkedBreakdownId, user?.fullName]);
 
   const matchedUnit = useMemo(() => {
     if (selectedUnit) return selectedUnit;

@@ -7,7 +7,7 @@ import { isSystemRole } from '../utils/systemRoles.js';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 import { AuditService } from '../services/AuditService.js';
 import { getJwtSecret } from '../config/env.js';
-import { assertStrongPassword } from '../utils/passwordPolicy.js';
+import { assertStrongPassword, generateStrongPassword } from '../utils/passwordPolicy.js';
 
 const router = Router();
 
@@ -225,7 +225,8 @@ router.post('/accept-terms', authMiddleware, async (req: AuthRequest, res) => {
 });
 
 /**
- * Step 1 — verify email exists for an active user, then issue a short-lived reset token.
+ * Forgot password — generate a temporary password, email it, then commit the hash.
+ * If email cannot be sent, the password is NOT changed (fail closed).
  */
 router.post('/forgot-password', async (req, res) => {
   const email = String(req.body?.email || '')
@@ -236,9 +237,10 @@ router.post('/forgot-password', async (req, res) => {
   const { rows } = await query<{
     id: string;
     email: string;
+    full_name: string | null;
     is_active: boolean;
     tenant_id: string | null;
-  }>(`SELECT id, email, is_active, tenant_id FROM users WHERE email = $1`, [email]);
+  }>(`SELECT id, email, full_name, is_active, tenant_id FROM users WHERE email = $1`, [email]);
 
   const user = rows[0];
   if (!user || !user.is_active) {
@@ -251,34 +253,62 @@ router.post('/forgot-password', async (req, res) => {
     return error(res, 'No account found with that email', 404);
   }
 
-  const resetToken = jwt.sign(
-    { sub: user.id, id: user.id, email: user.email, purpose: 'password_reset' },
-    getJwtSecret(),
-    { expiresIn: '15m', algorithm: 'HS256' },
-  );
+  const { isSmtpConfiguredAsync, sendAccountCredentialsEmail } = await import('../services/EmailService.js');
+  const smtpReady = await isSmtpConfiguredAsync();
+  if (!smtpReady) {
+    await AuditService.log({
+      userId: user.id,
+      userEmail: user.email,
+      tenantId: user.tenant_id || undefined,
+      action: 'auth.forgot_password_email_failed',
+      resourceType: 'user',
+      resourceId: user.id,
+      details: { reason: 'smtp_not_configured' },
+    });
+    return error(
+      res,
+      'Password reset email could not be sent. Please contact your MIMITO MAMS administrator for assistance.',
+      503
+    );
+  }
 
-  const { isSmtpConfiguredAsync, sendPasswordResetEmail } = await import('../services/EmailService.js');
-
+  const temporaryPassword = generateStrongPassword({ length: 14 });
   let emailed = false;
   let emailError: string | undefined;
-  const smtpReady = await isSmtpConfiguredAsync();
-  if (smtpReady) {
-    try {
-      emailed = await sendPasswordResetEmail(user.email, resetToken);
-      if (!emailed) emailError = 'SMTP send returned false';
-    } catch (err) {
-      emailError = (err as Error).message;
-      await AuditService.log({
-        userId: user.id,
-        userEmail: user.email,
-        tenantId: user.tenant_id || undefined,
-        action: 'auth.forgot_password_email_failed',
-        resourceType: 'user',
-        resourceId: user.id,
-        details: { reason: emailError },
-      });
-    }
+  try {
+    emailed = await sendAccountCredentialsEmail({
+      to: user.email,
+      fullName: user.full_name || undefined,
+      temporaryPassword,
+      reason: 'forgot',
+    });
+    if (!emailed) emailError = 'SMTP send returned false';
+  } catch (err) {
+    emailError = (err as Error).message;
   }
+
+  if (!emailed) {
+    await AuditService.log({
+      userId: user.id,
+      userEmail: user.email,
+      tenantId: user.tenant_id || undefined,
+      action: 'auth.forgot_password_email_failed',
+      resourceType: 'user',
+      resourceId: user.id,
+      details: { reason: emailError || 'send_failed' },
+    });
+    return error(
+      res,
+      'Password reset email could not be sent. Please contact your MIMITO MAMS administrator for assistance.',
+      503
+    );
+  }
+
+  const hash = await bcrypt.hash(temporaryPassword, 10);
+  await query(
+    `UPDATE users SET password_hash = $2, force_password_change = true, updated_at = NOW() WHERE id = $1`,
+    [user.id, hash]
+  );
 
   await AuditService.log({
     userId: user.id,
@@ -287,22 +317,13 @@ router.post('/forgot-password', async (req, res) => {
     action: 'auth.forgot_password_ok',
     resourceType: 'user',
     resourceId: user.id,
-    details: { emailed, emailError: emailError || null, smtpReady },
+    details: { emailed: true, method: 'temporary_password' },
   });
 
-  // Prefer email. If mail cannot be sent, fall back to in-browser reset so the flow still works.
-  if (emailed) {
-    return success(res, { emailed: true, email: user.email, expiresInMinutes: 15 });
-  }
-
   return success(res, {
-    resetToken,
+    emailed: true,
     email: user.email,
-    expiresInMinutes: 15,
-    emailed: false,
-    message: smtpReady
-      ? 'Could not send email. Continue here to set a new password.'
-      : 'Email is not configured. Continue here to set a new password.',
+    message: 'A temporary password was sent to your email. Sign in and change it immediately.',
   });
 });
 

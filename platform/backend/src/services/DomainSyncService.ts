@@ -195,17 +195,34 @@ export class DomainSyncService {
       const occurredAt =
         alert.timestamp instanceof Date ? alert.timestamp : new Date(alert.timestamp);
 
+      let driverId: string | null = null;
+      let driverName: string | null = null;
+      if (assetId) {
+        const { rows: drv } = await query<{ id: string; name: string }>(
+          `SELECT id, name FROM drivers
+           WHERE tenant_id = $1 AND assigned_asset_id = $2 AND deleted_at IS NULL
+           LIMIT 1`,
+          [tenantId, assetId]
+        ).catch(() => ({ rows: [] as Array<{ id: string; name: string }> }));
+        if (drv[0]) {
+          driverId = drv[0].id;
+          driverName = drv[0].name;
+        }
+      }
+
       await query(
         `INSERT INTO eco_driving_violations (
            tenant_id, asset_id, unit_id, unit_name, violation_type, severity,
-           occurred_at, latitude, longitude, driver_name, external_id
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           occurred_at, latitude, longitude, driver_name, driver_id, external_id
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          ON CONFLICT (tenant_id, external_id) WHERE external_id IS NOT NULL DO UPDATE SET
            violation_type = EXCLUDED.violation_type,
            severity = EXCLUDED.severity,
            occurred_at = EXCLUDED.occurred_at,
            unit_name = EXCLUDED.unit_name,
-           asset_id = COALESCE(EXCLUDED.asset_id, eco_driving_violations.asset_id)`,
+           asset_id = COALESCE(EXCLUDED.asset_id, eco_driving_violations.asset_id),
+           driver_name = COALESCE(EXCLUDED.driver_name, eco_driving_violations.driver_name),
+           driver_id = COALESCE(EXCLUDED.driver_id, eco_driving_violations.driver_id)`,
         [
           tenantId,
           assetId,
@@ -216,7 +233,8 @@ export class DomainSyncService {
           occurredAt.toISOString(),
           alert.latitude ?? null,
           alert.longitude ?? null,
-          null,
+          driverName,
+          driverId,
           externalId,
         ],
       );
@@ -229,6 +247,14 @@ export class DomainSyncService {
   static async syncTenant(tenantId: string): Promise<{ trips: number; eco: number }> {
     const trips = await this.syncTenantTrips(tenantId);
     const eco = await this.syncTenantEcoViolations(tenantId);
+    if (eco > 0 || trips > 0) {
+      try {
+        const { DriverScoringService } = await import('./DriverScoringService.js');
+        await DriverScoringService.recomputeTenant(tenantId, 30);
+      } catch (err) {
+        logger.warn(`[DomainSync] driver scoring skipped tenant=${tenantId}`, err);
+      }
+    }
     return { trips, eco };
   }
 

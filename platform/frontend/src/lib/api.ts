@@ -196,10 +196,8 @@ export const authApi = {
     }),
   forgotPassword: (email: string) =>
     api<{
-      resetToken?: string;
       emailed?: boolean;
       email: string;
-      expiresInMinutes: number;
       message?: string;
     }>('/api/auth/forgot-password', {
       method: 'POST',
@@ -262,6 +260,8 @@ export interface Driver {
   assignedAssetId?: string;
   assignedAssetName?: string;
   assignedAssetPlate?: string;
+  fuelCardNumber?: string | null;
+  hireDate?: string | null;
 }
 
 export interface DriverStats {
@@ -271,19 +271,58 @@ export interface DriverStats {
   offDuty: number;
 }
 
+export interface DriverPenaltyConfig {
+  tenantId: string;
+  baseScore: number;
+  penalties: Record<string, number>;
+  goodMin: number;
+  badMin: number;
+  updatedAt?: string | null;
+}
+
+export interface DriverPerformanceRow {
+  id: string;
+  driverId: string;
+  driverName: string;
+  snapshotDate: string;
+  safetyScore: number;
+  grade?: string | null;
+  penaltyPoints?: number;
+  violationsCount: number;
+  tripsCount: number;
+  totalDistance: number;
+  assignedAssetPlate?: string;
+  assignedAssetName?: string;
+}
+
+export interface RouteCheckpoint {
+  id?: string;
+  name: string;
+  lat?: number | null;
+  lng?: number | null;
+  address?: string | null;
+  arrivalTime?: string | null;
+  departureTime?: string | null;
+  notes?: string | null;
+}
+
 export interface FleetRoute {
   id: string;
   name: string;
   status: string;
+  assetId?: string;
   assetName?: string;
   assetPlate?: string;
+  driverId?: string;
   driverName?: string;
   startTime: string;
   endTime?: string;
   distance: number;
+  waypoints?: RouteCheckpoint[];
   eta?: string;
   color: string;
   estimatedDuration: number;
+  notes?: string;
 }
 
 export interface RouteStats {
@@ -337,6 +376,14 @@ export interface EmissionsMetrics {
   co2PerKm: number;
   violationCount: number;
   complianceStatus: string;
+  emissionFactor?: number;
+  from?: string | null;
+  to?: string | null;
+}
+
+export interface EmissionsByTypeRow {
+  violationType: string;
+  count: number;
 }
 
 export interface EcoViolation {
@@ -606,11 +653,26 @@ export const clientApi = {
   // Drivers
   getDrivers: () => api<Driver[]>('/api/client/drivers'),
   getDriverStats: () => api<DriverStats>('/api/client/drivers/stats'),
-  getDriverPerformance: () => api<unknown[]>('/api/client/drivers/performance'),
+  getDriverPerformance: () => api<DriverPerformanceRow[]>('/api/client/drivers/performance'),
+  getDriverPenaltyConfig: () => api<DriverPenaltyConfig>('/api/client/drivers/penalties'),
+  saveDriverPenaltyConfig: (data: Partial<DriverPenaltyConfig>) =>
+    api<DriverPenaltyConfig>('/api/client/drivers/penalties', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  recomputeDriverScores: (days = 30) =>
+    api<{ drivers: number; snapshots: DriverPerformanceRow[] }>('/api/client/drivers/recompute-scores', {
+      method: 'POST',
+      body: JSON.stringify({ days }),
+    }),
+  getDriverViolations: (id: string, limit = 50) =>
+    api<EcoViolation[]>(`/api/client/drivers/${id}/violations?limit=${limit}`),
   createDriver: (data: Partial<Driver>) =>
     api<Driver>('/api/client/drivers', { method: 'POST', body: JSON.stringify(data) }),
   updateDriver: (id: string, data: Partial<Driver>) =>
     api<Driver>(`/api/client/drivers/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteDriver: (id: string) =>
+    api<{ deleted: boolean }>(`/api/client/drivers/${id}`, { method: 'DELETE' }),
 
   // Routes
   getRoutes: (status?: string) =>
@@ -622,11 +684,17 @@ export const clientApi = {
     if (opts?.to) q.set('to', opts.to);
     return api<TripSummary[]>(`/api/client/routes/trips?${q}`);
   },
-  createRoute: (data: Partial<FleetRoute>) =>
+  createRoute: (data: Partial<FleetRoute> & { waypoints?: RouteCheckpoint[] }) =>
     api<FleetRoute>('/api/client/routes', { method: 'POST', body: JSON.stringify(data) }),
-  updateRoute: (id: string, data: Partial<FleetRoute>) =>
+  createRouteFromTrip: (tripId: string, data?: { name?: string; driverId?: string; driverName?: string }) =>
+    api<FleetRoute>(`/api/client/routes/from-trip/${tripId}`, {
+      method: 'POST',
+      body: JSON.stringify(data || {}),
+    }),
+  updateRoute: (id: string, data: Partial<FleetRoute> & { waypoints?: RouteCheckpoint[] }) =>
     api<FleetRoute>(`/api/client/routes/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-
+  deleteRoute: (id: string) =>
+    api<{ deleted: boolean }>(`/api/client/routes/${id}`, { method: 'DELETE' }),
   // Fuel (database-backed report data; live sensors stay on Wialon endpoints)
   getFuelTransactions: (
     from?: string,
@@ -752,9 +820,35 @@ export const clientApi = {
     api(`/api/client/workshop/breakdowns/${id}`, { method: 'DELETE' }),
 
   // Emissions
-  getEmissionsMetrics: () => api<EmissionsMetrics>('/api/client/emissions/metrics'),
-  getEmissionsByVehicle: () => api<unknown[]>('/api/client/emissions/by-vehicle'),
-  getEcoViolations: () => api<EcoViolation[]>('/api/client/emissions/violations'),
+  getEmissionsMetrics: (opts?: { from?: string; to?: string }) => {
+    const q = new URLSearchParams();
+    if (opts?.from) q.set('from', opts.from);
+    if (opts?.to) q.set('to', opts.to);
+    const qs = q.toString();
+    return api<EmissionsMetrics>(`/api/client/emissions/metrics${qs ? `?${qs}` : ''}`);
+  },
+  getEmissionsByVehicle: (opts?: { from?: string; to?: string }) => {
+    const q = new URLSearchParams();
+    if (opts?.from) q.set('from', opts.from);
+    if (opts?.to) q.set('to', opts.to);
+    const qs = q.toString();
+    return api<unknown[]>(`/api/client/emissions/by-vehicle${qs ? `?${qs}` : ''}`);
+  },
+  getEmissionsByType: (opts?: { from?: string; to?: string }) => {
+    const q = new URLSearchParams();
+    if (opts?.from) q.set('from', opts.from);
+    if (opts?.to) q.set('to', opts.to);
+    const qs = q.toString();
+    return api<EmissionsByTypeRow[]>(`/api/client/emissions/by-type${qs ? `?${qs}` : ''}`);
+  },
+  getEcoViolations: (opts?: { from?: string; to?: string; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (opts?.from) q.set('from', opts.from);
+    if (opts?.to) q.set('to', opts.to);
+    if (opts?.limit) q.set('limit', String(opts.limit));
+    const qs = q.toString();
+    return api<EcoViolation[]>(`/api/client/emissions/violations${qs ? `?${qs}` : ''}`);
+  },
 
   // Surveillance
   getVideoStreams: () => api<VideoStream[]>('/api/client/surveillance/streams'),

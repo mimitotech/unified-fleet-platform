@@ -203,15 +203,22 @@ export async function sendAccountCredentialsEmail(opts: {
   to: string;
   fullName?: string;
   temporaryPassword: string;
-  reason: 'created' | 'reset';
+  reason: 'created' | 'reset' | 'forgot';
 }): Promise<boolean> {
   const base = getPublicBaseUrl();
   const loginUrl = `${base}/auth/login`;
-  const title = opts.reason === 'created' ? 'Your MAMS account is ready' : 'Your MAMS password was reset';
+  const title =
+    opts.reason === 'created'
+      ? 'Your MAMS account is ready'
+      : opts.reason === 'forgot'
+        ? 'Your temporary MAMS password'
+        : 'Your MAMS password was reset';
   const lead =
     opts.reason === 'created'
       ? 'An administrator created a MAMS account for you.'
-      : 'An administrator reset your MAMS password.';
+      : opts.reason === 'forgot'
+        ? 'You requested a password reset for your MAMS account. Use this one-time temporary password to sign in, then change it immediately.'
+        : 'An administrator reset your MAMS password.';
   const text = [
     lead,
     '',
@@ -220,6 +227,7 @@ export async function sendAccountCredentialsEmail(opts: {
     `Temporary password: ${opts.temporaryPassword}`,
     '',
     'Sign in and change your password immediately.',
+    'If you did not request this, contact your MIMITO MAMS administrator.',
   ].join('\n');
 
   return sendMail({
@@ -231,7 +239,7 @@ export async function sendAccountCredentialsEmail(opts: {
       `<p>${escapeHtml(lead)}</p>
        <p><strong>Email:</strong> ${escapeHtml(opts.to)}<br/><strong>Temporary password:</strong> <code>${escapeHtml(opts.temporaryPassword)}</code></p>
        <p style="margin:20px 0;"><a href="${loginUrl}" style="display:inline-block;background:#004225;color:#fff;text-decoration:none;padding:12px 18px;border-radius:6px;font-weight:600;">Sign in to MAMS</a></p>
-       <p style="font-size:13px;color:#6b7280;">Change your password after signing in.</p>`,
+       <p style="font-size:13px;color:#6b7280;">Change your password after signing in. If you did not request this, contact your MIMITO MAMS administrator.</p>`,
     ),
   });
 }

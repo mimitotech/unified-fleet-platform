@@ -41,9 +41,11 @@ import {
 } from '@/lib/workshopChecklists';
 import {
   emptySignOff,
+  signOffFromUser,
   WorkshopSignOffFields,
   type WorkshopSignOffValue,
 } from '@/components/workshop/WorkshopSignOffFields';
+import { useAuth } from '@/providers/AuthProvider';
 import {
   isStationaryUnit,
   resolveWorkshopAssetCategory,
@@ -176,16 +178,17 @@ function ChecklistRow({ item, onChange, disabled }: ChecklistRowProps) {
   );
 }
 
-function emptyForm(defaultVehicleId?: string): InspectionFormData {
+function emptyForm(defaultVehicleId?: string, loggedInName?: string): InspectionFormData {
   const sections = instantiateChecklistSections('vehicle');
   const legacy = legacyChecklistsFromSections(sections);
+  const sign = signOffFromUser(loggedInName);
   return {
     vehicleId: defaultVehicleId || '',
     vehicleName: '',
     vehiclePlate: '',
     assetCategory: 'vehicle',
     driverId: null,
-    driverName: '',
+    driverName: sign.name,
     inspectionType: 'pre-delivery',
     odometerReading: 0,
     engineHours: 0,
@@ -194,9 +197,9 @@ function emptyForm(defaultVehicleId?: string): InspectionFormData {
     truckHeadChecklist: legacy.truckHeadChecklist,
     trailerChecklist: legacy.trailerChecklist,
     notes: '',
-    inspectorName: '',
-    inspectorDate: emptySignOff().date,
-    inspectorSignature: '',
+    inspectorName: sign.name,
+    inspectorDate: sign.date,
+    inspectorSignature: sign.signature,
   };
 }
 
@@ -208,6 +211,7 @@ export function PreDeliveryInspectionModal({
   defaultVehicleId,
   editData,
 }: PreDeliveryInspectionModalProps) {
+  const { user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
   const [selectedUnit, setSelectedUnit] = useState<FleetUnit | null>(null);
@@ -301,7 +305,7 @@ export function PreDeliveryInspectionModal({
         setSelectedUnit(null);
         void loadTemplateForCategory(cat, true);
       } else {
-        setFormData(emptyForm(defaultVehicleId));
+        setFormData(emptyForm(defaultVehicleId, user?.fullName));
         setSelectedUnit(null);
         setTemplateName('');
         setOpenSections({});

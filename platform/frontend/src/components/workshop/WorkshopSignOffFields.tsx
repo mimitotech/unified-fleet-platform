@@ -22,11 +22,18 @@ function todayIso(): string {
 }
 
 export function emptySignOff(partial?: Partial<WorkshopSignOffValue>): WorkshopSignOffValue {
+  const name = partial?.name || '';
   return {
-    name: partial?.name || '',
+    name,
     date: partial?.date || todayIso(),
-    signature: partial?.signature || '',
+    signature: partial?.signature || (name ? name.trim().toLowerCase() : ''),
   };
+}
+
+/** Prefill sign-off from the logged-in user (name + lowercase signature). */
+export function signOffFromUser(fullName?: string | null): WorkshopSignOffValue {
+  const name = String(fullName || '').trim();
+  return emptySignOff({ name, signature: name ? name.toLowerCase() : '' });
 }
 
 /** Name + date + signature (autofills lowercase name). */

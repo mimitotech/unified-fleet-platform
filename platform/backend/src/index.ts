@@ -109,6 +109,13 @@ async function main() {
         logger.warn(`Workshop schema ensure skipped: ${(e as Error).message}`);
       }
       try {
+        const { DriverScoringService } = await import('./services/DriverScoringService.js');
+        await DriverScoringService.ensureSchema();
+        logger.info('Driver scoring schema ready (penalties, fuel card, grades)');
+      } catch (e) {
+        logger.warn(`Driver scoring schema ensure skipped: ${(e as Error).message}`);
+      }
+      try {
         const { ensureUserAlertAccessSchema } = await import('./services/userAlertAccess.js');
         await ensureUserAlertAccessSchema();
         logger.info('User alert-access schema ready');

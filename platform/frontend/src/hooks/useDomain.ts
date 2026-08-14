@@ -245,20 +245,44 @@ export function useDeleteGeofence() {
   });
 }
 
-export function useEmissionsMetrics(enabled = true) {
+export function useEmissionsMetrics(
+  enabled = true,
+  opts?: { from?: string; to?: string },
+) {
+  const from = opts?.from;
+  const to = opts?.to;
   return useQuery({
-    queryKey: ['emissionsMetrics'],
-    queryFn: () => clientApi.getEmissionsMetrics(),
+    queryKey: ['emissionsMetrics', from || 'all', to || 'all'],
+    queryFn: () => clientApi.getEmissionsMetrics({ from, to }),
     enabled,
   });
 }
 
-export function useEmissionsByVehicle() {
-  return useQuery({ queryKey: ['emissionsByVehicle'], queryFn: () => clientApi.getEmissionsByVehicle() });
+export function useEmissionsByVehicle(opts?: { from?: string; to?: string }) {
+  const from = opts?.from;
+  const to = opts?.to;
+  return useQuery({
+    queryKey: ['emissionsByVehicle', from || 'all', to || 'all'],
+    queryFn: () => clientApi.getEmissionsByVehicle({ from, to }),
+  });
 }
 
-export function useEcoViolations() {
-  return useQuery({ queryKey: ['ecoViolations'], queryFn: () => clientApi.getEcoViolations() });
+export function useEmissionsByType(opts?: { from?: string; to?: string }) {
+  const from = opts?.from;
+  const to = opts?.to;
+  return useQuery({
+    queryKey: ['emissionsByType', from || 'all', to || 'all'],
+    queryFn: () => clientApi.getEmissionsByType({ from, to }),
+  });
+}
+
+export function useEcoViolations(opts?: { from?: string; to?: string }) {
+  const from = opts?.from;
+  const to = opts?.to;
+  return useQuery({
+    queryKey: ['ecoViolations', from || 'all', to || 'all'],
+    queryFn: () => clientApi.getEcoViolations({ from, to, limit: 100 }),
+  });
 }
 
 export function useVideoStreams(enabled = true) {

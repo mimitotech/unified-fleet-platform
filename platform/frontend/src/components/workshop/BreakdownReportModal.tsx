@@ -30,6 +30,7 @@ import { Badge } from '@/components/ui/badge';
 import { FleetUnitSelect } from '@/components/fleet/FleetUnitSelect';
 import {
   emptySignOff,
+  signOffFromUser,
   WorkshopSignOffFields,
   type WorkshopSignOffValue,
 } from '@/components/workshop/WorkshopSignOffFields';
@@ -41,6 +42,7 @@ import {
   workshopOperatorLabel,
   isStationaryUnit,
 } from '@/lib/workshopUnit';
+import { useAuth } from '@/providers/AuthProvider';
 import type { FleetUnit } from '@/lib/fleetUnits';
 import type { BreakdownSeverity, WorkshopAssetCategory } from '@/types/workshop';
 
@@ -129,6 +131,7 @@ export function BreakdownReportModal({
   defaultVehicleId,
   editData,
 }: BreakdownReportModalProps) {
+  const { user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState<BreakdownReportFormData>(initialFormState);
   const [selectedUnit, setSelectedUnit] = useState<FleetUnit | null>(null);
@@ -145,9 +148,14 @@ export function BreakdownReportModal({
         });
         setSelectedUnit(null);
       } else {
+        const sign = signOffFromUser(user?.fullName);
         setFormData({
           ...initialFormState,
           vehicleId: defaultVehicleId || '',
+          driverName: sign.name,
+          reportedBy: sign.name,
+          reportedDate: sign.date,
+          reportedSignature: sign.signature,
           breakdownTime: new Date().toISOString().slice(0, 16),
         });
         setSelectedUnit(null);
@@ -156,7 +164,7 @@ export function BreakdownReportModal({
     } else if (!open) {
       setIsInitialized(false);
     }
-  }, [open, isInitialized, editData, defaultVehicleId]);
+  }, [open, isInitialized, editData, defaultVehicleId, user?.fullName]);
 
   const matchedUnit = useMemo(() => {
     if (selectedUnit) return selectedUnit;
