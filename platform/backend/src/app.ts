@@ -66,38 +66,67 @@ export function createApp() {
   app.use('/uploads', createUploadsMiddleware());
 
   app.get('/health', async (_req, res) => {
+    const timestamp = new Date().toISOString();
+    let database: 'connected' | 'disconnected' = 'disconnected';
+    let latencyMs: number | null = null;
+    let pool: { connectionLimit: number; queueLimit: number } | null = null;
+    let sync: Record<string, unknown> | null = null;
+    let smtp: {
+      configured: boolean;
+      host: string | null;
+      port: number | null;
+      fromEmail: string | null;
+    } | null = null;
+    const errors: string[] = [];
+
     try {
       const t0 = Date.now();
       await query('SELECT 1');
-      const { getPoolLimits } = await import('./config/database.js');
-      const { getSyncSchedulerStatus } = await import('./services/SyncScheduler.js');
-      const { getSmtpPublicStatus } = await import('./services/EmailService.js');
-      const pool = getPoolLimits();
-      const sync = getSyncSchedulerStatus();
-      const smtp = await getSmtpPublicStatus();
-      res.json({
-        status: 'ok',
-        database: 'connected',
-        engine: 'mysql',
-        latencyMs: Date.now() - t0,
-        pool,
-        smtp,
-        sync: {
-          alertCycleRunning: sync.alertCycleRunning,
-          tenantCycleRunning: sync.tenantCycleRunning,
-          lastAlertCycleAt: sync.lastAlertCycleAt,
-          lastTenantCycleAt: sync.lastTenantCycleAt,
-        },
-        timestamp: new Date().toISOString(),
-      });
-    } catch {
-      res.status(503).json({
-        status: 'degraded',
-        database: 'disconnected',
-        engine: 'mysql',
-        timestamp: new Date().toISOString(),
-      });
+      latencyMs = Date.now() - t0;
+      database = 'connected';
+    } catch (e) {
+      errors.push(`database: ${(e as Error).message}`);
     }
+
+    try {
+      const { getPoolLimits } = await import('./config/database.js');
+      pool = getPoolLimits();
+    } catch (e) {
+      errors.push(`pool: ${(e as Error).message}`);
+    }
+
+    try {
+      const { getSyncSchedulerStatus } = await import('./services/SyncScheduler.js');
+      const s = getSyncSchedulerStatus();
+      sync = {
+        alertCycleRunning: s.alertCycleRunning,
+        tenantCycleRunning: s.tenantCycleRunning,
+        lastAlertCycleAt: s.lastAlertCycleAt,
+        lastTenantCycleAt: s.lastTenantCycleAt,
+      };
+    } catch (e) {
+      errors.push(`sync: ${(e as Error).message}`);
+    }
+
+    try {
+      const { getSmtpPublicStatus } = await import('./services/EmailService.js');
+      smtp = await getSmtpPublicStatus();
+    } catch (e) {
+      errors.push(`smtp: ${(e as Error).message}`);
+    }
+
+    const ok = database === 'connected';
+    res.status(ok ? 200 : 503).json({
+      status: ok ? 'ok' : 'degraded',
+      database,
+      engine: 'mysql',
+      latencyMs,
+      pool,
+      smtp,
+      sync,
+      ...(errors.length ? { errors } : {}),
+      timestamp,
+    });
   });
 
   app.use('/api/auth/login', rateLimit({ windowMs: 15 * 60_000, max: 20, message: 'Too many login attempts' }));
