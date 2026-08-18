@@ -39,13 +39,26 @@ console.log(
   (process.env.SMTP_PASSWORD || '').length
 );
 
-if (!existsSync(serverBundle)) {
-  console.error('[mams-start] FATAL: backend/dist/index.js missing — run npm run build');
-  process.exit(1);
-}
-
 /** @type {import('node:http').RequestListener | null} */
 let appHandler = null;
+/** @type {((ok: boolean) => void) | null} */
+let attachDone = null;
+const attachPromise = new Promise((resolve) => {
+  attachDone = resolve;
+});
+
+function serveBootFailure(res, title, detail) {
+  if (res.writableEnded) return;
+  const body = `${title}\n\n${detail}\n\nOpen Hostinger → Runtime logs and search for [mams-start].`;
+  res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' });
+  res.end(body);
+}
+
+function setFailureHandler(title, detail) {
+  console.error(`[mams-start] FATAL: ${title}`);
+  console.error(`[mams-start] ${detail}`);
+  appHandler = (_req, res) => serveBootFailure(res, title, detail);
+}
 /** @type {Array<[import('node:http').IncomingMessage, import('node:http').ServerResponse]>} */
 const waiting = [];
 
@@ -71,6 +84,7 @@ await new Promise((resolve, reject) => {
 
 globalThis.__mamsAttach = (handler) => {
   appHandler = handler;
+  attachDone?.(true);
   const queued = waiting.splice(0, waiting.length);
   console.log(`[mams-start] app ready — flushing ${queued.length} queued request(s)`);
   for (const [req, res] of queued) {
@@ -78,5 +92,39 @@ globalThis.__mamsAttach = (handler) => {
   }
 };
 
-console.log('[mams-start] loading backend…');
-await import(pathToFileURL(serverBundle).href);
+if (!existsSync(serverBundle)) {
+  attachDone?.(false);
+  setFailureHandler(
+    'MAMS build output missing',
+    'backend/dist/index.js was not found. Confirm Hostinger build command is "npm run build" and the build step succeeded.',
+  );
+} else {
+  console.log('[mams-start] loading backend…');
+  try {
+    await import(pathToFileURL(serverBundle).href);
+    await Promise.race([
+      attachPromise,
+      new Promise((resolve) => setTimeout(() => resolve(false), 20_000)),
+    ]);
+  } catch (err) {
+    attachDone?.(false);
+    const msg = err instanceof Error ? err.stack || err.message : String(err);
+    setFailureHandler('MAMS backend failed to load', msg.slice(0, 4000));
+  }
+}
+
+if (!appHandler) {
+  attachDone?.(false);
+  setFailureHandler(
+    'MAMS backend did not attach',
+    'Backend loaded but exited before registering HTTP routes. Check runtime logs for validateEnv (JWT_SECRET, ENCRYPTION_KEY, DB_*), build errors, or uncaughtException.',
+  );
+}
+
+const queuedAfterBoot = waiting.splice(0, waiting.length);
+if (queuedAfterBoot.length) {
+  console.log(`[mams-start] boot complete — flushing ${queuedAfterBoot.length} queued request(s)`);
+  for (const [req, res] of queuedAfterBoot) {
+    if (!res.writableEnded && appHandler) appHandler(req, res);
+  }
+}

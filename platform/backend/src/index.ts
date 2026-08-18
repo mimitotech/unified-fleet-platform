@@ -59,9 +59,7 @@ Confirm the same user/password opens the DB in phpMyAdmin.
 
 async function main() {
   try {
-    validateEnv();
-
-    // Attach HTTP app immediately (HomeBridge pattern) so nginx never 504s while DB connects
+    // Attach HTTP app first so Hostinger never serves CDN 503 while env/DB initializes.
     const app = createApp();
     const attach = (globalThis as { __mamsAttach?: (handler: typeof app) => void }).__mamsAttach;
 
@@ -72,6 +70,14 @@ async function main() {
       app.listen(PORT, '0.0.0.0', () => {
         logger.info(`MAMS server listening on port ${PORT}`);
       });
+    }
+
+    try {
+      validateEnv();
+    } catch (err) {
+      logger.error(
+        `Environment validation failed — UI stays up in degraded mode: ${(err as Error).message}`,
+      );
     }
 
     process.env.REDIS_DISABLED = process.env.REDIS_DISABLED || '1';

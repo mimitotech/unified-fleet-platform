@@ -8,7 +8,7 @@ export function validateEnv(): void {
 
   if (isProd && missing.length > 0) {
     logger.error(`Missing required environment variables: ${missing.join(', ')}`);
-    process.exit(1);
+    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
   }
 
   if (isProd) {
@@ -16,11 +16,11 @@ export function validateEnv(): void {
     const enc = process.env.ENCRYPTION_KEY?.trim() || '';
     if (jwt.length < 32 || /CHANGE_ME/i.test(jwt)) {
       logger.error('JWT_SECRET must be a strong random value (32+ chars), not a placeholder.');
-      process.exit(1);
+      throw new Error('JWT_SECRET must be a strong random value (32+ chars), not a placeholder.');
     }
     if (enc.length < 32 || /CHANGE_ME/i.test(enc)) {
       logger.error('ENCRYPTION_KEY must be 32+ chars and must not be a placeholder.');
-      process.exit(1);
+      throw new Error('ENCRYPTION_KEY must be 32+ chars and must not be a placeholder.');
     }
   }
 
@@ -30,7 +30,7 @@ export function validateEnv(): void {
 
   if (isProd && !hasMysql) {
     logger.error('MySQL is required in production. Set DB_USER/DB_NAME/DB_PASSWORD or DATABASE_URL.');
-    process.exit(1);
+    throw new Error('MySQL is required in production. Set DB_USER/DB_NAME/DB_PASSWORD or DATABASE_URL.');
   }
 
   if (
@@ -41,12 +41,12 @@ export function validateEnv(): void {
     !process.env.DATABASE_URL?.includes('@')
   ) {
     logger.error('DB_PASSWORD is required in production when using DB_USER/DB_NAME.');
-    process.exit(1);
+    throw new Error('DB_PASSWORD is required in production when using DB_USER/DB_NAME.');
   }
 
   if (isProd && !process.env.API_PUBLIC_URL?.trim() && !process.env.FRONTEND_URL?.trim()) {
     logger.error('API_PUBLIC_URL or FRONTEND_URL is required in production (webhooks, share links, CORS).');
-    process.exit(1);
+    throw new Error('API_PUBLIC_URL or FRONTEND_URL is required in production (webhooks, share links, CORS).');
   }
 
   if (isProd) {
