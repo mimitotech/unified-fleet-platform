@@ -254,6 +254,8 @@ export interface Driver {
   id: string;
   name: string;
   licenseNumber: string;
+  permitClass?: string | null;
+  licenseExpiryDate?: string | null;
   phone: string;
   email?: string;
   status: string;
@@ -269,6 +271,8 @@ export interface DriverStats {
   available: number;
   driving: number;
   offDuty: number;
+  expiringLicenses?: number;
+  expiredLicenses?: number;
 }
 
 export interface DriverPenaltyConfig {

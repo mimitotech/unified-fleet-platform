@@ -7,6 +7,12 @@ ALTER TABLE drivers
 ALTER TABLE drivers
   ADD COLUMN hire_date DATE NULL AFTER fuel_card_number;
 
+ALTER TABLE drivers
+  ADD COLUMN permit_class VARCHAR(32) NULL AFTER license_number;
+
+ALTER TABLE drivers
+  ADD COLUMN license_expiry_date DATE NULL AFTER permit_class;
+
 -- Configurable penalty weights + Good / Bad / Ugly thresholds (per tenant)
 CREATE TABLE IF NOT EXISTS tenant_driver_penalty_configs (
   tenant_id CHAR(36) NOT NULL PRIMARY KEY,

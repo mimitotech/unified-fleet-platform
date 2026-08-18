@@ -4,6 +4,7 @@ import { AssetOrchestrator } from '../orchestrators/AssetOrchestrator.js';
 import { AlertOrchestrator } from '../orchestrators/AlertOrchestrator.js';
 import { FuelSyncService } from './FuelSyncService.js';
 import { DomainSyncService } from './DomainSyncService.js';
+import { DriverScoringService } from './DriverScoringService.js';
 import { delayBetweenTenants } from './wialonLoginGate.js';
 import { listActiveTenants } from './tenantSyncStatus.js';
 import { logger } from '../config/logger.js';
@@ -187,8 +188,14 @@ async function runAlertCycle(): Promise<void> {
             logger.warn(`[AlertSync] skipped tenant ${tenant.id}`, err);
           }
         }
+        const licenseScan = await DriverScoringService.syncLicenseExpiryAlertsAllTenants();
         if (synced > 0) {
           logger.info(`[AlertSync] checked ${synced} tenants, inserted ${inserted} new alerts`);
+        }
+        if (licenseScan.checked > 0) {
+          logger.info(
+            `[DriverCompliance] license expiry scan tenants=${licenseScan.tenants} drivers=${licenseScan.checked} alerts=${licenseScan.alerted}`
+          );
         }
       });
     });

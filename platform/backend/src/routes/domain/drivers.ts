@@ -28,11 +28,27 @@ router.get('/stats', requireTenant, mod, async (req: TenantRequest, res) => {
        COUNT(*) FILTER (WHERE status = 'available')::int as available,
        COUNT(*) FILTER (WHERE status = 'driving')::int as driving,
        COUNT(*) FILTER (WHERE status = 'off-duty')::int as off_duty,
-       COUNT(*)::int as total
+       COUNT(*)::int as total,
+       COUNT(*) FILTER (WHERE license_expiry_date IS NOT NULL AND license_expiry_date < CURDATE())::int as expired_licenses,
+       COUNT(*) FILTER (
+         WHERE license_expiry_date IS NOT NULL
+           AND license_expiry_date >= CURDATE()
+           AND license_expiry_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)
+       )::int as expiring_licenses
      FROM drivers WHERE tenant_id = $1 AND deleted_at IS NULL`,
     [req.tenantId]
   );
-  return success(res, toCamelRows(rows)[0] || { total: 0, available: 0, driving: 0, offDuty: 0 });
+  return success(
+    res,
+    toCamelRows(rows)[0] || {
+      total: 0,
+      available: 0,
+      driving: 0,
+      offDuty: 0,
+      expiredLicenses: 0,
+      expiringLicenses: 0,
+    }
+  );
 });
 
 router.get('/performance', requireTenant, mod, async (req: TenantRequest, res) => {
@@ -113,12 +129,18 @@ router.get('/:id/violations', requireTenant, mod, async (req: TenantRequest, res
 
 router.post('/', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
   await DriverScoringService.ensureSchema();
-  const { name, licenseNumber, phone, email, status, assignedAssetId, fuelCardNumber, hireDate } = req.body;
+  const {
+    name, licenseNumber, phone, email, status, assignedAssetId, fuelCardNumber, hireDate,
+    permitClass, licenseExpiryDate,
+  } = req.body;
   if (!name || !licenseNumber) return error(res, 'name and licenseNumber required');
   try {
     const { rows } = await query(
-      `INSERT INTO drivers (tenant_id, name, license_number, phone, email, status, assigned_asset_id, fuel_card_number, hire_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      `INSERT INTO drivers (
+         tenant_id, name, license_number, phone, email, status, assigned_asset_id,
+         fuel_card_number, hire_date, permit_class, license_expiry_date
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
       [
         req.tenantId,
         name,
@@ -129,6 +151,8 @@ router.post('/', requireTenant, mod, requireWriteAccess, async (req: TenantReque
         assignedAssetId || null,
         fuelCardNumber || null,
         hireDate || null,
+        permitClass || null,
+        licenseExpiryDate || null,
       ]
     );
     return success(res, toCamelRows(rows)[0], 201);
@@ -143,11 +167,16 @@ router.post('/', requireTenant, mod, requireWriteAccess, async (req: TenantReque
 
 router.patch('/:id', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
   await DriverScoringService.ensureSchema();
-  const { name, phone, email, status, assignedAssetId, fuelCardNumber, hireDate, licenseNumber } = req.body;
+  const {
+    name, phone, email, status, assignedAssetId, fuelCardNumber, hireDate, licenseNumber,
+    permitClass, licenseExpiryDate,
+  } = req.body;
   // Explicit null clears assignment / fuel card; omit key to leave unchanged
   const clearAsset = Object.prototype.hasOwnProperty.call(req.body, 'assignedAssetId');
   const clearFuel = Object.prototype.hasOwnProperty.call(req.body, 'fuelCardNumber');
   const clearHire = Object.prototype.hasOwnProperty.call(req.body, 'hireDate');
+  const clearPermitClass = Object.prototype.hasOwnProperty.call(req.body, 'permitClass');
+  const clearLicenseExpiry = Object.prototype.hasOwnProperty.call(req.body, 'licenseExpiryDate');
   const { rows } = await query(
     `UPDATE drivers SET
        name = COALESCE($3, name),
@@ -158,6 +187,8 @@ router.patch('/:id', requireTenant, mod, requireWriteAccess, async (req: TenantR
        fuel_card_number = CASE WHEN $9 = 1 THEN $10 ELSE fuel_card_number END,
        hire_date = CASE WHEN $11 = 1 THEN $12 ELSE hire_date END,
        license_number = COALESCE($13, license_number),
+       permit_class = CASE WHEN $14 = 1 THEN $15 ELSE permit_class END,
+       license_expiry_date = CASE WHEN $16 = 1 THEN $17 ELSE license_expiry_date END,
        updated_at = NOW()
      WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
      RETURNING *`,
@@ -175,6 +206,10 @@ router.patch('/:id', requireTenant, mod, requireWriteAccess, async (req: TenantR
       clearHire ? 1 : 0,
       clearHire ? hireDate || null : null,
       licenseNumber ?? null,
+      clearPermitClass ? 1 : 0,
+      clearPermitClass ? permitClass || null : null,
+      clearLicenseExpiry ? 1 : 0,
+      clearLicenseExpiry ? licenseExpiryDate || null : null,
     ]
   );
   if (!rows[0]) return error(res, 'Driver not found', 404);

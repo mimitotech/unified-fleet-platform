@@ -57,12 +57,26 @@ const gradeColors: Record<string, string> = {
 const emptyForm = {
   name: '',
   licenseNumber: '',
+  permitClass: '',
+  licenseExpiryDate: '',
   phone: '',
   email: '',
   status: 'available',
   assignedAssetId: '',
   fuelCardNumber: '',
 };
+
+function licenseState(expiryRaw?: string | null): { label: string; className: string } | null {
+  if (!expiryRaw) return null;
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const exp = new Date(`${expiryRaw.slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(exp.getTime())) return null;
+  const days = Math.ceil((exp.getTime() - now.getTime()) / 86400000);
+  if (days < 0) return { label: `Expired ${Math.abs(days)}d`, className: 'bg-destructive/15 text-destructive' };
+  if (days <= 30) return { label: `Expires in ${days}d`, className: 'bg-warning/15 text-warning' };
+  return { label: 'Valid', className: 'bg-success/15 text-success' };
+}
 
 export default function Drivers() {
   const qc = useQueryClient();
@@ -154,6 +168,8 @@ export default function Drivers() {
     setForm({
       name: d.name || '',
       licenseNumber: d.licenseNumber || '',
+      permitClass: d.permitClass || '',
+      licenseExpiryDate: d.licenseExpiryDate ? String(d.licenseExpiryDate).slice(0, 10) : '',
       phone: d.phone || '',
       email: d.email || '',
       status: d.status || 'available',
@@ -171,6 +187,8 @@ export default function Drivers() {
     const payload = {
       name: form.name.trim(),
       licenseNumber: form.licenseNumber.trim(),
+      permitClass: form.permitClass.trim() || null,
+      licenseExpiryDate: form.licenseExpiryDate || null,
       phone: form.phone.trim(),
       email: form.email.trim() || undefined,
       status: form.status,
@@ -223,7 +241,13 @@ export default function Drivers() {
             <MetricCard title="Total Drivers" value={stats?.total ?? 0} icon={Users} variant="primary" size="xxs" />
             <MetricCard title="Available" value={stats?.available ?? 0} icon={UserCheck} variant="success" size="xxs" />
             <MetricCard title="Driving" value={stats?.driving ?? 0} icon={Car} variant="info" size="xxs" />
-            <MetricCard title="Off Duty" value={stats?.offDuty ?? 0} icon={Coffee} variant="default" size="xxs" />
+            <MetricCard
+              title="Licenses at Risk"
+              value={(stats?.expiredLicenses || 0) + (stats?.expiringLicenses || 0)}
+              icon={Coffee}
+              variant={(stats?.expiredLicenses || 0) > 0 ? 'destructive' : 'warning'}
+              size="xxs"
+            />
           </div>
 
           <div className="fleet-card branded-panel">
@@ -241,6 +265,8 @@ export default function Drivers() {
                   <TableRow>
                     <TableHead>Name</TableHead>
                     <TableHead>License</TableHead>
+                    <TableHead>Permit class</TableHead>
+                    <TableHead>Expiry</TableHead>
                     <TableHead>Phone</TableHead>
                     <TableHead>Fuel card</TableHead>
                     <TableHead>Status</TableHead>
@@ -253,6 +279,17 @@ export default function Drivers() {
                     <TableRow key={d.id}>
                       <TableCell className="font-medium">{d.name}</TableCell>
                       <TableCell>{d.licenseNumber}</TableCell>
+                      <TableCell>{d.permitClass || '—'}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-col gap-1">
+                          <span className="text-xs">{d.licenseExpiryDate ? String(d.licenseExpiryDate).slice(0, 10) : '—'}</span>
+                          {licenseState(d.licenseExpiryDate) && (
+                            <Badge className={licenseState(d.licenseExpiryDate)?.className || ''}>
+                              {licenseState(d.licenseExpiryDate)?.label}
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
                       <TableCell>{d.phone || '—'}</TableCell>
                       <TableCell>{d.fuelCardNumber || '—'}</TableCell>
                       <TableCell>
@@ -268,7 +305,7 @@ export default function Drivers() {
                   ))}
                   {!drivers?.length && (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                      <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
                         No drivers yet — add a driver or sync from Wialon
                       </TableCell>
                     </TableRow>
@@ -519,6 +556,24 @@ export default function Drivers() {
                 value={form.licenseNumber}
                 onChange={(e) => setForm((f) => ({ ...f, licenseNumber: e.target.value }))}
               />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Permit class</Label>
+                <Input
+                  value={form.permitClass}
+                  onChange={(e) => setForm((f) => ({ ...f, permitClass: e.target.value }))}
+                  placeholder="e.g. B, CM, CE"
+                />
+              </div>
+              <div>
+                <Label>License expiry</Label>
+                <Input
+                  type="date"
+                  value={form.licenseExpiryDate}
+                  onChange={(e) => setForm((f) => ({ ...f, licenseExpiryDate: e.target.value }))}
+                />
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>

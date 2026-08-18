@@ -86,6 +86,12 @@ export class DriverScoringService {
       `ALTER TABLE drivers ADD COLUMN hire_date DATE NULL`
     ).catch(() => undefined);
     await query(
+      `ALTER TABLE drivers ADD COLUMN permit_class VARCHAR(32) NULL`
+    ).catch(() => undefined);
+    await query(
+      `ALTER TABLE drivers ADD COLUMN license_expiry_date DATE NULL`
+    ).catch(() => undefined);
+    await query(
       `ALTER TABLE eco_driving_violations ADD COLUMN driver_id CHAR(36) NULL`
     ).catch(() => undefined);
     await query(
@@ -94,6 +100,90 @@ export class DriverScoringService {
     await query(
       `ALTER TABLE driver_performance_snapshots ADD COLUMN penalty_points DECIMAL(18,4) NOT NULL DEFAULT 0`
     ).catch(() => undefined);
+  }
+
+  static async syncLicenseExpiryAlerts(tenantId: string): Promise<{ checked: number; alerted: number }> {
+    await this.ensureSchema();
+    const { rows } = await query<{
+      id: string;
+      name: string;
+      license_number: string;
+      permit_class: string | null;
+      license_expiry_date: string;
+    }>(
+      `SELECT id, name, license_number, permit_class, license_expiry_date
+       FROM drivers
+       WHERE tenant_id = $1
+         AND deleted_at IS NULL
+         AND license_expiry_date IS NOT NULL`,
+      [tenantId]
+    );
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let alerted = 0;
+
+    for (const d of rows) {
+      const expiry = new Date(`${String(d.license_expiry_date).slice(0, 10)}T00:00:00Z`);
+      if (Number.isNaN(expiry.getTime())) continue;
+      const daysLeft = Math.ceil((expiry.getTime() - today.getTime()) / 86400000);
+
+      let bucket: 'expired' | '7d' | '14d' | '30d' | null = null;
+      let severity = 'medium';
+      if (daysLeft < 0) {
+        bucket = 'expired';
+        severity = 'critical';
+      } else if (daysLeft <= 7) {
+        bucket = '7d';
+        severity = 'high';
+      } else if (daysLeft <= 14) {
+        bucket = '14d';
+        severity = 'medium';
+      } else if (daysLeft <= 30) {
+        bucket = '30d';
+        severity = 'low';
+      }
+      if (!bucket) continue;
+
+      const externalId = `driver-license:${d.id}:${bucket}`;
+      const permit = d.permit_class ? ` class ${d.permit_class}` : '';
+      const title = daysLeft < 0 ? 'Driver license expired' : 'Driver license expiring soon';
+      const description =
+        daysLeft < 0
+          ? `${d.name} (${d.license_number}${permit}) license expired ${Math.abs(daysLeft)} day(s) ago.`
+          : `${d.name} (${d.license_number}${permit}) license expires in ${daysLeft} day(s) on ${String(d.license_expiry_date).slice(0, 10)}.`;
+
+      // "alerts.source_type" enum currently allows only telematics values.
+      // We use "wialon" for internal driver compliance alerts to avoid schema churn.
+      await query(
+        `INSERT INTO alerts (tenant_id, source_type, external_id, type, severity, title, description, occurred_at)
+         VALUES ($1, 'wialon', $2, 'license_expiry', $3, $4, $5, NOW())
+         ON DUPLICATE KEY UPDATE
+           severity = VALUES(severity),
+           title = VALUES(title),
+           description = VALUES(description),
+           occurred_at = VALUES(occurred_at)`,
+        [tenantId, externalId, severity, title, description]
+      );
+      alerted++;
+    }
+
+    return { checked: rows.length, alerted };
+  }
+
+  static async syncLicenseExpiryAlertsAllTenants(): Promise<{ tenants: number; checked: number; alerted: number }> {
+    await this.ensureSchema();
+    const { rows } = await query<{ tenant_id: string }>(
+      `SELECT DISTINCT tenant_id FROM drivers WHERE deleted_at IS NULL`
+    );
+    let checked = 0;
+    let alerted = 0;
+    for (const t of rows) {
+      const r = await this.syncLicenseExpiryAlerts(t.tenant_id);
+      checked += r.checked;
+      alerted += r.alerted;
+    }
+    return { tenants: rows.length, checked, alerted };
   }
 
   static async getConfig(tenantId: string): Promise<DriverPenaltyConfig> {
