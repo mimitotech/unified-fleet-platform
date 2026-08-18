@@ -68,6 +68,56 @@ export function normalizeViolationKey(type: string): string {
 }
 
 export class DriverScoringService {
+  static parseAlertDaysFromEnv(): number[] {
+    const raw = String(process.env.DRIVER_LICENSE_ALERT_DAYS || '').trim();
+    const parsed = raw
+      .split(',')
+      .map((v) => parseInt(v.trim(), 10))
+      .filter((n) => Number.isFinite(n) && n > 0 && n <= 365);
+    const uniqueDesc = [...new Set(parsed)].sort((a, b) => b - a);
+    return uniqueDesc.length ? uniqueDesc : [30, 14, 7];
+  }
+
+  static parseExpiredPolicyFromEnv(): 'warn' | 'off_duty' {
+    const raw = String(process.env.DRIVER_LICENSE_EXPIRED_ACTION || '').trim().toLowerCase();
+    return raw === 'off_duty' || raw === 'off-duty' ? 'off_duty' : 'warn';
+  }
+
+  static async resolveLicensePolicy(): Promise<{
+    alertDays: number[];
+    expiredAction: 'warn' | 'off_duty';
+  }> {
+    const envPolicy = {
+      alertDays: this.parseAlertDaysFromEnv(),
+      expiredAction: this.parseExpiredPolicyFromEnv(),
+    };
+    const { rows } = await query<{ value: unknown }>(
+      `SELECT value FROM system_settings WHERE \`key\` = 'driver_license_policy' LIMIT 1`
+    ).catch(() => ({ rows: [] as Array<{ value: unknown }> }));
+    const row = rows[0];
+    if (!row?.value) return envPolicy;
+    try {
+      const v =
+        typeof row.value === 'string'
+          ? (JSON.parse(row.value) as Record<string, unknown>)
+          : (row.value as Record<string, unknown>);
+      const days = Array.isArray(v.alertDays)
+        ? v.alertDays
+            .map((n) => parseInt(String(n), 10))
+            .filter((n) => Number.isFinite(n) && n > 0 && n <= 365)
+            .sort((a, b) => b - a)
+        : envPolicy.alertDays;
+      const actionRaw = String(v.expiredAction || '').toLowerCase();
+      const action = actionRaw === 'off_duty' || actionRaw === 'off-duty' ? 'off_duty' : 'warn';
+      return {
+        alertDays: days.length ? [...new Set(days)] : envPolicy.alertDays,
+        expiredAction: action,
+      };
+    } catch {
+      return envPolicy;
+    }
+  }
+
   static async ensureSchema(): Promise<void> {
     await query(
       `CREATE TABLE IF NOT EXISTS tenant_driver_penalty_configs (
@@ -92,6 +142,9 @@ export class DriverScoringService {
       `ALTER TABLE drivers ADD COLUMN license_expiry_date DATE NULL`
     ).catch(() => undefined);
     await query(
+      `ALTER TABLE drivers ADD KEY idx_drivers_tenant_license_expiry (tenant_id, license_expiry_date)`
+    ).catch(() => undefined);
+    await query(
       `ALTER TABLE eco_driving_violations ADD COLUMN driver_id CHAR(36) NULL`
     ).catch(() => undefined);
     await query(
@@ -104,6 +157,7 @@ export class DriverScoringService {
 
   static async syncLicenseExpiryAlerts(tenantId: string): Promise<{ checked: number; alerted: number }> {
     await this.ensureSchema();
+    const policy = await this.resolveLicensePolicy();
     const { rows } = await query<{
       id: string;
       name: string;
@@ -128,20 +182,18 @@ export class DriverScoringService {
       if (Number.isNaN(expiry.getTime())) continue;
       const daysLeft = Math.ceil((expiry.getTime() - today.getTime()) / 86400000);
 
-      let bucket: 'expired' | '7d' | '14d' | '30d' | null = null;
+      let bucket: string | null = null;
       let severity = 'medium';
       if (daysLeft < 0) {
         bucket = 'expired';
         severity = 'critical';
-      } else if (daysLeft <= 7) {
-        bucket = '7d';
-        severity = 'high';
-      } else if (daysLeft <= 14) {
-        bucket = '14d';
-        severity = 'medium';
-      } else if (daysLeft <= 30) {
-        bucket = '30d';
-        severity = 'low';
+      } else {
+        for (const day of policy.alertDays) {
+          if (daysLeft <= day) {
+            bucket = `${day}d`;
+            severity = day <= 7 ? 'high' : day <= 14 ? 'medium' : 'low';
+          }
+        }
       }
       if (!bucket) continue;
 
@@ -166,6 +218,15 @@ export class DriverScoringService {
         [tenantId, externalId, severity, title, description]
       );
       alerted++;
+
+      if (daysLeft < 0 && policy.expiredAction === 'off_duty') {
+        await query(
+          `UPDATE drivers
+           SET status = 'off-duty', updated_at = NOW()
+           WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND status <> 'off-duty'`,
+          [d.id, tenantId]
+        ).catch(() => undefined);
+      }
     }
 
     return { checked: rows.length, alerted };

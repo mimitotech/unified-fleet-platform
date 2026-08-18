@@ -34,7 +34,15 @@ router.get('/stats', requireTenant, mod, async (req: TenantRequest, res) => {
          WHERE license_expiry_date IS NOT NULL
            AND license_expiry_date >= CURDATE()
            AND license_expiry_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)
-       )::int as expiring_licenses
+       )::int as expiring_licenses,
+       COUNT(*) FILTER (
+         WHERE license_expiry_date IS NOT NULL
+           AND license_expiry_date >= CURDATE()
+           AND license_expiry_date <= DATE_ADD(CURDATE(), INTERVAL 7 DAY)
+       )::int as expiring_7d_licenses,
+       COUNT(*) FILTER (
+         WHERE license_expiry_date IS NULL
+       )::int as no_expiry_licenses
      FROM drivers WHERE tenant_id = $1 AND deleted_at IS NULL`,
     [req.tenantId]
   );
@@ -47,6 +55,8 @@ router.get('/stats', requireTenant, mod, async (req: TenantRequest, res) => {
       offDuty: 0,
       expiredLicenses: 0,
       expiringLicenses: 0,
+      expiring7dLicenses: 0,
+      noExpiryLicenses: 0,
     }
   );
 });

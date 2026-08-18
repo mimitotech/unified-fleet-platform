@@ -30,6 +30,7 @@ export default function AdminSystemPage() {
     fromName?: string;
   }>({});
   const [security, setSecurity] = useState<{ minPasswordLength?: number; sessionTimeoutMinutes?: number }>({});
+  const [driverCompliance, setDriverCompliance] = useState<{ alertDays?: string; expiredAction?: 'warn' | 'off_duty' }>({});
 
   const saveSettings = useMutation({
     mutationFn: ({ key, value }: { key: string; value: unknown }) => adminApi.updateSystemSettings(key, value),
@@ -228,6 +229,61 @@ export default function AdminSystemPage() {
                 <div><Label>Session Timeout (minutes)</Label><Input type="number" defaultValue={String(s?.security?.sessionTimeoutMinutes || 30)} onChange={(e) => setSecurity({ sessionTimeoutMinutes: parseInt(e.target.value, 10) })} /></div>
                 <div className="flex items-center gap-2"><Switch defaultChecked={Boolean(s?.security?.requireSpecialChar)} /><Label>Require special characters</Label></div>
                 <Button onClick={() => saveSettings.mutate({ key: 'security', value: { ...s?.security, ...security } })}>Save Security Settings</Button>
+              </CardContent>
+            </Card>
+            <Card className="mt-4">
+              <CardHeader>
+                <CardTitle>Driver License Compliance</CardTitle>
+                <CardDescription>
+                  Alert windows and action for expired licenses. Leave alert windows as comma-separated days (e.g. 30,14,7).
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 max-w-lg">
+                <div>
+                  <Label>Alert windows (days)</Label>
+                  <Input
+                    defaultValue={String(
+                      (s?.driver_license_policy?.alertDays as number[] | undefined)?.join(',') || '30,14,7'
+                    )}
+                    onChange={(e) => setDriverCompliance((v) => ({ ...v, alertDays: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <Label>When license is expired</Label>
+                  <select
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    defaultValue={String(s?.driver_license_policy?.expiredAction || 'warn')}
+                    onChange={(e) =>
+                      setDriverCompliance((v) => ({
+                        ...v,
+                        expiredAction: e.target.value === 'off_duty' ? 'off_duty' : 'warn',
+                      }))
+                    }
+                  >
+                    <option value="warn">Warn only</option>
+                    <option value="off_duty">Auto set driver to Off duty</option>
+                  </select>
+                </div>
+                <Button
+                  onClick={() => {
+                    const parsedDays = String(driverCompliance.alertDays || '')
+                      .split(',')
+                      .map((s2) => parseInt(s2.trim(), 10))
+                      .filter((n) => Number.isFinite(n) && n > 0 && n <= 365)
+                      .sort((a, b) => b - a);
+                    saveSettings.mutate({
+                      key: 'driver_license_policy',
+                      value: {
+                        alertDays: parsedDays.length
+                          ? [...new Set(parsedDays)]
+                          : ((s?.driver_license_policy?.alertDays as number[] | undefined) || [30, 14, 7]),
+                        expiredAction: driverCompliance.expiredAction || s?.driver_license_policy?.expiredAction || 'warn',
+                      },
+                    });
+                  }}
+                >
+                  Save Driver Compliance Settings
+                </Button>
               </CardContent>
             </Card>
           </TabsContent>

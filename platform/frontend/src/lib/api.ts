@@ -273,6 +273,8 @@ export interface DriverStats {
   offDuty: number;
   expiringLicenses?: number;
   expiredLicenses?: number;
+  expiring7dLicenses?: number;
+  noExpiryLicenses?: number;
 }
 
 export interface DriverPenaltyConfig {

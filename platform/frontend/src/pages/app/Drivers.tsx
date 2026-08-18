@@ -78,6 +78,45 @@ function licenseState(expiryRaw?: string | null): { label: string; className: st
   return { label: 'Valid', className: 'bg-success/15 text-success' };
 }
 
+function downloadDriversCsv(rows: Driver[]) {
+  const headers = [
+    'Name',
+    'LicenseNumber',
+    'PermitClass',
+    'LicenseExpiryDate',
+    'LicenseStatus',
+    'Phone',
+    'Email',
+    'Status',
+    'FuelCardNumber',
+    'AssignedVehicle',
+  ];
+  const csvRows = rows.map((d) => {
+    const ls = d.licenseExpiryDate ? licenseState(d.licenseExpiryDate)?.label || '' : 'No expiry date';
+    return [
+      d.name || '',
+      d.licenseNumber || '',
+      d.permitClass || '',
+      d.licenseExpiryDate ? String(d.licenseExpiryDate).slice(0, 10) : '',
+      ls,
+      d.phone || '',
+      d.email || '',
+      d.status || '',
+      d.fuelCardNumber || '',
+      d.assignedAssetPlate || d.assignedAssetName || '',
+    ];
+  });
+  const escape = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
+  const csv = [headers, ...csvRows].map((r) => r.map(escape).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `drivers-compliance-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function Drivers() {
   const qc = useQueryClient();
   const { data: drivers, isLoading } = useDrivers();
@@ -240,22 +279,33 @@ export default function Drivers() {
           <div className="stat-strip-4">
             <MetricCard title="Total Drivers" value={stats?.total ?? 0} icon={Users} variant="primary" size="xxs" />
             <MetricCard title="Available" value={stats?.available ?? 0} icon={UserCheck} variant="success" size="xxs" />
-            <MetricCard title="Driving" value={stats?.driving ?? 0} icon={Car} variant="info" size="xxs" />
+            <MetricCard title="Expiring in 7d" value={stats?.expiring7dLicenses ?? 0} icon={Car} variant="warning" size="xxs" />
             <MetricCard
-              title="Licenses at Risk"
-              value={(stats?.expiredLicenses || 0) + (stats?.expiringLicenses || 0)}
+              title="Expired"
+              value={stats?.expiredLicenses || 0}
               icon={Coffee}
-              variant={(stats?.expiredLicenses || 0) > 0 ? 'destructive' : 'warning'}
+              variant="destructive"
               size="xxs"
             />
+          </div>
+          <div className="stat-strip-4">
+            <MetricCard title="Driving now" value={stats?.driving ?? 0} icon={Car} variant="info" size="xxs" />
+            <MetricCard title="Expiring in 30d" value={stats?.expiringLicenses ?? 0} icon={UserCheck} variant="warning" size="xxs" />
+            <MetricCard title="No expiry set" value={stats?.noExpiryLicenses ?? 0} icon={Users} variant="default" size="xxs" />
+            <MetricCard title="At risk total" value={(stats?.expiredLicenses || 0) + (stats?.expiringLicenses || 0)} icon={Coffee} variant="primary" size="xxs" />
           </div>
 
           <div className="fleet-card branded-panel">
             <div className="flex items-center justify-between mb-4 gap-2">
               <h3 className="font-semibold text-primary">Driver Roster</h3>
-              <Button size="sm" onClick={openCreate}>
-                <Plus className="h-4 w-4 mr-1" /> Add driver
-              </Button>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => downloadDriversCsv(drivers || [])}>
+                  Export CSV
+                </Button>
+                <Button size="sm" onClick={openCreate}>
+                  <Plus className="h-4 w-4 mr-1" /> Add driver
+                </Button>
+              </div>
             </div>
             {isLoading ? (
               <Skeleton className="h-48" />
@@ -277,16 +327,22 @@ export default function Drivers() {
                 <TableBody>
                   {drivers?.map((d) => (
                     <TableRow key={d.id}>
+                      {(() => {
+                        const state = licenseState(d.licenseExpiryDate);
+                        return (
+                          <>
                       <TableCell className="font-medium">{d.name}</TableCell>
                       <TableCell>{d.licenseNumber}</TableCell>
                       <TableCell>{d.permitClass || '—'}</TableCell>
                       <TableCell>
                         <div className="flex flex-col gap-1">
                           <span className="text-xs">{d.licenseExpiryDate ? String(d.licenseExpiryDate).slice(0, 10) : '—'}</span>
-                          {licenseState(d.licenseExpiryDate) && (
-                            <Badge className={licenseState(d.licenseExpiryDate)?.className || ''}>
-                              {licenseState(d.licenseExpiryDate)?.label}
+                          {state ? (
+                            <Badge className={state.className}>
+                              {state.label}
                             </Badge>
+                          ) : (
+                            <Badge className="bg-muted text-muted-foreground">No expiry date</Badge>
                           )}
                         </div>
                       </TableCell>
@@ -301,6 +357,9 @@ export default function Drivers() {
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
                       </TableCell>
+                          </>
+                        );
+                      })()}
                     </TableRow>
                   ))}
                   {!drivers?.length && (
