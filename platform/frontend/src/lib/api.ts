@@ -383,6 +383,7 @@ export interface EmissionsMetrics {
   violationCount: number;
   complianceStatus: string;
   emissionFactor?: number;
+  source?: string;
   from?: string | null;
   to?: string | null;
 }
@@ -399,6 +400,8 @@ export interface EcoViolation {
   severity: string;
   occurredAt: string;
   driverName?: string;
+  value?: number | null;
+  source?: string;
 }
 
 export interface VideoStream {
@@ -671,8 +674,10 @@ export const clientApi = {
       method: 'POST',
       body: JSON.stringify({ days }),
     }),
-  getDriverViolations: (id: string, limit = 50) =>
-    api<EcoViolation[]>(`/api/client/drivers/${id}/violations?limit=${limit}`),
+  getDriverViolations: (id: string, limit = 50, days = 30) =>
+    api<EcoViolation[]>(`/api/client/drivers/${id}/violations?limit=${limit}&days=${days}`),
+  getDriverViolationsFeed: (limit = 80, days = 30) =>
+    api<EcoViolation[]>(`/api/client/drivers/violations-feed?limit=${limit}&days=${days}`),
   createDriver: (data: Partial<Driver>) =>
     api<Driver>('/api/client/drivers', { method: 'POST', body: JSON.stringify(data) }),
   updateDriver: (id: string, data: Partial<Driver>) =>

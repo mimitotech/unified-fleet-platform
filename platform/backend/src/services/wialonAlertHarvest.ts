@@ -289,7 +289,7 @@ export async function harvestEcoReportAlerts(
     const alerts: FleetAlert[] = [];
     const ecoCursor = unitMsgCursor.get(`${scopeKey}:eco`) ?? 0;
     const sample: number[] = [];
-    for (let i = 0; i < Math.min(16, allowedUnitIds.length); i++) {
+    for (let i = 0; i < Math.min(40, allowedUnitIds.length); i++) {
       sample.push(allowedUnitIds[(ecoCursor + i) % allowedUnitIds.length]);
     }
     unitMsgCursor.set(`${scopeKey}:eco`, ecoCursor + sample.length);

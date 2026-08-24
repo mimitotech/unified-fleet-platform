@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Leaf, Cloud, Gauge, AlertTriangle, FileText, CalendarRange } from 'lucide-react';
+import { Leaf, Cloud, Gauge, AlertTriangle, FileText, CalendarRange, Route } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell,
 } from 'recharts';
@@ -40,6 +40,30 @@ function defaultRange() {
   };
 }
 
+function fmt(n: number | null | undefined, digits = 1): string {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '0';
+  return v.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: 0 });
+}
+
+function violationLabel(type?: string): string {
+  const t = String(type || '').toLowerCase().replace(/[\s-]+/g, '_');
+  const map: Record<string, string> = {
+    speeding: 'Speeding',
+    overspeeding: 'Overspeeding',
+    harsh_braking: 'Harsh braking',
+    harsh_acceleration: 'Harsh acceleration',
+    harsh_cornering: 'Harsh cornering',
+    idling: 'Excessive idling',
+    unauthorized: 'Unauthorized driving',
+    fatigue: 'Fatigue',
+    camera: 'Camera / video',
+    video: 'Camera / video',
+    eco_violation: 'Eco-driving',
+  };
+  return map[t] || String(type || 'Other').replace(/_/g, ' ');
+}
+
 export default function Emissions() {
   const defaults = useMemo(() => defaultRange(), []);
   const [from, setFrom] = useState(defaults.from);
@@ -49,20 +73,35 @@ export default function Emissions() {
   const range = { from: applied.from, to: applied.to };
   const { data: metrics, isLoading, refetch: refetchMetrics, isFetching: fetchingMetrics } =
     useEmissionsMetrics(true, range);
-  const { data: byVehicle, refetch: refetchByVehicle, isFetching: fetchingByVehicle } =
+  const { data: byVehicle, refetch: refetchByVehicle, isFetching: fetchingByVehicle, isLoading: loadingVehicles } =
     useEmissionsByVehicle(range);
   const { data: byType, refetch: refetchByType, isFetching: fetchingByType } = useEmissionsByType(range);
-  const { data: violations, refetch: refetchViolations } = useEcoViolations(range);
+  const { data: violations, refetch: refetchViolations, isLoading: loadingViolations } = useEcoViolations(range);
+
+  const vehicleRows = safeArray(byVehicle) as Array<{
+    vehicle?: string;
+    fuelUsed?: number;
+    mileage?: number;
+    co2Kg?: number;
+    co2PerKm?: number;
+    source?: string;
+  }>;
 
   const typeChart = (safeArray(byType) as Array<{ violationType?: string; count?: number }>).map((r) => ({
-    name: String(r.violationType || 'other').replace(/_/g, ' '),
+    name: violationLabel(r.violationType),
     count: Number(r.count) || 0,
+  }));
+
+  const chartVehicles = vehicleRows.slice(0, 12).map((r) => ({
+    vehicle: String(r.vehicle || '—').slice(0, 18),
+    co2Kg: Number(r.co2Kg) || 0,
+    fuelUsed: Number(r.fuelUsed) || 0,
   }));
 
   const applyRange = () => setApplied({ from, to });
 
   return (
-    <AppLayout title="Emissions" subtitle="CO₂ tracking, eco-driving compliance, and violation mix">
+    <AppLayout title="Emissions" subtitle="CO₂ from fuel use, eco-driving compliance, and violation mix">
       <Tabs defaultValue="overview" className="space-y-4">
         <TabsList className="branded-tabs">
           <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -87,7 +126,8 @@ export default function Emissions() {
               Apply range
             </Button>
             <p className="text-xs text-muted-foreground ml-auto">
-              Factor {metrics?.emissionFactor ?? 2.68} kg CO₂ / L · {applied.from} → {applied.to}
+              Diesel factor {metrics?.emissionFactor ?? 2.68} kg CO₂ / L · {applied.from} → {applied.to}
+              {metrics?.source ? ` · source: ${metrics.source === 'fuel_transactions' ? 'fuel reports' : 'trip summaries'}` : ''}
             </p>
           </div>
 
@@ -96,12 +136,40 @@ export default function Emissions() {
               [1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-14 rounded-lg" />)
             ) : (
               <>
-                <MetricCard title="CO₂ Emissions" value={`${metrics?.co2Kg ?? 0} kg`} icon={Cloud} variant="primary" size="xxs" />
-                <MetricCard title="CO₂ / km" value={`${metrics?.co2PerKm ?? 0} kg`} icon={Gauge} variant="info" size="xxs" />
-                <MetricCard title="Fuel Used" value={`${metrics?.totalFuelLiters ?? 0} L`} icon={Leaf} variant="success" size="xxs" />
-                <MetricCard title="Violations" value={metrics?.violationCount ?? 0} icon={AlertTriangle} variant="destructive" size="xxs" />
+                <MetricCard title="CO₂ Emissions" value={`${fmt(metrics?.co2Kg, 0)} kg`} icon={Cloud} variant="primary" size="xxs" />
+                <MetricCard title="Fuel Used" value={`${fmt(metrics?.totalFuelLiters)} L`} icon={Leaf} variant="success" size="xxs" />
+                <MetricCard title="Distance" value={`${fmt(metrics?.totalMileageKm, 0)} km`} icon={Route} variant="info" size="xxs" />
+                <MetricCard title="CO₂ / km" value={`${fmt(metrics?.co2PerKm, 2)} kg`} icon={Gauge} variant="warning" size="xxs" />
               </>
             )}
+          </div>
+          <div className="stat-strip-4">
+            <MetricCard title="Eco violations" value={metrics?.violationCount ?? 0} icon={AlertTriangle} variant="destructive" size="xxs" />
+            <MetricCard title="Vehicles in range" value={vehicleRows.length} icon={Leaf} variant="primary" size="xxs" />
+            <MetricCard
+              title="Avg fuel / 100 km"
+              value={
+                metrics?.totalMileageKm
+                  ? `${fmt(((metrics.totalFuelLiters || 0) / metrics.totalMileageKm) * 100, 1)} L`
+                  : '—'
+              }
+              icon={Gauge}
+              variant="info"
+              size="xxs"
+            />
+            <MetricCard
+              title="Compliance"
+              value={metrics?.complianceStatus || '—'}
+              icon={Cloud}
+              variant={
+                metrics?.complianceStatus === 'poor'
+                  ? 'destructive'
+                  : metrics?.complianceStatus === 'moderate'
+                    ? 'warning'
+                    : 'success'
+              }
+              size="xxs"
+            />
           </div>
 
           {metrics?.complianceStatus && (
@@ -111,24 +179,32 @@ export default function Emissions() {
                 {metrics.complianceStatus}
               </Badge>
               <span className="text-xs text-muted-foreground">
-                Combines CO₂ intensity with eco-driving violation pressure
+                CO₂ intensity and eco-driving violation count for this date range. Fuel and distance use the same data source so CO₂/km stays consistent.
               </span>
             </div>
           )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="fleet-card">
-              <h3 className="font-semibold mb-4">Emissions by Vehicle</h3>
+              <h3 className="font-semibold mb-4">CO₂ by vehicle</h3>
               <div className="h-56">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={(byVehicle as Array<{ vehicle: string; co2Kg: number }>) || []}>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                    <XAxis dataKey="vehicle" tick={{ fontSize: 11 }} />
-                    <YAxis />
-                    <Tooltip />
-                    <Bar dataKey="co2Kg" fill={CHART.brandAccent} name="CO₂ (kg)" radius={[3, 3, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                {loadingVehicles ? (
+                  <Skeleton className="h-full" />
+                ) : chartVehicles.length ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartVehicles}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                      <XAxis dataKey="vehicle" tick={{ fontSize: 11 }} interval={0} angle={-20} textAnchor="end" height={48} />
+                      <YAxis />
+                      <Tooltip />
+                      <Bar dataKey="co2Kg" fill={CHART.brandAccent} name="CO₂ (kg)" radius={[3, 3, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p className="text-sm text-muted-foreground py-12 text-center">
+                    No fuel or trip data in this date range
+                  </p>
+                )}
               </div>
             </div>
 
@@ -146,7 +222,7 @@ export default function Emissions() {
                         cy="50%"
                         outerRadius={80}
                         label={({ name, percent }) =>
-                          `${String(name).slice(0, 12)} ${Math.round((percent || 0) * 100)}%`
+                          `${String(name).slice(0, 14)} ${Math.round((percent || 0) * 100)}%`
                         }
                       >
                         {typeChart.map((_, i) => (
@@ -158,7 +234,7 @@ export default function Emissions() {
                   </ResponsiveContainer>
                 ) : (
                   <p className="text-sm text-muted-foreground py-12 text-center">
-                    No eco violations in this date range
+                    No eco-driving violations in this date range
                   </p>
                 )}
               </div>
@@ -166,94 +242,124 @@ export default function Emissions() {
           </div>
 
           <div className="fleet-card">
-            <h3 className="font-semibold mb-4">Eco-Driving Violations</h3>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>When</TableHead>
-                  <TableHead>Vehicle</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Severity</TableHead>
-                  <TableHead>Driver</TableHead>
-                  <TableHead className="text-right">Value</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(safeArray(violations) as Array<{
-                  id: string;
-                  occurredAt?: string;
-                  unitName?: string;
-                  violationType: string;
-                  severity?: string;
-                  driverName?: string;
-                  value?: number | null;
-                }>).slice(0, 25).map((v) => (
-                  <TableRow key={v.id}>
-                    <TableCell className="text-xs whitespace-nowrap">
-                      {v.occurredAt ? new Date(v.occurredAt).toLocaleString() : '—'}
-                    </TableCell>
-                    <TableCell>{v.unitName}</TableCell>
-                    <TableCell className="text-sm">{String(v.violationType || '').replace(/_/g, ' ')}</TableCell>
-                    <TableCell><Badge variant="outline">{v.severity}</Badge></TableCell>
-                    <TableCell>{v.driverName || '—'}</TableCell>
-                    <TableCell className="text-right">{v.value != null ? v.value : '—'}</TableCell>
-                  </TableRow>
-                ))}
-                {!safeArray(violations).length && (
+            <h3 className="font-semibold mb-1">Fleet emissions detail</h3>
+            <p className="text-xs text-muted-foreground mb-4">
+              Per-vehicle fuel, distance, and CO₂. Totals should match the KPI cards above.
+            </p>
+            {loadingVehicles ? (
+              <Skeleton className="h-48" />
+            ) : (
+              <Table>
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                      No violations in range — sync eco-driving reports from Wialon
-                    </TableCell>
+                    <TableHead>Vehicle</TableHead>
+                    <TableHead className="text-right">Fuel (L)</TableHead>
+                    <TableHead className="text-right">Mileage (km)</TableHead>
+                    <TableHead className="text-right">CO₂ (kg)</TableHead>
+                    <TableHead className="text-right">CO₂ / km</TableHead>
+                    <TableHead className="text-right">L / 100 km</TableHead>
                   </TableRow>
-                )}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {vehicleRows.map((row) => {
+                    const fuel = Number(row.fuelUsed) || 0;
+                    const km = Number(row.mileage) || 0;
+                    return (
+                      <TableRow key={row.vehicle}>
+                        <TableCell className="font-medium">{row.vehicle || '—'}</TableCell>
+                        <TableCell className="text-right">{fmt(fuel)}</TableCell>
+                        <TableCell className="text-right">{fmt(km, 0)}</TableCell>
+                        <TableCell className="text-right">{fmt(row.co2Kg, 0)}</TableCell>
+                        <TableCell className="text-right">{fmt(row.co2PerKm, 2)}</TableCell>
+                        <TableCell className="text-right">{km > 0 ? fmt((fuel / km) * 100) : '—'}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                  {vehicleRows.length > 0 && (
+                    <TableRow className="font-semibold">
+                      <TableCell>Fleet total</TableCell>
+                      <TableCell className="text-right">
+                        {fmt(vehicleRows.reduce((s, r) => s + (Number(r.fuelUsed) || 0), 0))}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {fmt(vehicleRows.reduce((s, r) => s + (Number(r.mileage) || 0), 0), 0)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {fmt(vehicleRows.reduce((s, r) => s + (Number(r.co2Kg) || 0), 0), 0)}
+                      </TableCell>
+                      <TableCell className="text-right">—</TableCell>
+                      <TableCell className="text-right">—</TableCell>
+                    </TableRow>
+                  )}
+                  {!vehicleRows.length && (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                        No fuel or trip data in this range. Open Fuel module to confirm consumption reports are syncing.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            )}
           </div>
 
           <div className="fleet-card">
-            <h3 className="font-semibold mb-4">Fleet emissions detail</h3>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Vehicle</TableHead>
-                  <TableHead className="text-right">Fuel (L)</TableHead>
-                  <TableHead className="text-right">Mileage (km)</TableHead>
-                  <TableHead className="text-right">CO₂ (kg)</TableHead>
-                  <TableHead className="text-right">CO₂ / km</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(safeArray(byVehicle) as Array<{
-                  vehicle?: string;
-                  fuelUsed?: number;
-                  mileage?: number;
-                  co2Kg?: number;
-                  co2PerKm?: number;
-                }>).map((row) => (
-                  <TableRow key={row.vehicle}>
-                    <TableCell className="font-medium">{row.vehicle || '—'}</TableCell>
-                    <TableCell className="text-right">{row.fuelUsed ?? 0}</TableCell>
-                    <TableCell className="text-right">{row.mileage ?? 0}</TableCell>
-                    <TableCell className="text-right">{row.co2Kg ?? 0}</TableCell>
-                    <TableCell className="text-right">{row.co2PerKm ?? 0}</TableCell>
-                  </TableRow>
-                ))}
-                {!safeArray(byVehicle).length && (
+            <h3 className="font-semibold mb-1">Eco-driving violations</h3>
+            <p className="text-xs text-muted-foreground mb-4">
+              Harsh events, speeding, and other eco criteria from Wialon eco-driving reports.
+            </p>
+            {loadingViolations ? (
+              <Skeleton className="h-48" />
+            ) : (
+              <Table>
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                      No trip fuel data in this range
-                    </TableCell>
+                    <TableHead>When</TableHead>
+                    <TableHead>Vehicle</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Severity</TableHead>
+                    <TableHead>Driver</TableHead>
+                    <TableHead className="text-right">Value</TableHead>
                   </TableRow>
-                )}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {(safeArray(violations) as Array<{
+                    id: string;
+                    occurredAt?: string;
+                    unitName?: string;
+                    violationType: string;
+                    severity?: string;
+                    driverName?: string;
+                    value?: number | null;
+                  }>).slice(0, 80).map((v) => (
+                    <TableRow key={v.id}>
+                      <TableCell className="text-xs whitespace-nowrap">
+                        {v.occurredAt ? new Date(v.occurredAt).toLocaleString() : '—'}
+                      </TableCell>
+                      <TableCell>{v.unitName || '—'}</TableCell>
+                      <TableCell className="text-sm">{violationLabel(v.violationType)}</TableCell>
+                      <TableCell><Badge variant="outline">{v.severity || '—'}</Badge></TableCell>
+                      <TableCell>{v.driverName || '—'}</TableCell>
+                      <TableCell className="text-right">{v.value != null ? fmt(v.value) : '—'}</TableCell>
+                    </TableRow>
+                  ))}
+                  {!safeArray(violations).length && (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                        No eco-driving violations in this range. They appear after Wialon eco-driving reports sync.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            )}
           </div>
         </TabsContent>
         <TabsContent value="reports" className="mt-0">
           <GenericModuleReports
             moduleLabel="Emissions"
             title="Emissions executive"
-            blurb="CO₂, fuel use, and eco violations for the fleet."
+            blurb="CO₂, fuel use, mileage, and eco violations for the fleet."
             onRun={async () => {
               await Promise.all([
                 refetchMetrics(),
@@ -265,19 +371,21 @@ export default function Emissions() {
             running={fetchingMetrics || fetchingByVehicle || fetchingByType}
             kpis={[
               { label: 'CO₂ (kg)', value: metrics?.co2Kg ?? 0 },
-              { label: 'CO₂ / km', value: metrics?.co2PerKm ?? 0 },
+              { label: 'Distance (km)', value: metrics?.totalMileageKm ?? 0 },
               { label: 'Fuel (L)', value: metrics?.totalFuelLiters ?? 0 },
               { label: 'Violations', value: metrics?.violationCount ?? 0 },
             ]}
             columns={[
               { key: 'unit', label: 'Asset' },
-              { key: 'co2', label: 'CO₂ (kg)', align: 'right' },
               { key: 'fuel', label: 'Fuel (L)', align: 'right' },
+              { key: 'km', label: 'km', align: 'right' },
+              { key: 'co2', label: 'CO₂ (kg)', align: 'right' },
             ]}
-            rows={(safeArray(byVehicle) as Array<{ vehicle?: string; co2Kg?: number; fuelUsed?: number }>).map((v) => ({
+            rows={vehicleRows.map((v) => ({
               unit: v.vehicle || '—',
-              co2: v.co2Kg ?? 0,
               fuel: v.fuelUsed ?? 0,
+              km: v.mileage ?? 0,
+              co2: v.co2Kg ?? 0,
             }))}
             charts={{
               heading: 'Asset performance · emissions analytics',
@@ -290,11 +398,11 @@ export default function Emissions() {
               },
               secondary: {
                 type: 'bars',
-                title: 'Fuel vs CO₂',
-                subtitle: 'Standing bars — fuel used alongside emissions',
+                title: 'Fuel vs distance',
+                subtitle: 'Standing bars — fuel used alongside kilometres',
                 metrics: [
                   { key: 'fuel', label: 'Fuel (L)', color: '#0d9488' },
-                  { key: 'co2', label: 'CO₂ (kg)', color: '#d97706' },
+                  { key: 'km', label: 'km', color: '#d97706' },
                 ],
                 topN: 8,
               },

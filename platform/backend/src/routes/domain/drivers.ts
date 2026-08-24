@@ -114,17 +114,62 @@ router.post('/recompute-scores', requireTenant, mod, requireWriteAccess, async (
   }
 });
 
+router.get('/violations-feed', requireTenant, mod, async (req: TenantRequest, res) => {
+  const limit = Math.min(200, Math.max(1, parseInt(String(req.query.limit || '80'), 10) || 80));
+  const days = Math.min(90, Math.max(1, parseInt(String(req.query.days || '30'), 10) || 30));
+  const { rows: eco } = await query(
+    `SELECT id, unit_name, violation_type, severity, occurred_at, driver_name, value, 'eco' as source
+     FROM eco_driving_violations
+     WHERE tenant_id = $1 AND occurred_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
+     ORDER BY occurred_at DESC
+     LIMIT $2`,
+    [req.tenantId, limit]
+  ).catch(() => ({ rows: [] as Array<Record<string, unknown>> }));
+
+  const { rows: alerts } = await query(
+    `SELECT a.id, COALESCE(ast.registration_plate, ast.name) as unit_name, a.type as violation_type,
+            a.severity, a.occurred_at, NULL as driver_name, NULL as value, 'alert' as source
+     FROM alerts a
+     LEFT JOIN assets ast ON ast.id = a.asset_id
+     WHERE a.tenant_id = $1
+       AND a.occurred_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
+       AND (
+         a.type IN ('fatigue', 'camera', 'video', 'unauthorized', 'overspeed', 'speeding', 'license_expiry')
+         OR LOWER(COALESCE(a.type, '')) LIKE '%fatigue%'
+         OR LOWER(COALESCE(a.type, '')) LIKE '%camera%'
+         OR LOWER(COALESCE(a.type, '')) LIKE '%video%'
+         OR LOWER(COALESCE(a.type, '')) LIKE '%unauth%'
+         OR LOWER(COALESCE(a.type, '')) LIKE '%speed%'
+         OR LOWER(COALESCE(a.type, '')) LIKE '%eco%'
+         OR a.video_url IS NOT NULL
+       )
+     ORDER BY a.occurred_at DESC
+     LIMIT $2`,
+    [req.tenantId, limit]
+  ).catch(() => ({ rows: [] as Array<Record<string, unknown>> }));
+
+  const combined = [...toCamelRows(eco), ...toCamelRows(alerts)].sort((a, b) => {
+    const ta = new Date(String((a as { occurredAt?: string }).occurredAt || 0)).getTime();
+    const tb = new Date(String((b as { occurredAt?: string }).occurredAt || 0)).getTime();
+    return tb - ta;
+  });
+  return success(res, combined.slice(0, limit));
+});
+
 router.get('/:id/violations', requireTenant, mod, async (req: TenantRequest, res) => {
   const limit = Math.min(200, Math.max(1, parseInt(String(req.query.limit || '50'), 10) || 50));
+  const days = Math.min(90, Math.max(1, parseInt(String(req.query.days || '30'), 10) || 30));
   const { rows: driverRows } = await query<{ id: string; name: string; assigned_asset_id: string | null }>(
     `SELECT id, name, assigned_asset_id FROM drivers WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
     [req.params.id, req.tenantId]
   );
   if (!driverRows[0]) return error(res, 'Driver not found', 404);
   const d = driverRows[0];
-  const { rows } = await query(
-    `SELECT * FROM eco_driving_violations
+  const { rows: eco } = await query(
+    `SELECT id, unit_name, violation_type, severity, occurred_at, driver_name, value, 'eco' as source
+     FROM eco_driving_violations
      WHERE tenant_id = $1
+       AND occurred_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
        AND (
          driver_id = $2
          OR (driver_name IS NOT NULL AND LOWER(driver_name) = LOWER($3))
@@ -133,8 +178,37 @@ router.get('/:id/violations', requireTenant, mod, async (req: TenantRequest, res
      ORDER BY occurred_at DESC
      LIMIT $5`,
     [req.tenantId, d.id, d.name, d.assigned_asset_id, limit]
-  );
-  return success(res, toCamelRows(rows));
+  ).catch(() => ({ rows: [] as Array<Record<string, unknown>> }));
+
+  const { rows: alerts } = d.assigned_asset_id
+    ? await query(
+        `SELECT a.id, COALESCE(ast.registration_plate, ast.name) as unit_name, a.type as violation_type,
+                a.severity, a.occurred_at, $3 as driver_name, NULL as value, 'alert' as source
+         FROM alerts a
+         LEFT JOIN assets ast ON ast.id = a.asset_id
+         WHERE a.tenant_id = $1 AND a.asset_id = $2
+           AND a.occurred_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
+           AND (
+             a.type IN ('fatigue', 'camera', 'video', 'unauthorized', 'overspeed', 'speeding', 'license_expiry')
+             OR LOWER(COALESCE(a.type, '')) LIKE '%fatigue%'
+             OR LOWER(COALESCE(a.type, '')) LIKE '%camera%'
+             OR LOWER(COALESCE(a.type, '')) LIKE '%video%'
+             OR LOWER(COALESCE(a.type, '')) LIKE '%unauth%'
+             OR LOWER(COALESCE(a.type, '')) LIKE '%speed%'
+             OR a.video_url IS NOT NULL
+           )
+         ORDER BY a.occurred_at DESC
+         LIMIT $4`,
+        [req.tenantId, d.assigned_asset_id, d.name, limit]
+      ).catch(() => ({ rows: [] as Array<Record<string, unknown>> }))
+    : { rows: [] as Array<Record<string, unknown>> };
+
+  const combined = [...toCamelRows(eco), ...toCamelRows(alerts)].sort((a, b) => {
+    const ta = new Date(String((a as { occurredAt?: string }).occurredAt || 0)).getTime();
+    const tb = new Date(String((b as { occurredAt?: string }).occurredAt || 0)).getTime();
+    return tb - ta;
+  });
+  return success(res, combined.slice(0, limit));
 });
 
 router.post('/', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {

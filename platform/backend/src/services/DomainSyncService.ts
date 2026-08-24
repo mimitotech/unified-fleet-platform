@@ -12,7 +12,7 @@ import { listWialonConnectedTenantIds } from './tenantSyncStatus.js';
 import { logger } from '../config/logger.js';
 
 const TRIP_WINDOW_DAYS = 7;
-const ECO_WINDOW_DAYS = 7;
+const ECO_WINDOW_DAYS = 30;
 const TRIP_SYNC_INTERVAL_MS = 30 * 60 * 1000;
 
 function mapEcoSeverity(

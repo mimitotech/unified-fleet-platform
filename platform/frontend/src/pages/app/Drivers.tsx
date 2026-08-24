@@ -141,8 +141,12 @@ export default function Drivers() {
 
   const { data: violations } = useQuery({
     queryKey: ['driverViolations', selectedDriverId],
-    queryFn: () => clientApi.getDriverViolations(selectedDriverId),
+    queryFn: () => clientApi.getDriverViolations(selectedDriverId, 80, 30),
     enabled: Boolean(selectedDriverId),
+  });
+  const { data: fleetViolations } = useQuery({
+    queryKey: ['driverViolationsFeed'],
+    queryFn: () => clientApi.getDriverViolationsFeed(80, 30),
   });
 
   const recompute = useMutation({
@@ -180,6 +184,12 @@ export default function Drivers() {
     }
     return [...byDriver.values()].sort((a, b) => a.safetyScore - b.safetyScore);
   }, [performance]);
+
+  const scoreByDriver = useMemo(() => {
+    const m = new Map<string, DriverPerformanceRow>();
+    for (const r of latestScores) m.set(r.driverId, r);
+    return m;
+  }, [latestScores]);
 
   const gradeCounts = useMemo(() => {
     const c = { good: 0, bad: 0, ugly: 0 };
@@ -317,6 +327,8 @@ export default function Drivers() {
                     <TableHead>License</TableHead>
                     <TableHead>Permit class</TableHead>
                     <TableHead>Expiry</TableHead>
+                    <TableHead>Score</TableHead>
+                    <TableHead>Grade</TableHead>
                     <TableHead>Phone</TableHead>
                     <TableHead>Fuel card</TableHead>
                     <TableHead>Status</TableHead>
@@ -346,6 +358,20 @@ export default function Drivers() {
                           )}
                         </div>
                       </TableCell>
+                      <TableCell>
+                        {scoreByDriver.get(d.id)?.safetyScore != null
+                          ? scoreByDriver.get(d.id)!.safetyScore
+                          : '—'}
+                      </TableCell>
+                      <TableCell>
+                        {scoreByDriver.get(d.id)?.grade ? (
+                          <Badge className={gradeColors[String(scoreByDriver.get(d.id)!.grade || '').toLowerCase()] || ''}>
+                            {scoreByDriver.get(d.id)!.grade}
+                          </Badge>
+                        ) : (
+                          '—'
+                        )}
+                      </TableCell>
                       <TableCell>{d.phone || '—'}</TableCell>
                       <TableCell>{d.fuelCardNumber || '—'}</TableCell>
                       <TableCell>
@@ -364,7 +390,7 @@ export default function Drivers() {
                   ))}
                   {!drivers?.length && (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                      <TableCell colSpan={11} className="text-center text-muted-foreground py-8">
                         No drivers yet — add a driver or sync from Wialon
                       </TableCell>
                     </TableRow>
@@ -469,6 +495,56 @@ export default function Drivers() {
             </div>
           </div>
 
+          <div className="fleet-card">
+            <h3 className="font-semibold mb-1">Eco-driving and violation alerts (30 days)</h3>
+            <p className="text-xs text-muted-foreground mb-4">
+              Combined Wialon eco-driving events and camera / speeding / fatigue alerts used for driver scoring.
+            </p>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>When</TableHead>
+                  <TableHead>Driver</TableHead>
+                  <TableHead>Vehicle</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Source</TableHead>
+                  <TableHead>Severity</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(safeArray(fleetViolations) as Array<{
+                  id: string;
+                  occurredAt?: string;
+                  driverName?: string;
+                  unitName?: string;
+                  violationType?: string;
+                  source?: string;
+                  severity?: string;
+                }>).slice(0, 40).map((v) => (
+                  <TableRow key={`${v.source}-${v.id}`}>
+                    <TableCell className="text-xs whitespace-nowrap">
+                      {v.occurredAt ? new Date(v.occurredAt).toLocaleString() : '—'}
+                    </TableCell>
+                    <TableCell>{v.driverName || '—'}</TableCell>
+                    <TableCell>{v.unitName || '—'}</TableCell>
+                    <TableCell>{String(v.violationType || '').replace(/_/g, ' ')}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{v.source === 'alert' ? 'Camera / alert' : 'Eco-driving'}</Badge>
+                    </TableCell>
+                    <TableCell><Badge variant="outline">{v.severity || '—'}</Badge></TableCell>
+                  </TableRow>
+                ))}
+                {!safeArray(fleetViolations).length && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                      No eco-driving or camera alerts in the last 30 days. Click Recompute after Wialon reports sync.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
           {selectedDriverId && (
             <div className="fleet-card">
               <div className="flex items-center justify-between mb-3">
@@ -484,6 +560,7 @@ export default function Drivers() {
                   <TableRow>
                     <TableHead>When</TableHead>
                     <TableHead>Type</TableHead>
+                    <TableHead>Source</TableHead>
                     <TableHead>Severity</TableHead>
                     <TableHead>Vehicle</TableHead>
                   </TableRow>
@@ -495,20 +572,24 @@ export default function Drivers() {
                     violationType: string;
                     severity?: string;
                     unitName?: string;
+                    source?: string;
                   }>).map((v) => (
                     <TableRow key={v.id}>
                       <TableCell className="text-xs">
                         {v.occurredAt ? new Date(v.occurredAt).toLocaleString() : '—'}
                       </TableCell>
                       <TableCell>{String(v.violationType || '').replace(/_/g, ' ')}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{v.source === 'alert' ? 'Camera / alert' : 'Eco-driving'}</Badge>
+                      </TableCell>
                       <TableCell><Badge variant="outline">{v.severity || '—'}</Badge></TableCell>
                       <TableCell>{v.unitName || '—'}</TableCell>
                     </TableRow>
                   ))}
                   {!safeArray(violations).length && (
                     <TableRow>
-                      <TableCell colSpan={4} className="text-center text-muted-foreground py-6">
-                        No linked violations for this driver in the current window
+                      <TableCell colSpan={5} className="text-center text-muted-foreground py-6">
+                        No linked eco-driving or camera/alert violations for this driver in the last 30 days
                       </TableCell>
                     </TableRow>
                   )}
