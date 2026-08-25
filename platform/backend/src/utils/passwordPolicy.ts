@@ -64,3 +64,8 @@ export function generateStrongPassword(opts?: { length?: number }): string {
   return chars.join('');
 }
 
+/** One-time sign-in code for forgot-password / emailed credentials (policy-compliant, email-friendly). */
+export function generateOneTimePassword(opts?: { length?: number }): string {
+  return generateStrongPassword({ length: Math.max(12, opts?.length ?? 12) });
+}
+

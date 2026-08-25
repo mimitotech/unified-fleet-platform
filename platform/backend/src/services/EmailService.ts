@@ -267,7 +267,10 @@ export async function sendMail(opts: {
   if (mode === 'phpmailer') {
     const ok = await tryPhpMailer();
     if (!ok && lastError) throw lastError;
-    if (!ok) throw new Error('PHPMailer send failed');
+    if (!ok) {
+      const msg = (await sendViaPhpMailer(cfg, payload)).message || 'PHPMailer send failed';
+      throw new Error(msg);
+    }
     return true;
   }
 
@@ -278,9 +281,14 @@ export async function sendMail(opts: {
     return true;
   }
 
-  // auto: nodemailer first, PHPMailer fallback (Hostinger-friendly)
+  // auto: PHPMailer first on Hostinger (Node SMTP often blocked), then nodemailer
+  if (isPhpMailerRelayInstalled()) {
+    if (await tryPhpMailer()) return true;
+  }
   if (await tryNodemailer()) return true;
-  if (await tryPhpMailer()) return true;
+  if (!isPhpMailerRelayInstalled()) {
+    if (await tryPhpMailer()) return true;
+  }
   if (lastError) throw lastError;
   return false;
 }
@@ -390,18 +398,35 @@ export async function emailCredentialsToUser(opts: {
   fullName?: string;
   temporaryPassword: string;
   reason: 'created' | 'reset' | 'forgot';
-}): Promise<boolean> {
+}): Promise<{ sent: boolean; error?: string }> {
   const to = normalizeRecipient(opts.to);
   if (!to) {
     logger.warn('[mail] credentials email skipped — invalid recipient', { to: opts.to });
-    return false;
+    return { sent: false, error: 'Invalid recipient email' };
   }
   try {
-    return await sendAccountCredentialsEmail({ ...opts, to });
+    const sent = await sendAccountCredentialsEmail({ ...opts, to });
+    if (!sent) return { sent: false, error: 'Mail transport returned false' };
+    return { sent: true };
   } catch (err) {
-    logger.error('[mail] credentials email failed', { to, err: (err as Error).message });
-    return false;
+    const message = (err as Error).message || 'Mail send failed';
+    logger.error('[mail] credentials email failed', { to, err: message });
+    return { sent: false, error: message };
   }
+}
+
+/** Forgot-password OTP email — temporary sign-in code to the user's registered address. */
+export async function sendForgotPasswordOtpEmail(opts: {
+  to: string;
+  fullName?: string;
+  oneTimePassword: string;
+}): Promise<{ sent: boolean; error?: string }> {
+  return emailCredentialsToUser({
+    to: opts.to,
+    fullName: opts.fullName,
+    temporaryPassword: opts.oneTimePassword,
+    reason: 'forgot',
+  });
 }
 
 /** Persist env SMTP into system_settings so Admin → Email UI shows live values (password masked). */
@@ -497,13 +522,17 @@ export async function verifySmtpConnection(): Promise<{ ok: boolean; message: st
     return node || { ok: false, message: 'Nodemailer transport unavailable' };
   }
 
+  if (isPhpMailerRelayInstalled()) {
+    const php = await verifyPhp();
+    if (php?.ok) return php;
+  }
   const node = await verifyNodemailer();
   if (node?.ok) return node;
   const php = await verifyPhp();
   if (php?.ok) return php;
   return {
     ok: false,
-    message: [node?.message, php?.message].filter(Boolean).join(' | ') || 'SMTP verification failed',
+    message: [php?.message, node?.message].filter(Boolean).join(' | ') || 'SMTP verification failed',
   };
 }
 

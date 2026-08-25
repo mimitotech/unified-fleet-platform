@@ -5,11 +5,6 @@ import { fileURLToPath } from 'node:url';
 import { logger } from '../config/logger.js';
 import type { SmtpConfig } from './EmailService.js';
 
-const servicesDir = path.dirname(fileURLToPath(import.meta.url));
-const mailRelayRoot = path.resolve(servicesDir, '../../../mail-relay');
-const sendScript = path.join(mailRelayRoot, 'send-mail.php');
-const vendorAutoload = path.join(mailRelayRoot, 'vendor/autoload.php');
-
 export type PhpMailPayload = {
   to: string;
   subject: string;
@@ -17,6 +12,33 @@ export type PhpMailPayload = {
   html?: string;
   verify?: boolean;
 };
+
+function resolveMailRelayRoot(): string {
+  const fromEnv = String(process.env.MAIL_RELAY_DIR || '').trim();
+  if (fromEnv && fs.existsSync(path.join(fromEnv, 'send-mail.php'))) {
+    return path.resolve(fromEnv);
+  }
+
+  const servicesDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.resolve(servicesDir, '../../../mail-relay'),
+    path.resolve(servicesDir, '../../../../mail-relay'),
+    path.resolve(process.cwd(), 'mail-relay'),
+    path.resolve(process.cwd(), 'platform/mail-relay'),
+  ];
+  for (const dir of candidates) {
+    if (fs.existsSync(path.join(dir, 'send-mail.php'))) return dir;
+  }
+  return candidates[0];
+}
+
+const mailRelayRoot = resolveMailRelayRoot();
+const sendScript = path.join(mailRelayRoot, 'send-mail.php');
+const vendorAutoload = path.join(mailRelayRoot, 'vendor/autoload.php');
+
+export function getMailRelayRoot(): string {
+  return mailRelayRoot;
+}
 
 export function isPhpMailerRelayInstalled(): boolean {
   return fs.existsSync(sendScript) && fs.existsSync(vendorAutoload);
@@ -35,7 +57,23 @@ function smtpEnv(cfg: SmtpConfig): NodeJS.ProcessEnv {
   };
 }
 
-function parseRelayResponse(stdout: string, stderr: string): { ok: boolean; message?: string; via?: string } {
+function parseRelayResponse(
+  stdout: string,
+  stderr: string,
+  exitCode: number | null,
+): { ok: boolean; message?: string; via?: string } {
+  const out = stdout.trim();
+  if (out) {
+    try {
+      const parsed = JSON.parse(out) as { ok?: boolean; error?: string; via?: string };
+      if (parsed.ok) return { ok: true, via: parsed.via || 'phpmailer' };
+      if (parsed.error) return { ok: false, message: parsed.error };
+    } catch {
+      if (exitCode === 0) return { ok: true, via: 'phpmailer' };
+      return { ok: false, message: out };
+    }
+  }
+
   const errText = stderr.trim();
   if (errText) {
     try {
@@ -46,16 +84,10 @@ function parseRelayResponse(stdout: string, stderr: string): { ok: boolean; mess
     }
   }
 
-  const out = stdout.trim();
-  if (!out) return { ok: false, message: 'PHPMailer relay returned empty response' };
-
-  try {
-    const parsed = JSON.parse(out) as { ok?: boolean; error?: string; via?: string };
-    if (!parsed.ok) return { ok: false, message: parsed.error || 'PHPMailer relay failed' };
-    return { ok: true, via: parsed.via || 'phpmailer' };
-  } catch {
-    return { ok: false, message: out };
+  if (exitCode !== 0 && exitCode != null) {
+    return { ok: false, message: stderr.trim() || `PHPMailer exited with code ${exitCode}` };
   }
+  return { ok: false, message: 'PHPMailer relay returned empty response' };
 }
 
 function runPhpProcess(
@@ -92,17 +124,13 @@ export async function invokePhpMailer(
   if (!isPhpMailerRelayInstalled()) {
     return {
       ok: false,
-      message: 'PHPMailer relay not installed (composer install in platform/mail-relay)',
+      message: `PHPMailer relay not installed at ${mailRelayRoot} (run platform/scripts/install-mail-relay.mjs)`,
     };
   }
 
   try {
     const { stdout, stderr, code } = await runPhpProcess(cfg, payload);
-    const parsed = parseRelayResponse(String(stdout || ''), String(stderr || ''));
-    if (!parsed.ok && code !== 0 && !parsed.message) {
-      return { ok: false, message: stderr.trim() || `PHPMailer exited with code ${code}` };
-    }
-    return parsed;
+    return parseRelayResponse(String(stdout || ''), String(stderr || ''), code);
   } catch (err) {
     const e = err as Error & { code?: string };
     if (e.code === 'ENOENT') {
@@ -111,7 +139,7 @@ export async function invokePhpMailer(
         message: `PHP CLI not found (${String(process.env.PHP_BIN || 'php')}). Set PHP_BIN in env or install PHP.`,
       };
     }
-    logger.error('[mail] PHPMailer exec failed', { err: e.message });
+    logger.error('[mail] PHPMailer exec failed', { err: e.message, relay: mailRelayRoot });
     return { ok: false, message: e.message || 'PHPMailer exec failed' };
   }
 }

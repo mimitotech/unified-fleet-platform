@@ -396,11 +396,11 @@ router.post('/users/:id/reset-password', async (req: AuthRequest, res) => {
     let credentialsEmailed = false;
     try {
       const { emailCredentialsToUser } = await import('../services/EmailService.js');
-      credentialsEmailed = await emailCredentialsToUser({
+      credentialsEmailed = (await emailCredentialsToUser({
         to: result.email,
         temporaryPassword: result.temporaryPassword,
         reason: 'reset',
-      });
+      })).sent;
     } catch {
       credentialsEmailed = false;
     }
@@ -464,12 +464,12 @@ router.post('/system-users', requireSuperAdmin, async (req: AuthRequest, res) =>
     if (user.temporaryPassword) {
       try {
         const { emailCredentialsToUser } = await import('../services/EmailService.js');
-        credentialsEmailed = await emailCredentialsToUser({
+        credentialsEmailed = (await emailCredentialsToUser({
           to: user.email,
           fullName: user.full_name,
           temporaryPassword: user.temporaryPassword,
           reason: 'created',
-        });
+        })).sent;
       } catch {
         credentialsEmailed = false;
       }
@@ -506,11 +506,11 @@ router.post('/system-users/:id/reset-password', requireSuperAdmin, async (req: A
     let credentialsEmailed = false;
     try {
       const { emailCredentialsToUser } = await import('../services/EmailService.js');
-      credentialsEmailed = await emailCredentialsToUser({
+      credentialsEmailed = (await emailCredentialsToUser({
         to: result.email,
         temporaryPassword: result.temporaryPassword,
         reason: 'reset',
-      });
+      })).sent;
     } catch {
       credentialsEmailed = false;
     }
@@ -1272,12 +1272,12 @@ router.post('/tenants/:id/users', async (req: AuthRequest, res) => {
     if (user.temporaryPassword) {
       try {
         const { emailCredentialsToUser } = await import('../services/EmailService.js');
-        credentialsEmailed = await emailCredentialsToUser({
+        credentialsEmailed = (await emailCredentialsToUser({
           to: user.email,
           fullName: user.full_name,
           temporaryPassword: user.temporaryPassword,
           reason: 'created',
-        });
+        })).sent;
       } catch {
         credentialsEmailed = false;
       }
@@ -1377,11 +1377,11 @@ router.post('/tenants/:id/users/from-wialon', async (req: AuthRequest, res) => {
     if (user.created && user.temporaryPassword && user.email) {
       try {
         const { emailCredentialsToUser } = await import('../services/EmailService.js');
-        credentialsEmailed = await emailCredentialsToUser({
+        credentialsEmailed = (await emailCredentialsToUser({
           to: user.email,
           temporaryPassword: user.temporaryPassword,
           reason: 'created',
-        });
+        })).sent;
       } catch {
         credentialsEmailed = false;
       }

@@ -576,11 +576,11 @@ export default function Login() {
                 {view === 'forgot-sent' && (
                   <div className="space-y-3.5">
                     <p className="text-xs font-medium leading-relaxed text-slate-600">
-                      We emailed a temporary password for{' '}
+                      We emailed a one-time sign-in code for{' '}
                       <span className="font-bold text-primary">{email}</span> from{' '}
-                      <span className="font-semibold">mams@mimitotracking.com</span>. Sign in with that
-                      password, then change it immediately. If you do not receive the email, contact your
-                      MIMITO MAMS administrator.
+                      <span className="font-semibold">mams@mimitotracking.com</span>. Use that code as your
+                      password to sign in, then change it immediately under Account. If you do not receive the
+                      email within a few minutes, check spam or contact your MIMITO MAMS administrator.
                     </p>
                     <button
                       type="button"

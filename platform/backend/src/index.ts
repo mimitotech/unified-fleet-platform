@@ -137,10 +137,14 @@ async function main() {
       }
       try {
         const { syncEmailSettingsFromEnv, verifySmtpConnection } = await import('./services/EmailService.js');
+        const { isPhpMailerRelayInstalled, getMailRelayRoot } = await import('./services/PhpMailerTransport.js');
         await syncEmailSettingsFromEnv();
         const smtp = await verifySmtpConnection();
         if (smtp.ok) logger.info(`SMTP ready: ${smtp.message}`);
         else logger.warn(`SMTP not verified: ${smtp.message}`);
+        logger.info(
+          `Mail relay: phpmailerInstalled=${isPhpMailerRelayInstalled()} path=${getMailRelayRoot()} transport=${process.env.MAIL_TRANSPORT || 'auto'}`,
+        );
       } catch (e) {
         logger.warn(`SMTP sync skipped: ${(e as Error).message}`);
       }

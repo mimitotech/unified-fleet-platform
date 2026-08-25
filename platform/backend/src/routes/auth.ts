@@ -7,7 +7,7 @@ import { isSystemRole } from '../utils/systemRoles.js';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 import { AuditService } from '../services/AuditService.js';
 import { getJwtSecret } from '../config/env.js';
-import { assertStrongPassword, generateStrongPassword } from '../utils/passwordPolicy.js';
+import { assertStrongPassword, generateOneTimePassword } from '../utils/passwordPolicy.js';
 
 const router = Router();
 
@@ -253,7 +253,7 @@ router.post('/forgot-password', async (req, res) => {
     return error(res, 'No account found with that email', 404);
   }
 
-  const { isSmtpConfiguredAsync, emailCredentialsToUser } = await import('../services/EmailService.js');
+  const { isSmtpConfiguredAsync, sendForgotPasswordOtpEmail } = await import('../services/EmailService.js');
   const smtpReady = await isSmtpConfiguredAsync();
   if (!smtpReady) {
     await AuditService.log({
@@ -272,20 +272,17 @@ router.post('/forgot-password', async (req, res) => {
     );
   }
 
-  const temporaryPassword = generateStrongPassword({ length: 14 });
+  const oneTimePassword = generateOneTimePassword({ length: 12 });
   let emailed = false;
   let emailError: string | undefined;
-  try {
-    emailed = await emailCredentialsToUser({
-      to: user.email,
-      fullName: user.full_name || undefined,
-      temporaryPassword,
-      reason: 'forgot',
-    });
-    if (!emailed) emailError = 'SMTP send returned false';
-  } catch (err) {
-    emailError = (err as Error).message;
-  }
+  const mailResult = await sendForgotPasswordOtpEmail({
+    to: user.email,
+    fullName: user.full_name || undefined,
+    oneTimePassword,
+  });
+  emailed = mailResult.sent;
+  emailError = mailResult.error;
+  if (!emailed) emailError = emailError || 'SMTP send returned false';
 
   if (!emailed) {
     await AuditService.log({
@@ -303,7 +300,9 @@ router.post('/forgot-password', async (req, res) => {
         ? ' (SMTP connection blocked or timed out from the server)'
         : emailError && /auth|invalid login|535|534/i.test(emailError)
           ? ' (SMTP authentication failed — check mailbox password)'
-          : '';
+          : emailError && /PHPMailer relay not installed|vendor\/autoload|PHP CLI not found/i.test(emailError)
+            ? ' (mail relay not installed — redeploy after build installs mail-relay)'
+            : '';
     return error(
       res,
       `Password reset email could not be sent. Please contact your MIMITO MAMS administrator for assistance.${hint}`,
@@ -311,7 +310,7 @@ router.post('/forgot-password', async (req, res) => {
     );
   }
 
-  const hash = await bcrypt.hash(temporaryPassword, 10);
+  const hash = await bcrypt.hash(oneTimePassword, 10);
   await query(
     `UPDATE users SET password_hash = $2, force_password_change = true, updated_at = NOW() WHERE id = $1`,
     [user.id, hash]
