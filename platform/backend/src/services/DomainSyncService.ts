@@ -189,7 +189,7 @@ export class DomainSyncService {
         timeTo,
         unitIds,
         unitNameById,
-        { skipCooldown: opts?.force === true },
+        { skipCooldown: opts?.force === true, maxUnits: opts?.force ? unitIds.length : undefined },
       );
 
       const taskAlerts = await harvestTaskMessageAlerts(
@@ -218,6 +218,13 @@ export class DomainSyncService {
     // Old MAMS fallback when eco report template is missing or returns no rows.
     upserted += await mirrorAlertsToEcoViolations(tenantId, ECO_WINDOW_DAYS);
 
+    try {
+      const { DriverScoringService } = await import('./DriverScoringService.js');
+      await DriverScoringService.linkEcoViolationsAllDrivers(tenantId);
+    } catch (err) {
+      logger.warn(`[DomainSync] driver link skipped tenant=${tenantId}`, err);
+    }
+
     const now = new Date().toISOString();
     await query(
       `INSERT INTO fuel_sync_cursor (tenant_id, cursor_key, last_synced_at, last_success_at, row_count, last_error)
@@ -239,6 +246,7 @@ export class DomainSyncService {
     if (eco > 0 || trips > 0) {
       try {
         const { DriverScoringService } = await import('./DriverScoringService.js');
+        await DriverScoringService.linkEcoViolationsAllDrivers(tenantId);
         await DriverScoringService.recomputeTenant(tenantId, 30);
       } catch (err) {
         logger.warn(`[DomainSync] driver scoring skipped tenant=${tenantId}`, err);
@@ -260,5 +268,23 @@ export class DomainSyncService {
       }
     }
     return count;
+  }
+
+  /** Mirror inbox driving alerts into eco table for every active tenant (all telematics sources). */
+  static async mirrorViolationsAllTenants(): Promise<number> {
+    const { listActiveTenants } = await import('./tenantSyncStatus.js');
+    const tenants = await listActiveTenants();
+    let total = 0;
+    for (const tenant of tenants) {
+      try {
+        await delayBetweenTenants();
+        total += await mirrorAlertsToEcoViolations(tenant.id, ECO_WINDOW_DAYS);
+        const { DriverScoringService } = await import('./DriverScoringService.js');
+        await DriverScoringService.linkEcoViolationsAllDrivers(tenant.id).catch(() => undefined);
+      } catch (err) {
+        logger.warn(`[DomainSync] mirror skipped tenant ${tenant.id}`, err);
+      }
+    }
+    return total;
   }
 }

@@ -333,7 +333,6 @@ export class DriverScoringService {
     };
   }
 
-  /** Link eco violations to a driver by name or assigned asset when driver_id is unset. */
   static async linkEcoViolationsForDriver(
     tenantId: string,
     driver: { id: string; name: string; assigned_asset_id: string | null }
@@ -351,6 +350,21 @@ export class DriverScoringService {
       [tenantId, driver.name, driver.id, driver.assigned_asset_id]
     ).catch(() => ({ rowCount: 0 }));
     return rowCount || 0;
+  }
+
+  /** Backfill driver_id on eco rows for every driver in the tenant. */
+  static async linkEcoViolationsAllDrivers(tenantId: string): Promise<number> {
+    await this.ensureSchema();
+    const { rows } = await query<{ id: string; name: string; assigned_asset_id: string | null }>(
+      `SELECT id, name, assigned_asset_id FROM drivers
+       WHERE tenant_id = $1 AND deleted_at IS NULL`,
+      [tenantId],
+    );
+    let linked = 0;
+    for (const d of rows) {
+      linked += await this.linkEcoViolationsForDriver(tenantId, d);
+    }
+    return linked;
   }
 
   /** Recompute today's snapshot for one driver from eco + alert violations. */

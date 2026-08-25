@@ -8,6 +8,7 @@ import surveillanceRouter from './surveillance.js';
 import geofencesRouter from './geofences.js';
 import reportsRouter from './reports.js';
 import commandsRouter from './commands.js';
+import monitoringRouter from './monitoring.js';
 
 const router = Router();
 
@@ -17,6 +18,7 @@ router.use('/fuel', fuelRouter);
 router.use('/workshop', workshopRouter);
 router.use('/emissions', emissionsRouter);
 router.use('/surveillance', surveillanceRouter);
+router.use('/monitoring', monitoringRouter);
 router.use('/geofences', geofencesRouter);
 router.use('/reports', reportsRouter);
 router.use('/commands', commandsRouter);

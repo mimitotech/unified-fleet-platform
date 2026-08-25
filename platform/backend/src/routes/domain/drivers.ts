@@ -139,6 +139,7 @@ router.post('/sync-violations', requireTenant, mod, requireWriteAccess, async (r
   try {
     const { DomainSyncService } = await import('../../services/DomainSyncService.js');
     const eco = await DomainSyncService.syncTenantEcoViolations(String(req.tenantId), { force: true });
+    await DriverScoringService.linkEcoViolationsAllDrivers(String(req.tenantId)).catch(() => undefined);
     const scoring = await DriverScoringService.recomputeTenant(String(req.tenantId), 30);
     return success(res, { eco, drivers: scoring.drivers });
   } catch (e) {
@@ -167,43 +168,9 @@ router.post('/recompute-scores', requireTenant, mod, requireWriteAccess, async (
 router.get('/violations-feed', requireTenant, mod, async (req: TenantRequest, res) => {
   const limit = Math.min(200, Math.max(1, parseInt(String(req.query.limit || '80'), 10) || 80));
   const days = Math.min(90, Math.max(1, parseInt(String(req.query.days || '30'), 10) || 30));
-  const { rows: eco } = await query(
-    `SELECT id, unit_name, violation_type, severity, occurred_at, driver_name, value, 'eco' as source
-     FROM eco_driving_violations
-     WHERE tenant_id = $1 AND occurred_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
-     ORDER BY occurred_at DESC
-     LIMIT $2`,
-    [req.tenantId, limit]
-  ).catch(() => ({ rows: [] as Array<Record<string, unknown>> }));
-
-  const { rows: alerts } = await query(
-    `SELECT a.id, COALESCE(ast.registration_plate, ast.name) as unit_name, a.type as violation_type,
-            a.severity, a.occurred_at, NULL as driver_name, NULL as value, 'alert' as source
-     FROM alerts a
-     LEFT JOIN assets ast ON ast.id = a.asset_id
-     WHERE a.tenant_id = $1
-       AND a.occurred_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
-       AND (
-         a.type IN ('fatigue', 'camera', 'video', 'unauthorized', 'overspeed', 'speeding', 'license_expiry')
-         OR LOWER(COALESCE(a.type, '')) LIKE '%fatigue%'
-         OR LOWER(COALESCE(a.type, '')) LIKE '%camera%'
-         OR LOWER(COALESCE(a.type, '')) LIKE '%video%'
-         OR LOWER(COALESCE(a.type, '')) LIKE '%unauth%'
-         OR LOWER(COALESCE(a.type, '')) LIKE '%speed%'
-         OR LOWER(COALESCE(a.type, '')) LIKE '%eco%'
-         OR a.video_url IS NOT NULL
-       )
-     ORDER BY a.occurred_at DESC
-     LIMIT $2`,
-    [req.tenantId, limit]
-  ).catch(() => ({ rows: [] as Array<Record<string, unknown>> }));
-
-  const combined = [...toCamelRows(eco), ...toCamelRows(alerts)].sort((a, b) => {
-    const ta = new Date(String((a as { occurredAt?: string }).occurredAt || 0)).getTime();
-    const tb = new Date(String((b as { occurredAt?: string }).occurredAt || 0)).getTime();
-    return tb - ta;
-  });
-  return success(res, combined.slice(0, limit));
+  const { fetchMergedViolationEvents } = await import('../../services/violationEventsService.js');
+  const events = await fetchMergedViolationEvents(String(req.tenantId), { limit, days });
+  return success(res, events);
 });
 
 router.get('/:id', requireTenant, mod, async (req: TenantRequest, res) => {

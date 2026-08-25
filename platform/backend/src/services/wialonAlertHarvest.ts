@@ -254,7 +254,7 @@ export async function harvestEcoReportAlerts(
   timeTo: number,
   allowedUnitIds: number[],
   unitNameById: Map<number, string>,
-  opts?: { skipCooldown?: boolean },
+  opts?: { skipCooldown?: boolean; maxUnits?: number },
 ): Promise<FleetAlert[]> {
   if (!allowedUnitIds.length) return [];
 
@@ -272,12 +272,17 @@ export async function harvestEcoReportAlerts(
 
     const { resourceId, templateId, templateName } = tpl;
     const alerts: FleetAlert[] = [];
+    const sampleCap = opts?.maxUnits ?? Math.min(40, allowedUnitIds.length);
     const ecoCursor = unitMsgCursor.get(`${scopeKey}:eco`) ?? 0;
     const sample: number[] = [];
-    for (let i = 0; i < Math.min(40, allowedUnitIds.length); i++) {
-      sample.push(allowedUnitIds[(ecoCursor + i) % allowedUnitIds.length]);
+    if (opts?.maxUnits && opts.maxUnits >= allowedUnitIds.length) {
+      sample.push(...allowedUnitIds);
+    } else {
+      for (let i = 0; i < sampleCap; i++) {
+        sample.push(allowedUnitIds[(ecoCursor + i) % allowedUnitIds.length]);
+      }
+      unitMsgCursor.set(`${scopeKey}:eco`, ecoCursor + sample.length);
     }
-    unitMsgCursor.set(`${scopeKey}:eco`, ecoCursor + sample.length);
 
     for (const unitId of sample) {
       const unitName = unitNameById.get(unitId) || String(unitId);

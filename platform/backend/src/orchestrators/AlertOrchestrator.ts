@@ -152,7 +152,7 @@ export class AlertOrchestrator {
   }
 
   async syncFromAdapters(): Promise<number> {
-    const from = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const to = new Date();
     let count = 0;
 

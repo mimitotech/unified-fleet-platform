@@ -716,6 +716,27 @@ export const clientApi = {
       method: 'POST',
       body: JSON.stringify({}),
     }),
+  getMonitoringEvents: (limit = 120, days = 30) =>
+    api<Array<{
+      id: string;
+      title: string;
+      type?: string;
+      violationType?: string;
+      severity?: string;
+      occurredAt?: string;
+      unitId?: string;
+      unitName?: string;
+      assetId?: string;
+      driverName?: string;
+      source: string;
+      category: string;
+      videoUrl?: string;
+    }>>(`/api/client/monitoring/events?limit=${limit}&days=${days}`),
+  syncMonitoringViolations: () =>
+    api<{ alerts: number; mirrored: number; eco: number; drivers: number; events: number }>(
+      '/api/client/monitoring/sync-violations',
+      { method: 'POST', body: JSON.stringify({}) },
+    ),
   getDriverViolations: (id: string, limit = 50, days = 30) =>
     api<EcoViolation[]>(`/api/client/drivers/${id}/violations?limit=${limit}&days=${days}`),
   getDriverViolationsFeed: (limit = 80, days = 30) =>

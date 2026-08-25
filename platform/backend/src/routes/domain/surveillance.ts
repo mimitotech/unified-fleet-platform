@@ -301,42 +301,23 @@ router.post('/units/:unitId/commands', requireTenant, requireCommandAccess, asyn
 
 router.get('/violations', requireTenant, async (req: TenantRequest, res) => {
   const limit = parseInt(String(req.query.limit || '50'), 10);
+  const days = Math.min(90, Math.max(1, parseInt(String(req.query.days || '30'), 10) || 30));
   const unitIdFilter = req.query.unitId ? parseInt(String(req.query.unitId), 10) : undefined;
   const includeClips = req.query.includeClips !== '0';
 
-  const { rows: eco } = await query(
-    `SELECT id, unit_id, unit_name, violation_type as type, severity, occurred_at, driver_name, 'eco' as source
-     FROM eco_driving_violations WHERE tenant_id = $1 ORDER BY occurred_at DESC LIMIT $2`,
-    [req.tenantId, limit]
-  );
-  const { rows: alerts } = await query(
-    `SELECT a.id, a.title, a.type, a.severity, a.occurred_at, a.video_url, a.source_type as source,
-            am.external_id as unit_id, ast.name as unit_name
-     FROM alerts a
-     LEFT JOIN asset_mappings am ON am.asset_id = a.asset_id AND am.source_type = 'wialon'
-     LEFT JOIN assets ast ON ast.id = a.asset_id
-     WHERE a.tenant_id = $1 AND (a.video_url IS NOT NULL OR am.external_id IS NOT NULL)
-     ORDER BY a.occurred_at DESC LIMIT $2`,
-    [req.tenantId, limit]
-  );
-
+  const { fetchMergedViolationEvents } = await import('../../services/violationEventsService.js');
   type ViolationRow = Record<string, unknown> & {
     unitId?: string | number;
     clip?: VideoClipRef;
   };
-
-  const combined: ViolationRow[] = [
-    ...toCamelRows(eco).map((r) => ({
-      ...r,
-      category: 'driving',
-      unitId: (r as Record<string, unknown>).unitId,
-      violationType: (r as Record<string, unknown>).type,
-    })),
-    ...toCamelRows(alerts).map((r) => ({
-      ...r,
-      category: (r as Record<string, unknown>).videoUrl ? 'video' : 'alert',
-    })),
-  ];
+  const combined: ViolationRow[] = (await fetchMergedViolationEvents(String(req.tenantId), {
+    limit: limit * 2,
+    days,
+  })).map((r) => ({
+    ...r,
+    category: r.category === 'video' ? 'video' : r.category === 'eco' ? 'driving' : 'alert',
+    violationType: r.violationType || r.type,
+  }));
 
   if (includeClips && unitIdFilter != null && !Number.isNaN(unitIdFilter)) {
     try {

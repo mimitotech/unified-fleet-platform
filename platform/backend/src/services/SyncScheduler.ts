@@ -147,7 +147,9 @@ async function runDomainCycle(): Promise<void> {
     const ran = await withExclusiveSyncSlot('domain', async () => {
       await withMysqlLock('mams_domain_sync', async () => {
         const count = await DomainSyncService.syncAllConnectedTenants();
+        const mirrored = await DomainSyncService.mirrorViolationsAllTenants();
         if (count > 0) logger.info(`[DomainSync] synced trips/eco for ${count} Wialon tenants`);
+        if (mirrored > 0) logger.info(`[DomainSync] mirrored ${mirrored} driving alerts into eco violations`);
       });
     });
     if (ran) lastDomainCycleAt = new Date().toISOString();
@@ -184,6 +186,9 @@ async function runAlertCycle(): Promise<void> {
             const n = await orch.syncFromAdapters();
             synced++;
             inserted += n;
+            const { mirrorAlertsToEcoViolations } = await import('./ecoViolationPersist.js');
+            await mirrorAlertsToEcoViolations(tenant.id, 30).catch(() => 0);
+            await DriverScoringService.linkEcoViolationsAllDrivers(tenant.id).catch(() => 0);
           } catch (err) {
             logger.warn(`[AlertSync] skipped tenant ${tenant.id}`, err);
           }

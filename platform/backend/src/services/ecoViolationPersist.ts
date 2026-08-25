@@ -162,56 +162,70 @@ export async function persistFleetAlertsAsEcoViolations(
  * from the alerts inbox into eco_driving_violations.
  */
 export async function mirrorAlertsToEcoViolations(tenantId: string, days = 30): Promise<number> {
-  const { rows } = await query<{
-    id: string;
-    type: string;
-    severity: string;
-    title: string;
-    description: string | null;
-    occurred_at: string;
-    latitude: number | null;
-    longitude: number | null;
-    asset_id: string | null;
-    external_id: string | null;
-  }>(
-    `SELECT id, type, severity, title, description, occurred_at, latitude, longitude, asset_id, external_id
-     FROM alerts
-     WHERE tenant_id = $1
-       AND occurred_at >= DATE_SUB(NOW(), INTERVAL ${Math.min(90, Math.max(1, days))} DAY)
-       AND (
-         type IN (
-           'harsh_braking', 'harsh_acceleration', 'harsh_cornering', 'speeding', 'overspeed',
-           'idling', 'eco_violation', 'towing', 'geofence', 'fatigue', 'camera', 'video',
-           'unauthorized', 'driving'
-         )
-         OR title REGEXP 'harsh|speeding|eco|brake|accel|corner|idle|overspeed|violation|fatigue|camera|unauth'
-         OR description REGEXP 'harsh|speeding|eco|brake|accel|corner|idle|overspeed|violation|fatigue|camera|unauth'
-       )
-     ORDER BY occurred_at DESC
-     LIMIT 500`,
-    [tenantId],
-  ).catch(() => ({ rows: [] }));
-
+  const windowDays = Math.min(90, Math.max(1, days));
   let upserted = 0;
-  for (const row of rows) {
-    const externalId = row.external_id ? `alert:${row.external_id}` : `alert:${row.id}`;
-    const alert: FleetAlert = {
-      id: externalId,
-      type: row.type || 'eco_violation',
-      severity: row.severity as FleetAlert['severity'],
-      title: row.title,
-      description: row.description || undefined,
-      latitude: row.latitude ?? undefined,
-      longitude: row.longitude ?? undefined,
-      timestamp: new Date(row.occurred_at),
-      sourceType: 'wialon',
-      externalId,
-      assetId: row.asset_id || undefined,
-      acknowledged: false,
-    };
-    if (await upsertEcoViolationFromFleetAlert(tenantId, alert, new Map())) {
-      upserted++;
+  const pageSize = 500;
+  for (let offset = 0; offset < 5000; offset += pageSize) {
+    const { rows } = await query<{
+      id: string;
+      type: string;
+      severity: string;
+      title: string;
+      description: string | null;
+      occurred_at: string;
+      latitude: number | null;
+      longitude: number | null;
+      asset_id: string | null;
+      external_id: string | null;
+    }>(
+      `SELECT id, type, severity, title, description, occurred_at, latitude, longitude, asset_id, external_id
+       FROM alerts
+       WHERE tenant_id = $1
+         AND occurred_at >= DATE_SUB(NOW(), INTERVAL ${windowDays} DAY)
+         AND (
+           type IN (
+             'harsh_braking', 'harsh_acceleration', 'harsh_cornering', 'speeding', 'overspeed',
+             'idling', 'eco_violation', 'towing', 'geofence', 'fatigue', 'camera', 'video',
+             'unauthorized', 'driving', 'fleet_event'
+           )
+           OR title REGEXP 'harsh|speeding|eco|brake|accel|corner|idle|overspeed|violation|fatigue|camera|unauth'
+           OR description REGEXP 'harsh|speeding|eco|brake|accel|corner|idle|overspeed|violation|fatigue|camera|unauth'
+         )
+       ORDER BY occurred_at DESC
+       LIMIT ${pageSize} OFFSET ${offset}`,
+      [tenantId],
+    ).catch(() => ({ rows: [] }));
+
+    if (!rows.length) break;
+
+    for (const row of rows) {
+      const externalId = row.external_id ? `alert:${row.external_id}` : `alert:${row.id}`;
+      const alert: FleetAlert = {
+        id: externalId,
+        type: row.type || 'eco_violation',
+        severity: row.severity as FleetAlert['severity'],
+        title: row.title,
+        description: row.description || undefined,
+        latitude: row.latitude ?? undefined,
+        longitude: row.longitude ?? undefined,
+        timestamp: new Date(row.occurred_at),
+        sourceType: 'wialon',
+        externalId,
+        assetId: row.asset_id || undefined,
+        acknowledged: false,
+      };
+      if (
+        !isDrivingViolationType(alert.type, alert.title, alert.description) &&
+        !/camera|video|fatigue/i.test(`${alert.type} ${alert.title}`)
+      ) {
+        continue;
+      }
+      if (await upsertEcoViolationFromFleetAlert(tenantId, alert, new Map())) {
+        upserted++;
+      }
     }
+
+    if (rows.length < pageSize) break;
   }
   return upserted;
 }

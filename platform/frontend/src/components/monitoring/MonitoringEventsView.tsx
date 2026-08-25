@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { formatDistanceToNow } from 'date-fns';
-import { AlertTriangle, Bell, Leaf, Video, ExternalLink, MapPin, Filter } from 'lucide-react';
+import { AlertTriangle, Bell, Leaf, Video, ExternalLink, MapPin, Filter, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { LoadingButton } from '@/components/shared/LoadingButton';
 import { Skeleton } from '@/components/ui/skeleton';
 import { QueryErrorBanner } from '@/components/shared/QueryErrorBanner';
 import { useMonitoringEvents, type MonitoringEventRow } from '@/hooks/useMonitoringEvents';
@@ -41,7 +42,11 @@ function matchUnit(event: MonitoringEventRow, unit: FleetUnit | undefined): bool
 }
 
 export function MonitoringEventsView({ units = [], unitId, onViewUnitOnMap, className }: Props) {
-  const { events, isLoading, isError, refetch } = useMonitoringEvents(80, true, units);
+  const { events, isLoading, isError, refetch, syncViolations, isSyncing } = useMonitoringEvents(
+    80,
+    true,
+    units,
+  );
   const [category, setCategory] = useState<CategoryFilter>('all');
   const [unitOnly, setUnitOnly] = useState(Boolean(unitId));
 
@@ -94,6 +99,16 @@ export function MonitoringEventsView({ units = [], unitId, onViewUnitOnMap, clas
             </p>
           </div>
           <div className="flex gap-1.5">
+            <LoadingButton
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              loading={isSyncing}
+              onClick={() => syncViolations()}
+            >
+              <RefreshCw className="h-3 w-3 mr-1" />
+              Sync
+            </LoadingButton>
             <Button variant="outline" size="sm" className="h-7 text-xs" asChild>
               <Link to="/app/alerts">All alerts</Link>
             </Button>
