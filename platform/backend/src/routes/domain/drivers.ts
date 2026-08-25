@@ -10,12 +10,28 @@ import { resolveTenantAssetId } from '../../services/resolveTenantAssetId.js';
 const router = Router();
 const mod = requireModule('drivers');
 
+const LATEST_PERF_JOIN = `
+  LEFT JOIN (
+    SELECT s1.*
+    FROM driver_performance_snapshots s1
+    INNER JOIN (
+      SELECT driver_id, MAX(snapshot_date) AS max_date
+      FROM driver_performance_snapshots
+      WHERE tenant_id = $1
+      GROUP BY driver_id
+    ) latest ON latest.driver_id = s1.driver_id AND latest.max_date = s1.snapshot_date
+    WHERE s1.tenant_id = $1
+  ) perf ON perf.driver_id = d.id`;
+
 router.get('/', requireTenant, mod, async (req: TenantRequest, res) => {
   await DriverScoringService.ensureSchema();
   const { rows } = await query(
-    `SELECT d.*, a.name as assigned_asset_name, a.registration_plate as assigned_asset_plate
+    `SELECT d.*, a.name as assigned_asset_name, a.registration_plate as assigned_asset_plate,
+            perf.safety_score, perf.grade, perf.penalty_points, perf.violations_count,
+            perf.trips_count, perf.total_distance, perf.snapshot_date
      FROM drivers d
      LEFT JOIN assets a ON a.id = d.assigned_asset_id
+     ${LATEST_PERF_JOIN}
      WHERE d.tenant_id = $1 AND d.deleted_at IS NULL
      ORDER BY d.name`,
     [req.tenantId]
@@ -24,27 +40,34 @@ router.get('/', requireTenant, mod, async (req: TenantRequest, res) => {
 });
 
 router.get('/stats', requireTenant, mod, async (req: TenantRequest, res) => {
+  await DriverScoringService.ensureSchema();
   const { rows } = await query(
     `SELECT
-       COUNT(*) FILTER (WHERE status = 'available')::int as available,
-       COUNT(*) FILTER (WHERE status = 'driving')::int as driving,
-       COUNT(*) FILTER (WHERE status = 'off-duty')::int as off_duty,
+       COUNT(*) FILTER (WHERE d.status = 'available')::int as available,
+       COUNT(*) FILTER (WHERE d.status = 'driving')::int as driving,
+       COUNT(*) FILTER (WHERE d.status = 'off-duty')::int as off_duty,
        COUNT(*)::int as total,
-       COUNT(*) FILTER (WHERE license_expiry_date IS NOT NULL AND license_expiry_date < CURDATE())::int as expired_licenses,
+       COUNT(*) FILTER (WHERE d.license_expiry_date IS NOT NULL AND d.license_expiry_date < CURDATE())::int as expired_licenses,
        COUNT(*) FILTER (
-         WHERE license_expiry_date IS NOT NULL
-           AND license_expiry_date >= CURDATE()
-           AND license_expiry_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)
+         WHERE d.license_expiry_date IS NOT NULL
+           AND d.license_expiry_date >= CURDATE()
+           AND d.license_expiry_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)
        )::int as expiring_licenses,
        COUNT(*) FILTER (
-         WHERE license_expiry_date IS NOT NULL
-           AND license_expiry_date >= CURDATE()
-           AND license_expiry_date <= DATE_ADD(CURDATE(), INTERVAL 7 DAY)
+         WHERE d.license_expiry_date IS NOT NULL
+           AND d.license_expiry_date >= CURDATE()
+           AND d.license_expiry_date <= DATE_ADD(CURDATE(), INTERVAL 7 DAY)
        )::int as expiring_7d_licenses,
        COUNT(*) FILTER (
-         WHERE license_expiry_date IS NULL
-       )::int as no_expiry_licenses
-     FROM drivers WHERE tenant_id = $1 AND deleted_at IS NULL`,
+         WHERE d.license_expiry_date IS NULL
+       )::int as no_expiry_licenses,
+       COUNT(*) FILTER (WHERE perf.grade = 'good')::int as grade_good,
+       COUNT(*) FILTER (WHERE perf.grade = 'bad')::int as grade_bad,
+       COUNT(*) FILTER (WHERE perf.grade = 'ugly')::int as grade_ugly,
+       COUNT(*) FILTER (WHERE perf.safety_score IS NOT NULL)::int as scored
+     FROM drivers d
+     ${LATEST_PERF_JOIN}
+     WHERE d.tenant_id = $1 AND d.deleted_at IS NULL`,
     [req.tenantId]
   );
   return success(
@@ -58,6 +81,10 @@ router.get('/stats', requireTenant, mod, async (req: TenantRequest, res) => {
       expiringLicenses: 0,
       expiring7dLicenses: 0,
       noExpiryLicenses: 0,
+      gradeGood: 0,
+      gradeBad: 0,
+      gradeUgly: 0,
+      scored: 0,
     }
   );
 });
@@ -65,14 +92,23 @@ router.get('/stats', requireTenant, mod, async (req: TenantRequest, res) => {
 router.get('/performance', requireTenant, mod, async (req: TenantRequest, res) => {
   await DriverScoringService.ensureSchema();
   const { rows } = await query(
-    `SELECT s.*, d.name as driver_name, d.fuel_card_number, d.assigned_asset_id,
+    `SELECT perf.*, d.name as driver_name, d.fuel_card_number, d.assigned_asset_id,
             a.registration_plate as assigned_asset_plate, a.name as assigned_asset_name
-     FROM driver_performance_snapshots s
-     JOIN drivers d ON d.id = s.driver_id
+     FROM drivers d
+     INNER JOIN (
+       SELECT s1.*
+       FROM driver_performance_snapshots s1
+       INNER JOIN (
+         SELECT driver_id, MAX(snapshot_date) AS max_date
+         FROM driver_performance_snapshots
+         WHERE tenant_id = $1
+         GROUP BY driver_id
+       ) latest ON latest.driver_id = s1.driver_id AND latest.max_date = s1.snapshot_date
+       WHERE s1.tenant_id = $1
+     ) perf ON perf.driver_id = d.id
      LEFT JOIN assets a ON a.id = d.assigned_asset_id
-     WHERE s.tenant_id = $1
-     ORDER BY s.snapshot_date DESC, s.safety_score ASC
-     LIMIT 200`,
+     WHERE d.tenant_id = $1 AND d.deleted_at IS NULL
+     ORDER BY perf.safety_score ASC`,
     [req.tenantId]
   );
   return success(res, toCamelRows(rows));
@@ -91,7 +127,9 @@ router.put('/penalties', requireTenant, mod, requireWriteAccess, async (req: Ten
       goodMin: req.body?.goodMin != null ? Number(req.body.goodMin) : undefined,
       badMin: req.body?.badMin != null ? Number(req.body.badMin) : undefined,
     });
-    return success(res, config);
+    const days = Math.min(90, Math.max(7, parseInt(String(req.body?.days || '30'), 10) || 30));
+    const recompute = await DriverScoringService.recomputeTenant(String(req.tenantId), days);
+    return success(res, { ...config, recompute });
   } catch (e) {
     return error(res, (e as Error).message);
   }
@@ -155,6 +193,85 @@ router.get('/violations-feed', requireTenant, mod, async (req: TenantRequest, re
     return tb - ta;
   });
   return success(res, combined.slice(0, limit));
+});
+
+router.get('/:id', requireTenant, mod, async (req: TenantRequest, res) => {
+  await DriverScoringService.ensureSchema();
+  const days = Math.min(90, Math.max(1, parseInt(String(req.query.days || '30'), 10) || 30));
+  const { rows } = await query(
+    `SELECT d.*, a.name as assigned_asset_name, a.registration_plate as assigned_asset_plate,
+            perf.safety_score, perf.grade, perf.penalty_points, perf.violations_count,
+            perf.trips_count, perf.total_distance, perf.snapshot_date
+     FROM drivers d
+     LEFT JOIN assets a ON a.id = d.assigned_asset_id
+     ${LATEST_PERF_JOIN}
+     WHERE d.id = $2 AND d.tenant_id = $1 AND d.deleted_at IS NULL`,
+    [req.tenantId, req.params.id]
+  );
+  if (!rows[0]) return error(res, 'Driver not found', 404);
+
+  const d = rows[0] as {
+    id: string;
+    name: string;
+    assigned_asset_id: string | null;
+  };
+  const config = await DriverScoringService.getConfig(String(req.tenantId));
+  const sinceIso = new Date(Date.now() - days * 86400000).toISOString().slice(0, 19).replace('T', ' ');
+
+  const { rows: ecos } = await query<{ violation_type: string }>(
+    `SELECT violation_type FROM eco_driving_violations
+     WHERE tenant_id = $1 AND occurred_at >= $2
+       AND (
+         driver_id = $3
+         OR (driver_name IS NOT NULL AND LOWER(driver_name) = LOWER($4))
+         OR ($5::text IS NOT NULL AND asset_id = $5)
+       )`,
+    [req.tenantId, sinceIso, d.id, d.name, d.assigned_asset_id]
+  ).catch(() => ({ rows: [] as Array<{ violation_type: string }> }));
+
+  const { rows: alertRows } = d.assigned_asset_id
+    ? await query<{ type: string }>(
+        `SELECT type FROM alerts
+         WHERE tenant_id = $1 AND occurred_at >= $2 AND asset_id = $3
+           AND (
+             type IN ('fatigue', 'camera', 'video', 'unauthorized', 'overspeed', 'speeding')
+             OR LOWER(COALESCE(type, '')) LIKE '%fatigue%'
+             OR LOWER(COALESCE(type, '')) LIKE '%camera%'
+             OR LOWER(COALESCE(type, '')) LIKE '%video%'
+             OR LOWER(COALESCE(type, '')) LIKE '%unauth%'
+             OR video_url IS NOT NULL
+           )
+         LIMIT 500`,
+        [req.tenantId, sinceIso, d.assigned_asset_id]
+      ).catch(() => ({ rows: [] as Array<{ type: string }> }))
+    : { rows: [] as Array<{ type: string }> };
+
+  const types = [
+    ...ecos.map((e) => e.violation_type),
+    ...alertRows.map((a) => a.type || 'camera'),
+  ];
+  const scored = DriverScoringService.scoreViolations(config, types);
+
+  const driver = toCamelRows(rows)[0] as Record<string, unknown>;
+  return success(res, {
+    ...driver,
+    violationBreakdown: scored.byType,
+    projectedScore: scored.score,
+    projectedGrade: scored.grade,
+    scoringWindowDays: days,
+  });
+});
+
+router.post('/:id/recompute-score', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
+  try {
+    const days = Math.min(90, Math.max(7, parseInt(String(req.body?.days || '30'), 10) || 30));
+    const result = await DriverScoringService.recomputeDriver(String(req.tenantId), String(req.params.id), days);
+    return success(res, result);
+  } catch (e) {
+    const msg = (e as Error).message || '';
+    if (/not found/i.test(msg)) return error(res, msg, 404);
+    return error(res, msg);
+  }
 });
 
 router.get('/:id/violations', requireTenant, mod, async (req: TenantRequest, res) => {
@@ -244,7 +361,12 @@ router.post('/', requireTenant, mod, requireWriteAccess, async (req: TenantReque
         licenseExpiryDate || null,
       ]
     );
-    return success(res, toCamelRows(rows)[0], 201);
+    const created = toCamelRows(rows)[0] as { id: string };
+    const score = await DriverScoringService.recomputeDriver(String(req.tenantId), created.id, 30).catch(
+      () => null
+    );
+    await DriverScoringService.syncLicenseExpiryAlerts(String(req.tenantId)).catch(() => undefined);
+    return success(res, { ...created, ...(score ? { safetyScore: score.score, grade: score.grade } : {}) }, 201);
   } catch (e) {
     const msg = (e as Error).message || '';
     if (/duplicate|unique|uq_drivers/i.test(msg)) {
@@ -319,7 +441,15 @@ router.patch('/:id', requireTenant, mod, requireWriteAccess, async (req: TenantR
       ]
     );
     if (!rows[0]) return error(res, 'Driver not found', 404);
-    return success(res, toCamelRows(rows)[0]);
+    const updated = toCamelRows(rows)[0] as { id: string };
+    const score = await DriverScoringService.recomputeDriver(String(req.tenantId), updated.id, 30).catch(
+      () => null
+    );
+    await DriverScoringService.syncLicenseExpiryAlerts(String(req.tenantId)).catch(() => undefined);
+    return success(res, {
+      ...updated,
+      ...(score ? { safetyScore: score.score, grade: score.grade } : {}),
+    });
   } catch (e) {
     const msg = (e as Error).message || '';
     if (/foreign key|fk_drivers_asset/i.test(msg)) {

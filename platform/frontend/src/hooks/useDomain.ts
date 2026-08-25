@@ -319,11 +319,18 @@ export function useReportTypes() {
   return useQuery({ queryKey: ['reportTypes'], queryFn: () => clientApi.getReportTypes() });
 }
 
+export function invalidateDriverQueries(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ['drivers'] });
+  qc.invalidateQueries({ queryKey: ['driverStats'] });
+  qc.invalidateQueries({ queryKey: ['driverPerformance'] });
+  qc.invalidateQueries({ queryKey: ['driverViolationsFeed'] });
+}
+
 export function useCreateDriver() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: clientApi.createDriver,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['drivers'] }),
+    onSuccess: () => invalidateDriverQueries(qc),
   });
 }
 
@@ -332,7 +339,15 @@ export function useUpdateDriver() {
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data: Parameters<typeof clientApi.updateDriver>[1] }) =>
       clientApi.updateDriver(id, data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['drivers'] }),
+    onSuccess: () => invalidateDriverQueries(qc),
+  });
+}
+
+export function useDeleteDriver() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: clientApi.deleteDriver,
+    onSuccess: () => invalidateDriverQueries(qc),
   });
 }
 

@@ -333,99 +333,153 @@ export class DriverScoringService {
     };
   }
 
-  /** Recompute today's performance snapshots for all drivers in a tenant. */
-  static async recomputeTenant(tenantId: string, days = 30): Promise<{ drivers: number }> {
+  /** Link eco violations to a driver by name or assigned asset when driver_id is unset. */
+  static async linkEcoViolationsForDriver(
+    tenantId: string,
+    driver: { id: string; name: string; assigned_asset_id: string | null }
+  ): Promise<number> {
+    await this.ensureSchema();
+    const { rowCount } = await query(
+      `UPDATE eco_driving_violations
+       SET driver_id = $3
+       WHERE tenant_id = $1
+         AND driver_id IS NULL
+         AND (
+           (driver_name IS NOT NULL AND LOWER(driver_name) = LOWER($2))
+           OR ($4::text IS NOT NULL AND asset_id = $4)
+         )`,
+      [tenantId, driver.name, driver.id, driver.assigned_asset_id]
+    ).catch(() => ({ rowCount: 0 }));
+    return rowCount || 0;
+  }
+
+  /** Recompute today's snapshot for one driver from eco + alert violations. */
+  static async recomputeDriver(
+    tenantId: string,
+    driverId: string,
+    days = 30
+  ): Promise<{
+    driverId: string;
+    score: number;
+    grade: DriverGrade;
+    penaltyPoints: number;
+    violationsCount: number;
+    byType: Record<string, number>;
+  }> {
     await this.ensureSchema();
     const config = await this.getConfig(tenantId);
-    const { rows: drivers } = await query<{
+    const { rows: driverRows } = await query<{
       id: string;
       name: string;
       assigned_asset_id: string | null;
     }>(
       `SELECT id, name, assigned_asset_id FROM drivers
-       WHERE tenant_id = $1 AND deleted_at IS NULL`,
-      [tenantId]
+       WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      [tenantId, driverId]
     );
+    const d = driverRows[0];
+    if (!d) throw new Error('Driver not found');
+
+    await this.linkEcoViolationsForDriver(tenantId, d);
 
     const since = new Date();
     since.setDate(since.getDate() - Math.max(1, days));
     const sinceIso = since.toISOString().slice(0, 19).replace('T', ' ');
 
+    const { rows: ecos } = await query<{ violation_type: string }>(
+      `SELECT violation_type FROM eco_driving_violations
+       WHERE tenant_id = $1 AND occurred_at >= $2
+         AND (
+           driver_id = $3
+           OR (driver_name IS NOT NULL AND LOWER(driver_name) = LOWER($4))
+           OR ($5::text IS NOT NULL AND asset_id = $5)
+         )`,
+      [tenantId, sinceIso, d.id, d.name, d.assigned_asset_id]
+    );
+
+    const { rows: alertRows } = d.assigned_asset_id
+      ? await query<{ type: string }>(
+          `SELECT type FROM alerts
+           WHERE tenant_id = $1 AND occurred_at >= $2 AND asset_id = $3
+             AND (
+               type IN ('fatigue', 'camera', 'video', 'unauthorized', 'overspeed', 'speeding')
+               OR LOWER(COALESCE(type, '')) LIKE '%fatigue%'
+               OR LOWER(COALESCE(type, '')) LIKE '%camera%'
+               OR LOWER(COALESCE(type, '')) LIKE '%video%'
+               OR LOWER(COALESCE(type, '')) LIKE '%unauth%'
+               OR video_url IS NOT NULL
+             )
+           LIMIT 500`,
+          [tenantId, sinceIso, d.assigned_asset_id]
+        ).catch(() => ({ rows: [] as Array<{ type: string }> }))
+      : { rows: [] as Array<{ type: string }> };
+
+    const types = [
+      ...ecos.map((e) => e.violation_type),
+      ...alertRows.map((a) => a.type || 'camera'),
+    ];
+    const scored = this.scoreViolations(config, types);
+
+    const { rows: trips } = await query<{
+      trips_count: number;
+      total_distance: number;
+    }>(
+      `SELECT COUNT(*)::int AS trips_count, COALESCE(SUM(mileage), 0)::float AS total_distance
+       FROM trip_summaries
+       WHERE tenant_id = $1 AND departure_time >= $2
+         AND (
+           ($3::text IS NOT NULL AND asset_id = $3)
+           OR LOWER(unit_name) LIKE CONCAT('%', LOWER($4), '%')
+         )`,
+      [tenantId, sinceIso, d.assigned_asset_id, d.name.split(/\s+/)[0] || d.name]
+    ).catch(() => ({ rows: [{ trips_count: 0, total_distance: 0 }] }));
+
+    const today = new Date().toISOString().slice(0, 10);
+    await query(
+      `INSERT INTO driver_performance_snapshots
+         (tenant_id, driver_id, snapshot_date, safety_score, grade, penalty_points,
+          fuel_efficiency, on_time_rate, violations_count, trips_count, total_distance)
+       VALUES ($1, $2, $3, $4, $5, $6, 0, 0, $7, $8, $9)
+       ON DUPLICATE KEY UPDATE
+         safety_score = VALUES(safety_score),
+         grade = VALUES(grade),
+         penalty_points = VALUES(penalty_points),
+         violations_count = VALUES(violations_count),
+         trips_count = VALUES(trips_count),
+         total_distance = VALUES(total_distance)`,
+      [
+        tenantId,
+        d.id,
+        today,
+        scored.score,
+        scored.grade,
+        scored.penaltyPoints,
+        types.length,
+        trips[0]?.trips_count || 0,
+        trips[0]?.total_distance || 0,
+      ]
+    );
+
+    return {
+      driverId: d.id,
+      score: scored.score,
+      grade: scored.grade,
+      penaltyPoints: scored.penaltyPoints,
+      violationsCount: types.length,
+      byType: scored.byType,
+    };
+  }
+
+  /** Recompute today's performance snapshots for all drivers in a tenant. */
+  static async recomputeTenant(tenantId: string, days = 30): Promise<{ drivers: number }> {
+    await this.ensureSchema();
+    const { rows: drivers } = await query<{ id: string }>(
+      `SELECT id FROM drivers WHERE tenant_id = $1 AND deleted_at IS NULL`,
+      [tenantId]
+    );
+
     for (const d of drivers) {
-      const { rows: ecos } = await query<{ violation_type: string }>(
-        `SELECT violation_type FROM eco_driving_violations
-         WHERE tenant_id = $1 AND occurred_at >= $2
-           AND (
-             driver_id = $3
-             OR (driver_name IS NOT NULL AND LOWER(driver_name) = LOWER($4))
-             OR ($5::text IS NOT NULL AND asset_id = $5)
-           )`,
-        [tenantId, sinceIso, d.id, d.name, d.assigned_asset_id]
-      );
-
-      // Camera / fatigue / surveillance alerts scoped to this driver's assigned asset
-      const { rows: alertRows } = d.assigned_asset_id
-        ? await query<{ type: string }>(
-            `SELECT type FROM alerts
-             WHERE tenant_id = $1 AND occurred_at >= $2 AND asset_id = $3
-               AND (
-                 type IN ('fatigue', 'camera', 'video', 'unauthorized', 'overspeed', 'speeding')
-                 OR LOWER(COALESCE(type, '')) LIKE '%fatigue%'
-                 OR LOWER(COALESCE(type, '')) LIKE '%camera%'
-                 OR LOWER(COALESCE(type, '')) LIKE '%video%'
-                 OR LOWER(COALESCE(type, '')) LIKE '%unauth%'
-                 OR video_url IS NOT NULL
-               )
-             LIMIT 500`,
-            [tenantId, sinceIso, d.assigned_asset_id]
-          ).catch(() => ({ rows: [] as Array<{ type: string }> }))
-        : { rows: [] as Array<{ type: string }> };
-
-      const types = [
-        ...ecos.map((e) => e.violation_type),
-        ...alertRows.map((a) => a.type || 'camera'),
-      ];
-      const scored = this.scoreViolations(config, types);
-
-      const { rows: trips } = await query<{
-        trips_count: number;
-        total_distance: number;
-      }>(
-        `SELECT COUNT(*)::int AS trips_count, COALESCE(SUM(mileage), 0)::float AS total_distance
-         FROM trip_summaries
-         WHERE tenant_id = $1 AND departure_time >= $2
-           AND (
-             ($3::text IS NOT NULL AND asset_id = $3)
-             OR LOWER(unit_name) LIKE CONCAT('%', LOWER($4), '%')
-           )`,
-        [tenantId, sinceIso, d.assigned_asset_id, d.name.split(/\s+/)[0] || d.name]
-      ).catch(() => ({ rows: [{ trips_count: 0, total_distance: 0 }] }));
-
-      const today = new Date().toISOString().slice(0, 10);
-      await query(
-        `INSERT INTO driver_performance_snapshots
-           (tenant_id, driver_id, snapshot_date, safety_score, grade, penalty_points,
-            fuel_efficiency, on_time_rate, violations_count, trips_count, total_distance)
-         VALUES ($1, $2, $3, $4, $5, $6, 0, 0, $7, $8, $9)
-         ON DUPLICATE KEY UPDATE
-           safety_score = VALUES(safety_score),
-           grade = VALUES(grade),
-           penalty_points = VALUES(penalty_points),
-           violations_count = VALUES(violations_count),
-           trips_count = VALUES(trips_count),
-           total_distance = VALUES(total_distance)`,
-        [
-          tenantId,
-          d.id,
-          today,
-          scored.score,
-          scored.grade,
-          scored.penaltyPoints,
-          types.length,
-          trips[0]?.trips_count || 0,
-          trips[0]?.total_distance || 0,
-        ]
-      );
+      await this.recomputeDriver(tenantId, d.id, days);
     }
 
     return { drivers: drivers.length };

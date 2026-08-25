@@ -264,6 +264,20 @@ export interface Driver {
   assignedAssetPlate?: string;
   fuelCardNumber?: string | null;
   hireDate?: string | null;
+  safetyScore?: number | null;
+  grade?: string | null;
+  penaltyPoints?: number | null;
+  violationsCount?: number | null;
+  tripsCount?: number | null;
+  totalDistance?: number | null;
+  snapshotDate?: string | null;
+}
+
+export interface DriverDetail extends Driver {
+  violationBreakdown?: Record<string, number>;
+  projectedScore?: number;
+  projectedGrade?: string;
+  scoringWindowDays?: number;
 }
 
 export interface DriverStats {
@@ -275,6 +289,10 @@ export interface DriverStats {
   expiredLicenses?: number;
   expiring7dLicenses?: number;
   noExpiryLicenses?: number;
+  gradeGood?: number;
+  gradeBad?: number;
+  gradeUgly?: number;
+  scored?: number;
 }
 
 export interface DriverPenaltyConfig {
@@ -661,6 +679,8 @@ export const clientApi = {
 
   // Drivers
   getDrivers: () => api<Driver[]>('/api/client/drivers'),
+  getDriver: (id: string, days = 30) =>
+    api<DriverDetail>(`/api/client/drivers/${id}?days=${days}`),
   getDriverStats: () => api<DriverStats>('/api/client/drivers/stats'),
   getDriverPerformance: () => api<DriverPerformanceRow[]>('/api/client/drivers/performance'),
   getDriverPenaltyConfig: () => api<DriverPenaltyConfig>('/api/client/drivers/penalties'),
@@ -671,6 +691,18 @@ export const clientApi = {
     }),
   recomputeDriverScores: (days = 30) =>
     api<{ drivers: number; snapshots: DriverPerformanceRow[] }>('/api/client/drivers/recompute-scores', {
+      method: 'POST',
+      body: JSON.stringify({ days }),
+    }),
+  recomputeDriverScore: (id: string, days = 30) =>
+    api<{
+      driverId: string;
+      score: number;
+      grade: string;
+      penaltyPoints: number;
+      violationsCount: number;
+      byType: Record<string, number>;
+    }>(`/api/client/drivers/${id}/recompute-score`, {
       method: 'POST',
       body: JSON.stringify({ days }),
     }),

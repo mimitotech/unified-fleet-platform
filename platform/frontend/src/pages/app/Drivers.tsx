@@ -1,12 +1,14 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AppLayout } from '@/components/app/AppLayout';
 import { MetricCard } from '@/components/app/MetricCard';
 import {
   useCreateDriver,
+  useDeleteDriver,
   useDrivers,
   useDriverStats,
   useUpdateDriver,
+  invalidateDriverQueries,
 } from '@/hooks/useDomain';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
@@ -23,6 +25,13 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle,
+} from '@/components/ui/sheet';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { LoadingButton } from '@/components/shared/LoadingButton';
 import { FleetUnitSelect } from '@/components/fleet/FleetUnitSelect';
 import { DriversModuleReports } from '@/components/reports/moduleReportPanels';
@@ -37,6 +46,7 @@ import { safeArray } from '@/lib/safeArray';
 import { CHART, ALERT_SEVERITY } from '@/lib/chartColors';
 import {
   Users, UserCheck, Car, Coffee, FileText, Plus, Pencil, RefreshCw, Settings2,
+  MoreHorizontal, Trash2, Eye, Award,
 } from 'lucide-react';
 import {
   Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -66,6 +76,7 @@ const emptyForm = {
   assignedAssetName: '',
   assignedAssetPlate: '',
   fuelCardNumber: '',
+  hireDate: '',
 };
 
 function licenseState(expiryRaw?: string | null): { label: string; className: string } | null {
@@ -92,6 +103,9 @@ function downloadDriversCsv(rows: Driver[]) {
     'Status',
     'FuelCardNumber',
     'AssignedVehicle',
+    'SafetyScore',
+    'Grade',
+    'Violations',
   ];
   const csvRows = rows.map((d) => {
     const ls = d.licenseExpiryDate ? licenseState(d.licenseExpiryDate)?.label || '' : 'No expiry date';
@@ -106,6 +120,9 @@ function downloadDriversCsv(rows: Driver[]) {
       d.status || '',
       d.fuelCardNumber || '',
       d.assignedAssetPlate || d.assignedAssetName || '',
+      d.safetyScore != null ? String(d.safetyScore) : '',
+      d.grade || '',
+      d.violationsCount != null ? String(d.violationsCount) : '',
     ];
   });
   const escape = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
@@ -125,6 +142,8 @@ export default function Drivers() {
   const { data: stats } = useDriverStats();
   const createDriver = useCreateDriver();
   const updateDriver = useUpdateDriver();
+  const deleteDriver = useDeleteDriver();
+  const autoScoredRef = useRef(false);
 
   const { data: performance, isLoading: perfLoading } = useQuery({
     queryKey: ['driverPerformance'],
@@ -140,6 +159,13 @@ export default function Drivers() {
   const [form, setForm] = useState(emptyForm);
   const [penaltyDraft, setPenaltyDraft] = useState<DriverPenaltyConfig | null>(null);
   const [selectedDriverId, setSelectedDriverId] = useState<string>('');
+  const [detailOpen, setDetailOpen] = useState(false);
+
+  const { data: driverDetail, isLoading: detailLoading } = useQuery({
+    queryKey: ['driverDetail', selectedDriverId],
+    queryFn: () => clientApi.getDriver(selectedDriverId, 30),
+    enabled: Boolean(selectedDriverId) && detailOpen,
+  });
 
   const { data: violations } = useQuery({
     queryKey: ['driverViolations', selectedDriverId],
@@ -155,9 +181,19 @@ export default function Drivers() {
     mutationFn: () => clientApi.recomputeDriverScores(30),
     onSuccess: (data) => {
       notify.success('Scores updated', `${data.drivers} drivers scored from eco / camera violations`);
-      qc.invalidateQueries({ queryKey: ['driverPerformance'] });
+      invalidateDriverQueries(qc);
     },
     onError: (e) => notify.error('Score update failed', (e as Error).message),
+  });
+
+  const recomputeOne = useMutation({
+    mutationFn: (id: string) => clientApi.recomputeDriverScore(id, 30),
+    onSuccess: (data) => {
+      notify.success('Driver scored', `Score ${data.score} · ${data.grade}`);
+      invalidateDriverQueries(qc);
+      qc.invalidateQueries({ queryKey: ['driverDetail', data.driverId] });
+    },
+    onError: (e) => notify.error('Score failed', (e as Error).message),
   });
 
   const savePenalties = useMutation({
@@ -168,12 +204,27 @@ export default function Drivers() {
         goodMin: cfg.goodMin,
         badMin: cfg.badMin,
       }),
-    onSuccess: () => {
-      notify.success('Penalty rules saved');
-      qc.invalidateQueries({ queryKey: ['driverPenalties'] });
+    onSuccess: (data) => {
+      const count = (data as { recompute?: { drivers?: number } }).recompute?.drivers;
+      notify.success(
+        'Penalty rules saved',
+        count != null ? `${count} driver scores recalculated` : undefined
+      );
+      invalidateDriverQueries(qc);
     },
     onError: (e) => notify.error('Could not save penalties', (e as Error).message),
   });
+
+  useEffect(() => {
+    if (autoScoredRef.current || isLoading || !drivers?.length) return;
+    const hasScore =
+      drivers.some((d) => d.safetyScore != null) ||
+      safeArray(performance).length > 0;
+    if (!hasScore && !recompute.isPending) {
+      autoScoredRef.current = true;
+      recompute.mutate();
+    }
+  }, [drivers, isLoading, performance, recompute]);
 
   const latestScores = useMemo(() => {
     const rows = safeArray(performance) as DriverPerformanceRow[];
@@ -190,19 +241,64 @@ export default function Drivers() {
   const scoreByDriver = useMemo(() => {
     const m = new Map<string, DriverPerformanceRow>();
     for (const r of latestScores) m.set(r.driverId, r);
+    for (const d of safeArray(drivers) as Driver[]) {
+      if (!m.has(d.id) && d.safetyScore != null) {
+        m.set(d.id, {
+          id: '',
+          driverId: d.id,
+          driverName: d.name,
+          snapshotDate: d.snapshotDate || '',
+          safetyScore: d.safetyScore,
+          grade: d.grade,
+          penaltyPoints: d.penaltyPoints,
+          violationsCount: d.violationsCount || 0,
+          tripsCount: d.tripsCount || 0,
+          totalDistance: d.totalDistance || 0,
+          assignedAssetPlate: d.assignedAssetPlate,
+          assignedAssetName: d.assignedAssetName,
+        });
+      }
+    }
     return m;
-  }, [latestScores]);
+  }, [latestScores, drivers]);
+
+  const rosterScores = useMemo(() => {
+    const fromPerf = latestScores;
+    if (fromPerf.length) return fromPerf;
+    return (safeArray(drivers) as Driver[])
+      .filter((d) => d.safetyScore != null)
+      .map((d) => ({
+        id: '',
+        driverId: d.id,
+        driverName: d.name,
+        snapshotDate: d.snapshotDate || '',
+        safetyScore: d.safetyScore!,
+        grade: d.grade,
+        penaltyPoints: d.penaltyPoints,
+        violationsCount: d.violationsCount || 0,
+        tripsCount: d.tripsCount || 0,
+        totalDistance: d.totalDistance || 0,
+      }))
+      .sort((a, b) => a.safetyScore - b.safetyScore);
+  }, [latestScores, drivers]);
 
   const gradeCounts = useMemo(() => {
+    if (stats?.gradeGood != null || stats?.gradeBad != null || stats?.gradeUgly != null) {
+      return {
+        good: stats.gradeGood ?? 0,
+        bad: stats.gradeBad ?? 0,
+        ugly: stats.gradeUgly ?? 0,
+      };
+    }
     const c = { good: 0, bad: 0, ugly: 0 };
-    for (const r of latestScores) {
+    for (const r of rosterScores) {
       const g = String(r.grade || '').toLowerCase();
       if (g === 'good' || g === 'bad' || g === 'ugly') c[g] += 1;
     }
     return c;
-  }, [latestScores]);
+  }, [stats, rosterScores]);
 
-  const chartData = latestScores.slice(0, 12).map((r) => ({
+  const chartData = rosterScores.slice(0, 12).map((r) => ({
     name: r.driverName?.split(/\s+/)[0] || 'Driver',
     score: Number(r.safetyScore) || 0,
     grade: r.grade || 'bad',
@@ -212,6 +308,11 @@ export default function Drivers() {
     setEditing(null);
     setForm(emptyForm);
     setOpen(true);
+  };
+
+  const openDetail = (d: Driver) => {
+    setSelectedDriverId(d.id);
+    setDetailOpen(true);
   };
 
   const openEdit = (d: Driver) => {
@@ -228,8 +329,23 @@ export default function Drivers() {
       assignedAssetName: d.assignedAssetName || '',
       assignedAssetPlate: d.assignedAssetPlate || '',
       fuelCardNumber: d.fuelCardNumber || '',
+      hireDate: d.hireDate ? String(d.hireDate).slice(0, 10) : '',
     });
     setOpen(true);
+  };
+
+  const confirmDelete = (d: Driver) => {
+    if (!window.confirm(`Remove ${d.name} from the roster? This cannot be undone.`)) return;
+    deleteDriver.mutate(d.id, {
+      onSuccess: () => {
+        notify.success('Driver removed');
+        if (selectedDriverId === d.id) {
+          setDetailOpen(false);
+          setSelectedDriverId('');
+        }
+      },
+      onError: (e) => notify.error('Delete failed', (e as Error).message),
+    });
   };
 
   const submit = () => {
@@ -249,6 +365,7 @@ export default function Drivers() {
       assignedAssetName: form.assignedAssetName || null,
       assignedAssetPlate: form.assignedAssetPlate || null,
       fuelCardNumber: form.fuelCardNumber.trim() || null,
+      hireDate: form.hireDate || null,
     } as Partial<Driver> & {
       assignedAssetName?: string | null;
       assignedAssetPlate?: string | null;
@@ -388,9 +505,34 @@ export default function Drivers() {
                       </TableCell>
                       <TableCell>{d.assignedAssetPlate || d.assignedAssetName || '—'}</TableCell>
                       <TableCell>
-                        <Button size="sm" variant="ghost" onClick={() => openEdit(d)}>
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button size="sm" variant="ghost">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => openDetail(d)}>
+                              <Eye className="h-3.5 w-3.5 mr-2" /> View profile
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openEdit(d)}>
+                              <Pencil className="h-3.5 w-3.5 mr-2" /> Edit
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => recomputeOne.mutate(d.id)}
+                              disabled={recomputeOne.isPending}
+                            >
+                              <Award className="h-3.5 w-3.5 mr-2" /> Recompute score
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onClick={() => confirmDelete(d)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 mr-2" /> Remove
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                           </>
                         );
@@ -416,7 +558,7 @@ export default function Drivers() {
               <MetricCard title="Good" value={gradeCounts.good} icon={UserCheck} variant="success" size="xxs" />
               <MetricCard title="Bad" value={gradeCounts.bad} icon={Car} variant="warning" size="xxs" />
               <MetricCard title="Ugly" value={gradeCounts.ugly} icon={Coffee} variant="destructive" size="xxs" />
-              <MetricCard title="Scored" value={latestScores.length} icon={Users} variant="primary" size="xxs" />
+              <MetricCard title="Scored" value={stats?.scored ?? rosterScores.length} icon={Users} variant="primary" size="xxs" />
             </div>
             <LoadingButton
               size="sm"
@@ -475,7 +617,7 @@ export default function Drivers() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {latestScores.map((r) => (
+                  {rosterScores.map((r) => (
                     <TableRow key={r.driverId}>
                       <TableCell className="font-medium">{r.driverName}</TableCell>
                       <TableCell>{r.safetyScore}</TableCell>
@@ -486,13 +628,20 @@ export default function Drivers() {
                       </TableCell>
                       <TableCell>{r.violationsCount}</TableCell>
                       <TableCell>
-                        <Button size="sm" variant="outline" onClick={() => setSelectedDriverId(r.driverId)}>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setSelectedDriverId(r.driverId);
+                            setDetailOpen(true);
+                          }}
+                        >
                           Details
                         </Button>
                       </TableCell>
                     </TableRow>
                   ))}
-                  {!latestScores.length && (
+                  {!rosterScores.length && (
                     <TableRow>
                       <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
                         No scores yet — click Recompute after eco-driving data is synced
@@ -675,8 +824,18 @@ export default function Drivers() {
                   loading={savePenalties.isPending}
                   onClick={() => cfg && savePenalties.mutate(cfg)}
                 >
-                  Save penalty rules
+                  Save &amp; recalculate scores
                 </LoadingButton>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setPenaltyDraft(null);
+                    qc.invalidateQueries({ queryKey: ['driverPenalties'] });
+                  }}
+                >
+                  Reset to saved
+                </Button>
               </>
             ) : (
               <Skeleton className="h-32" />
@@ -770,6 +929,31 @@ export default function Drivers() {
                   }))
                 }
               />
+              {form.assignedAssetId && (
+                <Button
+                  type="button"
+                  variant="link"
+                  className="h-auto p-0 mt-1 text-xs"
+                  onClick={() =>
+                    setForm((f) => ({
+                      ...f,
+                      assignedAssetId: '',
+                      assignedAssetName: '',
+                      assignedAssetPlate: '',
+                    }))
+                  }
+                >
+                  Clear vehicle assignment
+                </Button>
+              )}
+            </div>
+            <div>
+              <Label>Hire date</Label>
+              <Input
+                type="date"
+                value={form.hireDate}
+                onChange={(e) => setForm((f) => ({ ...f, hireDate: e.target.value }))}
+              />
             </div>
           </div>
           <DialogFooter>
@@ -783,6 +967,140 @@ export default function Drivers() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Sheet open={detailOpen} onOpenChange={setDetailOpen}>
+        <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>{driverDetail?.name || 'Driver profile'}</SheetTitle>
+            <SheetDescription>
+              License, vehicle assignment, safety score, and linked violations
+            </SheetDescription>
+          </SheetHeader>
+          {detailLoading ? (
+            <Skeleton className="h-64 mt-4" />
+          ) : driverDetail ? (
+            <div className="space-y-5 mt-4">
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <p className="text-muted-foreground text-xs">License</p>
+                  <p className="font-medium">{driverDetail.licenseNumber}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Status</p>
+                  <Badge className={statusColors[driverDetail.status] || ''}>{driverDetail.status}</Badge>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Phone</p>
+                  <p>{driverDetail.phone || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Vehicle</p>
+                  <p>{driverDetail.assignedAssetPlate || driverDetail.assignedAssetName || 'Unassigned'}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Safety score</p>
+                  <p className="font-semibold text-lg">
+                    {driverDetail.safetyScore ?? driverDetail.projectedScore ?? '—'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Grade</p>
+                  {(driverDetail.grade || driverDetail.projectedGrade) ? (
+                    <Badge
+                      className={
+                        gradeColors[
+                          String(driverDetail.grade || driverDetail.projectedGrade).toLowerCase()
+                        ] || ''
+                      }
+                    >
+                      {driverDetail.grade || driverDetail.projectedGrade}
+                    </Badge>
+                  ) : (
+                    '—'
+                  )}
+                </div>
+              </div>
+
+              {driverDetail.violationBreakdown &&
+                Object.keys(driverDetail.violationBreakdown).length > 0 && (
+                  <div>
+                    <h4 className="font-medium text-sm mb-2">Penalty breakdown (30 days)</h4>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      {Object.entries(driverDetail.violationBreakdown).map(([k, n]) => (
+                        <div key={k} className="flex justify-between border rounded px-2 py-1">
+                          <span className="capitalize">{k.replace(/_/g, ' ')}</span>
+                          <span className="font-medium">{n}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+              <div className="flex flex-wrap gap-2">
+                <LoadingButton
+                  size="sm"
+                  loading={recomputeOne.isPending}
+                  onClick={() => recomputeOne.mutate(driverDetail.id)}
+                >
+                  <RefreshCw className="h-3.5 w-3.5 mr-1" />
+                  Recompute score
+                </LoadingButton>
+                <Button size="sm" variant="outline" onClick={() => openEdit(driverDetail)}>
+                  <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-destructive"
+                  onClick={() => confirmDelete(driverDetail)}
+                >
+                  <Trash2 className="h-3.5 w-3.5 mr-1" /> Remove
+                </Button>
+              </div>
+
+              <div>
+                <h4 className="font-medium text-sm mb-2">Violations (30 days)</h4>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>When</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Source</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(safeArray(violations) as Array<{
+                      id: string;
+                      occurredAt?: string;
+                      violationType: string;
+                      source?: string;
+                    }>).slice(0, 15).map((v) => (
+                      <TableRow key={v.id}>
+                        <TableCell className="text-xs">
+                          {v.occurredAt ? new Date(v.occurredAt).toLocaleString() : '—'}
+                        </TableCell>
+                        <TableCell>{String(v.violationType || '').replace(/_/g, ' ')}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">
+                            {v.source === 'alert' ? 'Camera / alert' : 'Eco-driving'}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {!safeArray(violations).length && (
+                      <TableRow>
+                        <TableCell colSpan={3} className="text-center text-muted-foreground py-4 text-xs">
+                          No violations linked — assign a vehicle or sync Wialon eco-driving data
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          ) : null}
+        </SheetContent>
+      </Sheet>
     </AppLayout>
   );
 }

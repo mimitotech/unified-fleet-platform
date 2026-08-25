@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { ModuleReportsShell } from '@/components/reports/ModuleReportsShell';
 import { AlertsReportCharts } from '@/components/reports/AlertsReportCharts';
 import { useFleetUnits } from '@/hooks/useFleetUnits';
 import { useFleetAssetProfile } from '@/hooks/useFleetAssetProfile';
 import { useAlerts } from '@/hooks/useAlerts';
 import { useDrivers, useWorkshopKpis, useInspections, useMaintenanceLogs, useBreakdowns } from '@/hooks/useDomain';
+import { clientApi } from '@/lib/api';
 import { safeArray } from '@/lib/safeArray';
 import { useTenantBranding } from '@/hooks/useTenantBranding';
 import type { DomainChartSpec } from '@/lib/domainReportCharts';
@@ -219,6 +221,10 @@ export function MonitoringModuleReports() {
 
 export function DriversModuleReports() {
   const { data: drivers, refetch, isFetching } = useDrivers();
+  const { data: performance } = useQuery({
+    queryKey: ['driverPerformance'],
+    queryFn: () => clientApi.getDriverPerformance(),
+  });
   const list = safeArray<{
     name?: string;
     status?: string;
@@ -226,18 +232,60 @@ export function DriversModuleReports() {
     phone?: string;
     assignedAssetName?: string;
     assignedAssetPlate?: string;
+    licenseExpiryDate?: string | null;
+    safetyScore?: number | null;
+    grade?: string | null;
+    violationsCount?: number | null;
   }>(drivers);
   const [kind, setKind] = useState('roster');
 
-  const rows = list.map((d) => {
+  const perfByDriver = useMemo(() => {
+    const m = new Map<string, { score: number; grade: string; violations: number }>();
+    for (const p of safeArray(performance) as Array<{
+      driverId?: string;
+      safetyScore?: number;
+      grade?: string;
+      violationsCount?: number;
+    }>) {
+      if (p.driverId) {
+        m.set(p.driverId, {
+          score: p.safetyScore ?? 0,
+          grade: p.grade || '—',
+          violations: p.violationsCount ?? 0,
+        });
+      }
+    }
+    return m;
+  }, [performance]);
+
+  const rows = list.map((d, i) => {
     const assigned = d.assignedAssetPlate || d.assignedAssetName || '';
+    const score = d.safetyScore ?? perfByDriver.get(String((d as { id?: string }).id || ''))?.score;
+    const grade = d.grade ?? perfByDriver.get(String((d as { id?: string }).id || ''))?.grade ?? '—';
+    const violations =
+      d.violationsCount ??
+      perfByDriver.get(String((d as { id?: string }).id || ''))?.violations ??
+      0;
+    let licenseStatus = 'No expiry';
+    if (d.licenseExpiryDate) {
+      const exp = new Date(`${String(d.licenseExpiryDate).slice(0, 10)}T00:00:00`);
+      const days = Math.ceil((exp.getTime() - Date.now()) / 86400000);
+      if (days < 0) licenseStatus = 'Expired';
+      else if (days <= 30) licenseStatus = `Expiring (${days}d)`;
+      else licenseStatus = 'Valid';
+    }
     return {
+      id: String((d as { id?: string }).id || i),
       name: d.name || '—',
       status: d.status || '—',
       license: d.licenseNumber || '—',
       phone: d.phone || '—',
       vehicle: assigned || '—',
       assignment: assigned ? 'Assigned' : 'Unassigned',
+      score: score != null ? String(score) : '—',
+      grade,
+      violations: String(violations),
+      licenseStatus,
       count: 1,
     };
   });
@@ -248,6 +296,12 @@ export function DriversModuleReports() {
     }
     if (kind === 'assignment') {
       return rows.filter((r) => r.assignment === 'Assigned');
+    }
+    if (kind === 'performance') {
+      return rows.filter((r) => r.score !== '—');
+    }
+    if (kind === 'compliance') {
+      return rows.filter((r) => r.licenseStatus !== 'Valid' && r.licenseStatus !== 'No expiry');
     }
     return rows;
   }, [rows, kind]);
@@ -268,32 +322,75 @@ export function DriversModuleReports() {
         { key: 'license', label: 'License' },
       ];
     }
+    if (kind === 'performance') {
+      return [
+        { key: 'name', label: 'Driver' },
+        { key: 'score', label: 'Score' },
+        { key: 'grade', label: 'Grade' },
+        { key: 'violations', label: 'Violations' },
+        { key: 'vehicle', label: 'Vehicle' },
+      ];
+    }
+    if (kind === 'compliance') {
+      return [
+        { key: 'name', label: 'Driver' },
+        { key: 'license', label: 'License' },
+        { key: 'licenseStatus', label: 'License status' },
+        { key: 'status', label: 'Duty status' },
+      ];
+    }
     return [
       { key: 'name', label: 'Driver' },
       { key: 'status', label: 'Status' },
       { key: 'license', label: 'License' },
-      { key: 'phone', label: 'Phone' },
+      { key: 'score', label: 'Score' },
+      { key: 'grade', label: 'Grade' },
       { key: 'vehicle', label: 'Assigned' },
     ];
   }, [kind]);
 
-  const charts: DomainChartSpec = {
-    heading: 'Driver performance · roster analytics',
-    categoryKey: 'status',
-    bar: {
-      title: 'Drivers by status',
-      subtitle: 'Standing bars — roster headcount per duty status',
-      metrics: [{ key: 'count', label: 'Drivers', color: CHART.brand }],
-      topN: 8,
-    },
-    secondary: {
-      type: 'category',
-      title: 'Assignment mix',
-      subtitle: 'Assigned vs unassigned drivers',
-      groupKey: 'assignment',
-      as: 'pie',
-    },
-  };
+  const charts: DomainChartSpec = useMemo(() => {
+    if (kind === 'performance') {
+      return {
+        heading: 'Driver safety scores',
+        categoryKey: 'grade',
+        bar: {
+          title: 'Drivers by grade',
+          subtitle: 'Good / Bad / Ugly distribution',
+          metrics: [{ key: 'count', label: 'Drivers', color: CHART.brand }],
+          topN: 8,
+        },
+        secondary: {
+          type: 'category',
+          title: 'Grade mix',
+          groupKey: 'grade',
+          as: 'pie',
+        },
+      };
+    }
+    return {
+      heading: 'Driver performance · roster analytics',
+      categoryKey: 'status',
+      bar: {
+        title: 'Drivers by status',
+        subtitle: 'Standing bars — roster headcount per duty status',
+        metrics: [{ key: 'count', label: 'Drivers', color: CHART.brand }],
+        topN: 8,
+      },
+      secondary: {
+        type: 'category',
+        title: 'Assignment mix',
+        subtitle: 'Assigned vs unassigned drivers',
+        groupKey: 'assignment',
+        as: 'pie',
+      },
+    };
+  }, [kind]);
+
+  const goodCount = rows.filter((r) => String(r.grade).toLowerCase() === 'good').length;
+  const atRiskLicenses = rows.filter(
+    (r) => r.licenseStatus === 'Expired' || String(r.licenseStatus).startsWith('Expiring')
+  ).length;
 
   return (
     <ModuleReportsShell
@@ -305,15 +402,17 @@ export function DriversModuleReports() {
       onRun={() => void refetch()}
       running={isFetching}
       reports={[
-        { id: 'roster', title: 'Driver roster', blurb: 'Full roster with licenses and assignments.' },
+        { id: 'roster', title: 'Driver roster', blurb: 'Full roster with scores and assignments.' },
+        { id: 'performance', title: 'Safety scores', blurb: 'Good / Bad / Ugly grades and violation counts.' },
+        { id: 'compliance', title: 'License compliance', blurb: 'Expired and expiring permits.' },
         { id: 'availability', title: 'Availability', blurb: 'Status snapshot for planning.' },
-        { id: 'assignment', title: 'Assignments', blurb: 'Drivers linked to assets.' },
+        { id: 'assignment', title: 'Assignments', blurb: 'Drivers linked to fleet assets.' },
       ]}
       kpis={[
         { label: 'Drivers', value: list.length },
-        { label: 'Available', value: list.filter((d) => d.status === 'available').length },
-        { label: 'Driving', value: list.filter((d) => d.status === 'driving').length },
-        { label: 'Off duty', value: list.filter((d) => d.status === 'off-duty').length },
+        { label: 'Good grade', value: goodCount },
+        { label: 'License at risk', value: atRiskLicenses },
+        { label: 'Assigned', value: rows.filter((r) => r.assignment === 'Assigned').length },
       ]}
       columns={columns}
       rows={filteredRows}
