@@ -4,6 +4,7 @@ import { logger } from '../config/logger.js';
 import { getPublicBaseUrl } from '../utils/publicUrl.js';
 import { isValidEmail, normalizeEmail } from './UserCreateService.js';
 import { invokePhpMailer, isPhpMailerRelayInstalled } from './PhpMailerTransport.js';
+import { isPhpCliAvailable } from './phpCliAvailable.js';
 
 export type MailTransportMode = 'auto' | 'nodemailer' | 'phpmailer';
 
@@ -281,14 +282,11 @@ export async function sendMail(opts: {
     return true;
   }
 
-  // auto: PHPMailer first on Hostinger (Node SMTP often blocked), then nodemailer
-  if (isPhpMailerRelayInstalled()) {
-    if (await tryPhpMailer()) return true;
-  }
+  // auto: PHPMailer when PHP CLI exists, otherwise nodemailer (Hostinger Node)
+  const phpReady = isPhpMailerRelayInstalled() && isPhpCliAvailable();
+  if (phpReady && (await tryPhpMailer())) return true;
   if (await tryNodemailer()) return true;
-  if (!isPhpMailerRelayInstalled()) {
-    if (await tryPhpMailer()) return true;
-  }
+  if (!phpReady && isPhpMailerRelayInstalled() && (await tryPhpMailer())) return true;
   if (lastError) throw lastError;
   return false;
 }
@@ -522,7 +520,8 @@ export async function verifySmtpConnection(): Promise<{ ok: boolean; message: st
     return node || { ok: false, message: 'Nodemailer transport unavailable' };
   }
 
-  if (isPhpMailerRelayInstalled()) {
+  const phpReady = isPhpMailerRelayInstalled() && isPhpCliAvailable();
+  if (phpReady) {
     const php = await verifyPhp();
     if (php?.ok) return php;
   }
@@ -536,6 +535,24 @@ export async function verifySmtpConnection(): Promise<{ ok: boolean; message: st
   };
 }
 
+/** Attempt one outbound message (boot diagnostic). verify() alone can pass while hPanel blocks send. */
+export async function probeSmtpSend(): Promise<{ ok: boolean; message: string }> {
+  const cfg = await resolveSmtpConfig();
+  if (!cfg) return { ok: false, message: 'SMTP not configured' };
+  try {
+    const sent = await sendMail({
+      to: cfg.fromEmail,
+      subject: 'MAMS SMTP send probe',
+      text: 'MAMS outbound mail probe — ignore.',
+    });
+    return sent
+      ? { ok: true, message: 'send probe ok' }
+      : { ok: false, message: 'send probe returned false' };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message || 'send probe failed' };
+  }
+}
+
 /** Safe status for /health — never includes password. */
 export async function getSmtpPublicStatus(): Promise<{
   configured: boolean;
@@ -544,6 +561,7 @@ export async function getSmtpPublicStatus(): Promise<{
   fromEmail: string | null;
   transport: MailTransportMode;
   phpmailerInstalled: boolean;
+  phpCliAvailable: boolean;
 }> {
   const cfg = await resolveSmtpConfig();
   if (!cfg) {
@@ -554,6 +572,7 @@ export async function getSmtpPublicStatus(): Promise<{
       fromEmail: null,
       transport: getMailTransportMode(),
       phpmailerInstalled: isPhpMailerRelayInstalled(),
+      phpCliAvailable: isPhpCliAvailable(),
     };
   }
   return {
@@ -563,5 +582,6 @@ export async function getSmtpPublicStatus(): Promise<{
     fromEmail: cfg.fromEmail,
     transport: getMailTransportMode(),
     phpmailerInstalled: isPhpMailerRelayInstalled(),
+    phpCliAvailable: isPhpCliAvailable(),
   };
 }

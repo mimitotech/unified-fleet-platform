@@ -59,7 +59,11 @@ Keep `DB_CONNECTION_LIMIT` ≤ **10** on Hostinger shared MySQL (`max_user_conne
 
 On an existing database, import `database/mysql/ufp_production_hardening_2026-08-11.sql` once (or rely on boot-time index ensure).
 
-Outbound mail sends password-reset links and new/reset account credentials from **mams@mimitotracking.com**.
+Outbound mail sends password-reset codes and new/reset account credentials from **mams@mimitotracking.com**.
+
+**Critical — enable outbound SMTP in hPanel:** If forgot-password returns *554 Disabled by user from hPanel*, open **hPanel → Emails → mams@mimitotracking.com** and ensure the mailbox and **outgoing SMTP** are enabled (not suspended). SMTP login can succeed while sending is still blocked.
+
+Set `MAIL_TRANSPORT=nodemailer` on Hostinger Node (PHP CLI is usually unavailable). PHPMailer source is bundled under `mail-relay/phpmailer/` for hosts that do have PHP.
 
 `DB_HOST` is optional — the app tries **Unix socket** first, then **TCP 127.0.0.1** (never bare `localhost`, which Node resolves to `::1`).  
 Prefer discrete `DB_*` over `DATABASE_URL`. Confirm the same user/password opens **phpMyAdmin**.

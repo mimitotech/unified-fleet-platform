@@ -136,14 +136,21 @@ async function main() {
         logger.warn(`Production hardening skipped: ${(e as Error).message}`);
       }
       try {
-        const { syncEmailSettingsFromEnv, verifySmtpConnection } = await import('./services/EmailService.js');
+        const { syncEmailSettingsFromEnv, verifySmtpConnection, probeSmtpSend } = await import('./services/EmailService.js');
         const { isPhpMailerRelayInstalled, getMailRelayRoot } = await import('./services/PhpMailerTransport.js');
+        const { isPhpCliAvailable } = await import('./services/phpCliAvailable.js');
+        const { mailDeliveryHint } = await import('./services/mailDeliveryHint.js');
         await syncEmailSettingsFromEnv();
         const smtp = await verifySmtpConnection();
         if (smtp.ok) logger.info(`SMTP ready: ${smtp.message}`);
         else logger.warn(`SMTP not verified: ${smtp.message}`);
+        if (process.env.NODE_ENV === 'production') {
+          const probe = await probeSmtpSend();
+          if (probe.ok) logger.info(`SMTP send probe: ${probe.message}`);
+          else logger.warn(`SMTP send probe failed: ${probe.message}${mailDeliveryHint(probe.message)}`);
+        }
         logger.info(
-          `Mail relay: phpmailerInstalled=${isPhpMailerRelayInstalled()} path=${getMailRelayRoot()} transport=${process.env.MAIL_TRANSPORT || 'auto'}`,
+          `Mail relay: phpmailerInstalled=${isPhpMailerRelayInstalled()} phpCli=${isPhpCliAvailable()} path=${getMailRelayRoot()} transport=${process.env.MAIL_TRANSPORT || 'auto'}`,
         );
       } catch (e) {
         logger.warn(`SMTP sync skipped: ${(e as Error).message}`);

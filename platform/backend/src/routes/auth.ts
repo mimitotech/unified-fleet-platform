@@ -8,6 +8,7 @@ import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 import { AuditService } from '../services/AuditService.js';
 import { getJwtSecret } from '../config/env.js';
 import { assertStrongPassword, generateOneTimePassword } from '../utils/passwordPolicy.js';
+import { mailDeliveryHint } from '../services/mailDeliveryHint.js';
 
 const router = Router();
 
@@ -294,15 +295,7 @@ router.post('/forgot-password', async (req, res) => {
       resourceId: user.id,
       details: { reason: emailError || 'send_failed' },
     });
-    // Keep user-facing text safe; include a short technical hint for admins reading Network tab.
-    const hint =
-      emailError && /timeout|ETIMEDOUT|ECONNREFUSED|ENOTFOUND|ESOCKET/i.test(emailError)
-        ? ' (SMTP connection blocked or timed out from the server)'
-        : emailError && /auth|invalid login|535|534/i.test(emailError)
-          ? ' (SMTP authentication failed — check mailbox password)'
-          : emailError && /PHPMailer relay not installed|vendor\/autoload|PHP CLI not found/i.test(emailError)
-          ? ' (mail relay source missing — redeploy latest code with platform/mail-relay/phpmailer)'
-            : '';
+    const hint = mailDeliveryHint(emailError);
     return error(
       res,
       `Password reset email could not be sent. Please contact your MIMITO MAMS administrator for assistance.${hint}`,
