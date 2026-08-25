@@ -128,9 +128,17 @@ export function useMonitoringEvents(limit = 80, enabled = true, units: FleetUnit
       severity?: string;
       occurredAt?: string;
       unitName?: string;
+      unitId?: string;
       driverName?: string;
     }>(ecoQ.data)) {
       const title = v.violationType || v.type || 'Eco violation';
+      const matchedByUnitId = v.unitId
+        ? units.some(
+            (u) =>
+              String(u.wialonId ?? '') === String(v.unitId) ||
+              String(u.id) === String(v.unitId),
+          )
+        : false;
       rows.push({
         id: String(v.id || `eco-${rows.length}`),
         title,
@@ -138,9 +146,11 @@ export function useMonitoringEvents(limit = 80, enabled = true, units: FleetUnit
         category: 'eco',
         occurredAt: v.occurredAt,
         unitName: resolveUnitName(`${title} ${v.unitName || ''}`, units, v.unitName),
+        unitId: v.unitId,
         driverName: v.driverName,
         source: 'eco',
-      });
+        _matchedByUnitId: matchedByUnitId,
+      } as MonitoringEventRow & { _matchedByUnitId?: boolean });
     }
 
     for (const v of safeArray<Record<string, unknown>>(videoQ.data)) {
@@ -163,6 +173,10 @@ export function useMonitoringEvents(limit = 80, enabled = true, units: FleetUnit
       unitNameSet.size === 0
         ? rows
         : rows.filter((r) => {
+            if (r.category === 'eco') {
+              const ecoRow = r as MonitoringEventRow & { _matchedByUnitId?: boolean };
+              if (ecoRow._matchedByUnitId) return true;
+            }
             // Keep rows that match a fleet unit, or alerts without a parseable unit
             // (system notices) so the Events tab stays useful.
             if (!r.unitName) return r.category === 'alert';

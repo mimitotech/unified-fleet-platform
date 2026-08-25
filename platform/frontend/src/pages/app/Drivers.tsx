@@ -177,6 +177,18 @@ export default function Drivers() {
     queryFn: () => clientApi.getDriverViolationsFeed(80, 30),
   });
 
+  const syncViolations = useMutation({
+    mutationFn: () => clientApi.syncDriverViolations(),
+    onSuccess: (data) => {
+      notify.success(
+        'Violations synced',
+        `${data.eco} eco / driving events imported · ${data.drivers} drivers rescored`
+      );
+      invalidateDriverQueries(qc);
+    },
+    onError: (e) => notify.error('Violation sync failed', (e as Error).message),
+  });
+
   const recompute = useMutation({
     mutationFn: () => clientApi.recomputeDriverScores(30),
     onSuccess: (data) => {
@@ -560,6 +572,15 @@ export default function Drivers() {
               <MetricCard title="Ugly" value={gradeCounts.ugly} icon={Coffee} variant="destructive" size="xxs" />
               <MetricCard title="Scored" value={stats?.scored ?? rosterScores.length} icon={Users} variant="primary" size="xxs" />
             </div>
+            <LoadingButton
+              size="sm"
+              variant="outline"
+              loading={syncViolations.isPending}
+              onClick={() => syncViolations.mutate()}
+            >
+              <RefreshCw className="h-3.5 w-3.5 mr-1" />
+              Sync violations
+            </LoadingButton>
             <LoadingButton
               size="sm"
               variant="outline"

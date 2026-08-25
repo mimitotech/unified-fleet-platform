@@ -26,6 +26,34 @@ const ecoReportCooldown = new Map<string, number>();
 const unitMsgCursor = new Map<string, number>();
 const ECO_COOLDOWN_MS = 15 * 60 * 1000;
 
+export type EcoReportTemplate = {
+  resourceId: number;
+  templateId: number;
+  templateName: string;
+};
+
+/** Find eco / safety report template on tenant Wialon resources (old MAMS listReportTemplates parity). */
+export async function findEcoReportTemplate(
+  credentials: WialonCredentialsInput,
+): Promise<EcoReportTemplate | null> {
+  try {
+    const templates = await WialonLiveService.listReportTemplates(credentials, 400);
+    for (const t of templates) {
+      const name = t.name || '';
+      if (!/eco\s*driv|violation|harsh|events?\s*report|safety/i.test(name)) continue;
+      if (/\(group\)|\bgroup\b/i.test(name) && !/\(unit/i.test(name)) continue;
+      return {
+        resourceId: t.resourceId,
+        templateId: t.id,
+        templateName: name,
+      };
+    }
+  } catch (err) {
+    logger.debug('[AlertHarvest] findEcoReportTemplate failed', err);
+  }
+  return null;
+}
+
 /** Event messages (registered events from notifications / sensors). */
 const FLAG_EVENT = 1536; // 0x0600
 /** Messages stored when a notification is triggered. */
@@ -226,11 +254,12 @@ export async function harvestEcoReportAlerts(
   timeTo: number,
   allowedUnitIds: number[],
   unitNameById: Map<number, string>,
+  opts?: { skipCooldown?: boolean },
 ): Promise<FleetAlert[]> {
   if (!allowedUnitIds.length) return [];
 
   const last = ecoReportCooldown.get(scopeKey) ?? 0;
-  if (Date.now() - last < ECO_COOLDOWN_MS) return [];
+  if (!opts?.skipCooldown && Date.now() - last < ECO_COOLDOWN_MS) return [];
   ecoReportCooldown.set(scopeKey, Date.now());
 
   const allowedNames = new Set(
@@ -238,54 +267,10 @@ export async function harvestEcoReportAlerts(
   );
 
   try {
-    const accountId = credentials.accountId;
-    const resourceSpec =
-      accountId !== undefined && accountId !== null && String(accountId).trim() !== ''
-        ? {
-            itemsType: 'avl_resource',
-            propName: 'sys_billing_account_guid',
-            propValueMask: String(accountId),
-            sortType: 'sys_name',
-            propType: 'property',
-          }
-        : {
-            itemsType: 'avl_resource',
-            propName: 'sys_name',
-            propValueMask: '*',
-            sortType: 'sys_name',
-          };
+    const tpl = await findEcoReportTemplate(credentials);
+    if (!tpl) return [];
 
-    const resources = await client.request<{
-      items?: Array<{
-        id: number;
-        nm: string;
-        rep?: Record<string, { n: string; id?: number }>;
-      }>;
-    }>('core/search_items', {
-      spec: resourceSpec,
-      force: 1,
-      flags: 8193,
-      from: 0,
-      to: 49,
-    });
-
-    let resourceId = 0;
-    let templateId = 0;
-    let templateName = '';
-    for (const res of resources.items || []) {
-      for (const [idStr, tmpl] of Object.entries(res.rep || {})) {
-        const name = tmpl.n || '';
-        if (!/eco\s*driv|violation|harsh|events?\s*report|safety/i.test(name)) continue;
-        if (/\(group\)|\bgroup\b/i.test(name) && !/\(unit/i.test(name)) continue;
-        resourceId = res.id;
-        templateId = tmpl.id ?? parseInt(idStr, 10);
-        templateName = name;
-        break;
-      }
-      if (templateId) break;
-    }
-    if (!templateId) return [];
-
+    const { resourceId, templateId, templateName } = tpl;
     const alerts: FleetAlert[] = [];
     const ecoCursor = unitMsgCursor.get(`${scopeKey}:eco`) ?? 0;
     const sample: number[] = [];

@@ -1,6 +1,10 @@
 import type { FleetAlert } from '@ufp/shared';
 import { query } from '../config/database.js';
 import { isNoiseAlert } from '../services/wialonAlertClassify.js';
+import {
+  isDrivingViolationType,
+  upsertEcoViolationFromFleetAlert,
+} from '../services/ecoViolationPersist.js';
 import { logger } from '../config/logger.js';
 
 function isUuid(value?: string | null): boolean {
@@ -194,6 +198,15 @@ export class AlertOrchestrator {
         ]
           .filter(Boolean)
           .sort((a, b) => b.length - a.length);
+        const unitNameById = new Map<number, string>();
+        for (const u of mappedUnits) {
+          const id = Number(u.external_id);
+          if (Number.isFinite(id) && id > 0) unitNameById.set(id, u.name);
+        }
+        for (const a of assets) {
+          const id = Number(a.id);
+          if (Number.isFinite(id) && id > 0) unitNameById.set(id, a.name);
+        }
 
         const alerts = await adapter.getAlerts(from, to);
         for (const alert of alerts) {
@@ -237,6 +250,17 @@ export class AlertOrchestrator {
               assetId: assetUuid,
               acknowledged: false,
             });
+            if (
+              isDrivingViolationType(
+                alert.type === 'wialon_event' ? 'fleet_event' : alert.type,
+                alert.title,
+                alert.description,
+              )
+            ) {
+              await upsertEcoViolationFromFleetAlert(this.tenantId, alert, unitNameById).catch(
+                () => undefined,
+              );
+            }
             count++;
           } catch {
             /* skip bad row */

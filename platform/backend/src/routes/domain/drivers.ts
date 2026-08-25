@@ -135,6 +135,17 @@ router.put('/penalties', requireTenant, mod, requireWriteAccess, async (req: Ten
   }
 });
 
+router.post('/sync-violations', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
+  try {
+    const { DomainSyncService } = await import('../../services/DomainSyncService.js');
+    const eco = await DomainSyncService.syncTenantEcoViolations(String(req.tenantId), { force: true });
+    const scoring = await DriverScoringService.recomputeTenant(String(req.tenantId), 30);
+    return success(res, { eco, drivers: scoring.drivers });
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
+
 router.post('/recompute-scores', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
   try {
     const days = Math.min(90, Math.max(7, parseInt(String(req.body?.days || '30'), 10) || 30));

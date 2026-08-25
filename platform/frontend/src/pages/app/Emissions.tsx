@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import { AppLayout } from '@/components/app/AppLayout';
 import { MetricCard } from '@/components/app/MetricCard';
 import {
@@ -13,7 +14,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Leaf, Cloud, Gauge, AlertTriangle, FileText, CalendarRange, Route } from 'lucide-react';
+import { Leaf, Cloud, Gauge, AlertTriangle, FileText, CalendarRange, Route, RefreshCw } from 'lucide-react';
+import { clientApi } from '@/lib/api';
+import { notify } from '@/lib/notify';
+import { LoadingButton } from '@/components/shared/LoadingButton';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell,
 } from 'recharts';
@@ -77,6 +81,15 @@ export default function Emissions() {
     useEmissionsByVehicle(range);
   const { data: byType, refetch: refetchByType, isFetching: fetchingByType } = useEmissionsByType(range);
   const { data: violations, refetch: refetchViolations, isLoading: loadingViolations } = useEcoViolations(range);
+
+  const syncViolations = useMutation({
+    mutationFn: () => clientApi.syncEmissionsViolations(),
+    onSuccess: (data) => {
+      notify.success('Violations synced', `${data.eco} driving events imported from Wialon`);
+      void refetchViolations();
+    },
+    onError: (e) => notify.error('Sync failed', (e as Error).message),
+  });
 
   const vehicleRows = safeArray(byVehicle) as Array<{
     vehicle?: string;
@@ -304,10 +317,23 @@ export default function Emissions() {
           </div>
 
           <div className="fleet-card">
-            <h3 className="font-semibold mb-1">Eco-driving violations</h3>
-            <p className="text-xs text-muted-foreground mb-4">
-              Harsh events, speeding, and other eco criteria from Wialon eco-driving reports.
-            </p>
+            <div className="flex items-center justify-between gap-2 mb-4">
+              <div>
+                <h3 className="font-semibold mb-1">Eco-driving violations</h3>
+                <p className="text-xs text-muted-foreground">
+                  Harsh events, speeding, and other eco criteria from Wialon reports and unit notifications.
+                </p>
+              </div>
+              <LoadingButton
+                size="sm"
+                variant="outline"
+                loading={syncViolations.isPending}
+                onClick={() => syncViolations.mutate()}
+              >
+                <RefreshCw className="h-3.5 w-3.5 mr-1" />
+                Sync from Wialon
+              </LoadingButton>
+            </div>
             {loadingViolations ? (
               <Skeleton className="h-48" />
             ) : (

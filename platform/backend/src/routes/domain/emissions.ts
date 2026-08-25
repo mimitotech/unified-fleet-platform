@@ -2,8 +2,9 @@ import { Router } from 'express';
 import { query } from '../../config/database.js';
 import { requireTenant, type TenantRequest } from '../../middleware/tenant.js';
 import { requireModule } from '../../middleware/rbac.js';
-import { success } from '../../utils/response.js';
+import { success, error } from '../../utils/response.js';
 import { toCamelRows } from '../../utils/mapper.js';
+import { requireWriteAccess } from '../../middleware/rbac.js';
 
 const EMISSION_FACTOR = 2.68; // kg CO2 per liter diesel
 const router = Router();
@@ -59,6 +60,16 @@ router.get('/violations', requireTenant, mod, async (req: TenantRequest, res) =>
   sql += ` ORDER BY occurred_at DESC LIMIT $${params.length}`;
   const { rows } = await query(sql, params);
   return success(res, toCamelRows(rows));
+});
+
+router.post('/sync-violations', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
+  try {
+    const { DomainSyncService } = await import('../../services/DomainSyncService.js');
+    const eco = await DomainSyncService.syncTenantEcoViolations(String(req.tenantId), { force: true });
+    return success(res, { eco });
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
 });
 
 router.get('/metrics', requireTenant, mod, async (req: TenantRequest, res) => {

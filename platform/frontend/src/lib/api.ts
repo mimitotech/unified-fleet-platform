@@ -706,6 +706,16 @@ export const clientApi = {
       method: 'POST',
       body: JSON.stringify({ days }),
     }),
+  syncDriverViolations: () =>
+    api<{ eco: number; drivers: number }>('/api/client/drivers/sync-violations', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  syncEmissionsViolations: () =>
+    api<{ eco: number }>('/api/client/emissions/sync-violations', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
   getDriverViolations: (id: string, limit = 50, days = 30) =>
     api<EcoViolation[]>(`/api/client/drivers/${id}/violations?limit=${limit}&days=${days}`),
   getDriverViolationsFeed: (limit = 80, days = 30) =>

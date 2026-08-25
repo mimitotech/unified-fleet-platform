@@ -1,11 +1,14 @@
-import type { FleetAlert } from '@ufp/shared';
 import { query } from '../config/database.js';
 import { isWialonTenantConnected } from './wialonConnectionStatus.js';
 import { loadTenantWialonCreds } from './tenantWialonCredentials.js';
 import { WialonFleetService } from './WialonFleetService.js';
 import { WialonLiveService } from './WialonLiveService.js';
 import { fetchTripsForUnits } from './wialonLiveReportRows.js';
-import { harvestEcoReportAlerts } from './wialonAlertHarvest.js';
+import { harvestEcoReportAlerts, harvestTaskMessageAlerts, harvestUnitEventAndNotificationAlerts } from './wialonAlertHarvest.js';
+import {
+  mirrorAlertsToEcoViolations,
+  persistFleetAlertsAsEcoViolations,
+} from './ecoViolationPersist.js';
 import { withWialonClient } from './WialonSessionService.js';
 import { delayBetweenTenants } from './wialonLoginGate.js';
 import { listWialonConnectedTenantIds } from './tenantSyncStatus.js';
@@ -14,14 +17,7 @@ import { logger } from '../config/logger.js';
 const TRIP_WINDOW_DAYS = 7;
 const ECO_WINDOW_DAYS = 30;
 const TRIP_SYNC_INTERVAL_MS = 30 * 60 * 1000;
-
-function mapEcoSeverity(
-  severity: FleetAlert['severity'],
-): 'low' | 'medium' | 'high' | 'critical' {
-  if (severity === 'critical' || severity === 'emergency') return 'critical';
-  if (severity === 'warning') return 'high';
-  return 'medium';
-}
+const ECO_SYNC_INTERVAL_MS = 15 * 60 * 1000;
 
 async function resolveAssetId(tenantId: string, unitId: string): Promise<string | null> {
   if (!unitId) return null;
@@ -148,8 +144,11 @@ export class DomainSyncService {
     return upserted;
   }
 
-  /** Persist eco / safety report rows into eco_driving_violations. */
-  static async syncTenantEcoViolations(tenantId: string): Promise<number> {
+  /** Persist eco / safety violations from Wialon reports, unit messages, and alert inbox mirror. */
+  static async syncTenantEcoViolations(
+    tenantId: string,
+    opts?: { force?: boolean },
+  ): Promise<number> {
     const { rows: ds } = await query<{
       is_active: boolean;
       connection_verified_at: string | null;
@@ -161,6 +160,16 @@ export class DomainSyncService {
     );
     if (!isWialonTenantConnected(ds[0])) return 0;
 
+    const cursorKey = 'domain:eco:30d';
+    if (!opts?.force) {
+      const { rows: cursor } = await query<{ last_success_at: string | null }>(
+        `SELECT last_success_at FROM fuel_sync_cursor WHERE tenant_id = $1 AND cursor_key = $2`,
+        [tenantId, cursorKey],
+      );
+      const last = cursor[0]?.last_success_at;
+      if (last && Date.now() - new Date(last).getTime() < ECO_SYNC_INTERVAL_MS) return 0;
+    }
+
     const creds = await loadTenantWialonCreds(tenantId);
     const snap = await WialonFleetService.getCachedLiveFleet(tenantId);
     const unitIds = snap.units.map((u) => u.id);
@@ -169,8 +178,10 @@ export class DomainSyncService {
     const timeTo = Math.floor(Date.now() / 1000);
     const timeFrom = timeTo - ECO_WINDOW_DAYS * 24 * 3600;
 
-    const alerts = await withWialonClient(creds, async (client) =>
-      harvestEcoReportAlerts(
+    let upserted = 0;
+
+    const harvested = await withWialonClient(creds, async (client) => {
+      const reportAlerts = await harvestEcoReportAlerts(
         creds,
         client,
         `eco-db:${tenantId}`,
@@ -178,68 +189,46 @@ export class DomainSyncService {
         timeTo,
         unitIds,
         unitNameById,
-      ),
-    );
-
-    let upserted = 0;
-    for (const alert of alerts) {
-      const externalId = alert.externalId || alert.id;
-      if (!externalId) continue;
-
-      const unitId = alert.assetId ? String(alert.assetId) : '';
-      const unitName =
-        (unitId ? unitNameById.get(Number(unitId)) : undefined) ||
-        unitId ||
-        'Unknown';
-      const assetId = unitId ? await resolveAssetId(tenantId, unitId) : null;
-      const occurredAt =
-        alert.timestamp instanceof Date ? alert.timestamp : new Date(alert.timestamp);
-
-      let driverId: string | null = null;
-      let driverName: string | null = null;
-      if (assetId) {
-        const { rows: drv } = await query<{ id: string; name: string }>(
-          `SELECT id, name FROM drivers
-           WHERE tenant_id = $1 AND assigned_asset_id = $2 AND deleted_at IS NULL
-           LIMIT 1`,
-          [tenantId, assetId]
-        ).catch(() => ({ rows: [] as Array<{ id: string; name: string }> }));
-        if (drv[0]) {
-          driverId = drv[0].id;
-          driverName = drv[0].name;
-        }
-      }
-
-      await query(
-        `INSERT INTO eco_driving_violations (
-           tenant_id, asset_id, unit_id, unit_name, violation_type, severity,
-           occurred_at, latitude, longitude, driver_name, driver_id, external_id
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-         ON CONFLICT (tenant_id, external_id) WHERE external_id IS NOT NULL DO UPDATE SET
-           violation_type = EXCLUDED.violation_type,
-           severity = EXCLUDED.severity,
-           occurred_at = EXCLUDED.occurred_at,
-           unit_name = EXCLUDED.unit_name,
-           asset_id = COALESCE(EXCLUDED.asset_id, eco_driving_violations.asset_id),
-           driver_name = COALESCE(EXCLUDED.driver_name, eco_driving_violations.driver_name),
-           driver_id = COALESCE(EXCLUDED.driver_id, eco_driving_violations.driver_id)`,
-        [
-          tenantId,
-          assetId,
-          unitId || '0',
-          unitName,
-          alert.type,
-          mapEcoSeverity(alert.severity),
-          occurredAt.toISOString(),
-          alert.latitude ?? null,
-          alert.longitude ?? null,
-          driverName,
-          driverId,
-          externalId,
-        ],
+        { skipCooldown: opts?.force === true },
       );
-      upserted++;
-    }
+
+      const taskAlerts = await harvestTaskMessageAlerts(
+        client,
+        unitIds,
+        unitNameById,
+        timeFrom,
+        timeTo,
+      );
+      const eventAlerts = await harvestUnitEventAndNotificationAlerts(
+        client,
+        `eco-msg:${tenantId}`,
+        unitIds,
+        unitNameById,
+        timeFrom,
+        timeTo,
+      );
+
+      return [...reportAlerts, ...taskAlerts, ...eventAlerts];
+    });
+
+    upserted += await persistFleetAlertsAsEcoViolations(tenantId, harvested, unitNameById, {
+      drivingOnly: true,
+    });
+
+    // Old MAMS fallback when eco report template is missing or returns no rows.
+    upserted += await mirrorAlertsToEcoViolations(tenantId, ECO_WINDOW_DAYS);
+
+    const now = new Date().toISOString();
+    await query(
+      `INSERT INTO fuel_sync_cursor (tenant_id, cursor_key, last_synced_at, last_success_at, row_count, last_error)
+       VALUES ($1, $2, $3, $3, $4, NULL)
+       ON CONFLICT (tenant_id, cursor_key) DO UPDATE SET
+         last_synced_at = EXCLUDED.last_synced_at,
+         last_success_at = EXCLUDED.last_success_at,
+         row_count = EXCLUDED.row_count,
+         last_error = NULL`,
+      [tenantId, cursorKey, now, upserted],
+    ).catch(() => undefined);
 
     return upserted;
   }

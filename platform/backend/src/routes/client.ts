@@ -646,8 +646,10 @@ router.post('/alerts/acknowledge-bulk', requireTenant, async (req: TenantRequest
 router.post('/alerts/sync', requireTenant, async (req: TenantRequest, res) => {
   const orch = new AlertOrchestrator(req.tenantId!);
   const inserted = await orch.syncFromAdapters();
+  const { mirrorAlertsToEcoViolations } = await import('../services/ecoViolationPersist.js');
+  const eco = await mirrorAlertsToEcoViolations(String(req.tenantId), 30).catch(() => 0);
   alertSyncAt.set(req.tenantId!, Date.now());
-  return success(res, { inserted });
+  return success(res, { inserted, eco });
 });
 
 router.post('/alerts/:id/acknowledge', requireTenant, async (req: TenantRequest, res) => {
