@@ -400,31 +400,33 @@ export class DriverScoringService {
     since.setDate(since.getDate() - Math.max(1, days));
     const sinceIso = since.toISOString().slice(0, 19).replace('T', ' ');
 
-    const { rows: ecos } = await query<{ violation_type: string }>(
-      `SELECT violation_type FROM eco_driving_violations
-       WHERE tenant_id = $1 AND occurred_at >= $2
-         AND (
-           driver_id = $3
-           OR (driver_name IS NOT NULL AND LOWER(driver_name) = LOWER($4))
-           OR ($5::text IS NOT NULL AND asset_id = $5)
-         )`,
-      [tenantId, sinceIso, d.id, d.name, d.assigned_asset_id]
-    );
+    const { rows: ecos } = d.assigned_asset_id
+      ? await query<{ violation_type: string }>(
+          `SELECT violation_type FROM eco_driving_violations
+           WHERE tenant_id = $1 AND occurred_at >= $2 AND asset_id = $3`,
+          [tenantId, sinceIso, d.assigned_asset_id],
+        )
+      : { rows: [] as Array<{ violation_type: string }> };
 
     const { rows: alertRows } = d.assigned_asset_id
       ? await query<{ type: string }>(
           `SELECT type FROM alerts
            WHERE tenant_id = $1 AND occurred_at >= $2 AND asset_id = $3
              AND (
-               type IN ('fatigue', 'camera', 'video', 'unauthorized', 'overspeed', 'speeding')
+               type IN ('fatigue', 'camera', 'video', 'unauthorized', 'overspeed', 'speeding',
+                 'harsh_braking', 'harsh_acceleration', 'harsh_cornering', 'speeding', 'idling', 'eco_violation')
                OR LOWER(COALESCE(type, '')) LIKE '%fatigue%'
                OR LOWER(COALESCE(type, '')) LIKE '%camera%'
                OR LOWER(COALESCE(type, '')) LIKE '%video%'
                OR LOWER(COALESCE(type, '')) LIKE '%unauth%'
+               OR LOWER(COALESCE(type, '')) LIKE '%speed%'
+               OR LOWER(COALESCE(type, '')) LIKE '%harsh%'
+               OR LOWER(COALESCE(type, '')) LIKE '%brak%'
+               OR LOWER(COALESCE(type, '')) LIKE '%accel%'
                OR video_url IS NOT NULL
              )
            LIMIT 500`,
-          [tenantId, sinceIso, d.assigned_asset_id]
+          [tenantId, sinceIso, d.assigned_asset_id],
         ).catch(() => ({ rows: [] as Array<{ type: string }> }))
       : { rows: [] as Array<{ type: string }> };
 
@@ -434,19 +436,17 @@ export class DriverScoringService {
     ];
     const scored = this.scoreViolations(config, types);
 
-    const { rows: trips } = await query<{
-      trips_count: number;
-      total_distance: number;
-    }>(
-      `SELECT COUNT(*)::int AS trips_count, COALESCE(SUM(mileage), 0)::float AS total_distance
-       FROM trip_summaries
-       WHERE tenant_id = $1 AND departure_time >= $2
-         AND (
-           ($3::text IS NOT NULL AND asset_id = $3)
-           OR LOWER(unit_name) LIKE CONCAT('%', LOWER($4), '%')
-         )`,
-      [tenantId, sinceIso, d.assigned_asset_id, d.name.split(/\s+/)[0] || d.name]
-    ).catch(() => ({ rows: [{ trips_count: 0, total_distance: 0 }] }));
+    const { rows: trips } = d.assigned_asset_id
+      ? await query<{
+          trips_count: number;
+          total_distance: number;
+        }>(
+          `SELECT COUNT(*)::int AS trips_count, COALESCE(SUM(mileage), 0)::float AS total_distance
+           FROM trip_summaries
+           WHERE tenant_id = $1 AND departure_time >= $2 AND asset_id = $3`,
+          [tenantId, sinceIso, d.assigned_asset_id],
+        ).catch(() => ({ rows: [{ trips_count: 0, total_distance: 0 }] }))
+      : { rows: [{ trips_count: 0, total_distance: 0 }] };
 
     const today = new Date().toISOString().slice(0, 10);
     await query(

@@ -43,6 +43,7 @@ import {
 } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { safeArray } from '@/lib/safeArray';
+import { cn } from '@/lib/utils';
 import { CHART, ALERT_SEVERITY } from '@/lib/chartColors';
 import {
   Users, UserCheck, Car, Coffee, FileText, Plus, Pencil, RefreshCw, Settings2,
@@ -144,10 +145,20 @@ export default function Drivers() {
   const updateDriver = useUpdateDriver();
   const deleteDriver = useDeleteDriver();
   const autoScoredRef = useRef(false);
+  const autoWialonRef = useRef(false);
+  const [activeTab, setActiveTab] = useState('roster');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'available' | 'driving' | 'off-duty'>('all');
+  const [gradeFilter, setGradeFilter] = useState<'all' | 'good' | 'bad' | 'ugly' | 'unscored'>('all');
+  const [assignmentFilter, setAssignmentFilter] = useState<'all' | 'assigned' | 'unassigned' | 'wialon'>('all');
+
+  const scoresTabActive = activeTab === 'scores';
 
   const { data: performance, isLoading: perfLoading } = useQuery({
     queryKey: ['driverPerformance'],
     queryFn: () => clientApi.getDriverPerformance(),
+    enabled: scoresTabActive,
+    staleTime: 60_000,
   });
   const { data: penaltyConfig } = useQuery({
     queryKey: ['driverPenalties'],
@@ -170,11 +181,26 @@ export default function Drivers() {
   const { data: violations } = useQuery({
     queryKey: ['driverViolations', selectedDriverId],
     queryFn: () => clientApi.getDriverViolations(selectedDriverId, 80, 30),
-    enabled: Boolean(selectedDriverId),
+    enabled: Boolean(selectedDriverId) && (detailOpen || scoresTabActive),
+    staleTime: 30_000,
   });
   const { data: fleetViolations } = useQuery({
     queryKey: ['driverViolationsFeed'],
     queryFn: () => clientApi.getDriverViolationsFeed(80, 30),
+    enabled: scoresTabActive,
+    staleTime: 60_000,
+  });
+
+  const syncWialon = useMutation({
+    mutationFn: () => clientApi.syncDriversFromWialon(),
+    onSuccess: (data) => {
+      notify.success(
+        'Wialon drivers synced',
+        `${data.imported} imported · ${data.updated} updated · ${data.assigned} vehicle assignments`,
+      );
+      invalidateDriverQueries(qc);
+    },
+    onError: (e) => notify.error('Wialon sync failed', (e as Error).message),
   });
 
   const syncViolations = useMutation({
@@ -228,7 +254,15 @@ export default function Drivers() {
   });
 
   useEffect(() => {
-    if (autoScoredRef.current || isLoading || !drivers?.length) return;
+    if (autoWialonRef.current || isLoading || syncWialon.isPending) return;
+    if (!drivers?.length) {
+      autoWialonRef.current = true;
+      syncWialon.mutate();
+    }
+  }, [drivers, isLoading, syncWialon.isPending]);
+
+  useEffect(() => {
+    if (autoScoredRef.current || isLoading || !drivers?.length || !scoresTabActive) return;
     const hasScore =
       drivers.some((d) => d.safetyScore != null) ||
       safeArray(performance).length > 0;
@@ -236,7 +270,7 @@ export default function Drivers() {
       autoScoredRef.current = true;
       recompute.mutate();
     }
-  }, [drivers, isLoading, performance, recompute]);
+  }, [drivers, isLoading, performance, recompute, scoresTabActive]);
 
   const latestScores = useMemo(() => {
     const rows = safeArray(performance) as DriverPerformanceRow[];
@@ -315,6 +349,52 @@ export default function Drivers() {
     score: Number(r.safetyScore) || 0,
     grade: r.grade || 'bad',
   }));
+
+  const filteredDrivers = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return (safeArray(drivers) as Driver[]).filter((d) => {
+      if (q) {
+        const hay = [
+          d.name,
+          d.licenseNumber,
+          d.phone,
+          d.assignedAssetPlate,
+          d.assignedAssetName,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (statusFilter !== 'all' && d.status !== statusFilter) return false;
+      if (assignmentFilter === 'assigned' && !d.assignedAssetId) return false;
+      if (assignmentFilter === 'unassigned' && d.assignedAssetId) return false;
+      if (assignmentFilter === 'wialon' && !d.wialonDriverId) return false;
+      const grade = String(scoreByDriver.get(d.id)?.grade || d.grade || '').toLowerCase();
+      if (gradeFilter === 'unscored' && grade) return false;
+      if (gradeFilter !== 'all' && gradeFilter !== 'unscored' && grade !== gradeFilter) return false;
+      return true;
+    });
+  }, [drivers, searchQuery, statusFilter, gradeFilter, assignmentFilter, scoreByDriver]);
+
+  const filterCounts = useMemo(() => {
+    const all = safeArray(drivers) as Driver[];
+    const byStatus = { all: all.length, available: 0, driving: 0, 'off-duty': 0 };
+    const byGrade = { all: all.length, good: 0, bad: 0, ugly: 0, unscored: 0 };
+    const byAssignment = { all: all.length, assigned: 0, unassigned: 0, wialon: 0 };
+    for (const d of all) {
+      if (d.status === 'available') byStatus.available += 1;
+      else if (d.status === 'driving') byStatus.driving += 1;
+      else if (d.status === 'off-duty') byStatus['off-duty'] += 1;
+      const g = String(scoreByDriver.get(d.id)?.grade || d.grade || '').toLowerCase();
+      if (g === 'good' || g === 'bad' || g === 'ugly') byGrade[g] += 1;
+      else byGrade.unscored += 1;
+      if (d.assignedAssetId) byAssignment.assigned += 1;
+      else byAssignment.unassigned += 1;
+      if (d.wialonDriverId) byAssignment.wialon += 1;
+    }
+    return { byStatus, byGrade, byAssignment };
+  }, [drivers, scoreByDriver]);
 
   const openCreate = () => {
     setEditing(null);
@@ -409,7 +489,7 @@ export default function Drivers() {
 
   return (
     <AppLayout title="Drivers" subtitle="Roster, eco penalties, and Good / Bad / Ugly scoring">
-      <Tabs defaultValue="roster" className="space-y-4">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList className="branded-tabs">
           <TabsTrigger value="roster">Roster</TabsTrigger>
           <TabsTrigger value="scores">Scores</TabsTrigger>
@@ -444,10 +524,18 @@ export default function Drivers() {
           </div>
 
           <div className="fleet-card branded-panel">
-            <div className="flex items-center justify-between mb-4 gap-2">
+            <div className="flex flex-wrap items-center justify-between mb-4 gap-2">
               <h3 className="font-semibold text-primary">Driver Roster</h3>
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" onClick={() => downloadDriversCsv(drivers || [])}>
+              <div className="flex flex-wrap gap-2">
+                <LoadingButton
+                  size="sm"
+                  variant="outline"
+                  loading={syncWialon.isPending}
+                  onClick={() => syncWialon.mutate()}
+                >
+                  <RefreshCw className="h-4 w-4 mr-1" /> Sync from Wialon
+                </LoadingButton>
+                <Button size="sm" variant="outline" onClick={() => downloadDriversCsv(filteredDrivers)}>
                   Export CSV
                 </Button>
                 <Button size="sm" onClick={openCreate}>
@@ -455,7 +543,87 @@ export default function Drivers() {
                 </Button>
               </div>
             </div>
-            {isLoading ? (
+
+            <div className="space-y-3 mb-4">
+              <Input
+                placeholder="Search name, license, phone, or vehicle…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="max-w-md h-8 text-sm"
+              />
+              <div className="flex flex-wrap gap-1">
+                {(
+                  [
+                    ['all', 'All status', filterCounts.byStatus.all],
+                    ['available', 'Available', filterCounts.byStatus.available],
+                    ['driving', 'Driving', filterCounts.byStatus.driving],
+                    ['off-duty', 'Off duty', filterCounts.byStatus['off-duty']],
+                  ] as const
+                ).map(([id, label, n]) => (
+                  <Button
+                    key={id}
+                    type="button"
+                    size="sm"
+                    variant={statusFilter === id ? 'default' : 'outline'}
+                    className={cn('h-6 px-2 text-[11px]', statusFilter !== id && 'border-primary/20')}
+                    onClick={() => setStatusFilter(id)}
+                  >
+                    {label}
+                    <span className="ml-1 tabular-nums opacity-80">{n}</span>
+                  </Button>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {(
+                  [
+                    ['all', 'All grades', filterCounts.byGrade.all],
+                    ['good', 'Good', filterCounts.byGrade.good],
+                    ['bad', 'Bad', filterCounts.byGrade.bad],
+                    ['ugly', 'Ugly', filterCounts.byGrade.ugly],
+                    ['unscored', 'Unscored', filterCounts.byGrade.unscored],
+                  ] as const
+                ).map(([id, label, n]) => (
+                  <Button
+                    key={id}
+                    type="button"
+                    size="sm"
+                    variant={gradeFilter === id ? 'secondary' : 'ghost'}
+                    className="h-6 px-2 text-[11px]"
+                    onClick={() => setGradeFilter(id)}
+                  >
+                    {label}
+                    <span className="ml-1 tabular-nums opacity-80">{n}</span>
+                  </Button>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {(
+                  [
+                    ['all', 'All', filterCounts.byAssignment.all],
+                    ['assigned', 'Assigned', filterCounts.byAssignment.assigned],
+                    ['unassigned', 'Unassigned', filterCounts.byAssignment.unassigned],
+                    ['wialon', 'From Wialon', filterCounts.byAssignment.wialon],
+                  ] as const
+                ).map(([id, label, n]) => (
+                  <Button
+                    key={id}
+                    type="button"
+                    size="sm"
+                    variant={assignmentFilter === id ? 'outline' : 'ghost'}
+                    className={cn(
+                      'h-6 px-2 text-[11px]',
+                      assignmentFilter === id && 'border-primary/30 bg-primary/5',
+                    )}
+                    onClick={() => setAssignmentFilter(id)}
+                  >
+                    {label}
+                    <span className="ml-1 tabular-nums opacity-80">{n}</span>
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            {isLoading || syncWialon.isPending ? (
               <Skeleton className="h-48" />
             ) : (
               <Table>
@@ -475,13 +643,20 @@ export default function Drivers() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {drivers?.map((d) => (
+                  {filteredDrivers.map((d) => (
                     <TableRow key={d.id}>
                       {(() => {
                         const state = licenseState(d.licenseExpiryDate);
                         return (
                           <>
-                      <TableCell className="font-medium">{d.name}</TableCell>
+                      <TableCell className="font-medium">
+                        <div className="flex items-center gap-1.5">
+                          {d.name}
+                          {d.wialonDriverId ? (
+                            <Badge variant="outline" className="text-[10px] px-1 py-0">Wialon</Badge>
+                          ) : null}
+                        </div>
+                      </TableCell>
                       <TableCell>{d.licenseNumber}</TableCell>
                       <TableCell>{d.permitClass || '—'}</TableCell>
                       <TableCell>
@@ -551,10 +726,12 @@ export default function Drivers() {
                       })()}
                     </TableRow>
                   ))}
-                  {!drivers?.length && (
+                  {!filteredDrivers.length && (
                     <TableRow>
                       <TableCell colSpan={11} className="text-center text-muted-foreground py-8">
-                        No drivers yet — add a driver or sync from Wialon
+                        {drivers?.length
+                          ? 'No drivers match the current filters'
+                          : 'No drivers yet — sync from Wialon or add manually'}
                       </TableCell>
                     </TableRow>
                   )}
@@ -677,7 +854,7 @@ export default function Drivers() {
           <div className="fleet-card">
             <h3 className="font-semibold mb-1">Eco-driving and violation alerts (30 days)</h3>
             <p className="text-xs text-muted-foreground mb-4">
-              Combined Wialon eco-driving events and camera / speeding / fatigue alerts used for driver scoring.
+              Violations and penalties are counted only from the driver&apos;s assigned vehicle (asset).
             </p>
             <Table>
               <TableHeader>
@@ -1017,6 +1194,9 @@ export default function Drivers() {
                 <div>
                   <p className="text-muted-foreground text-xs">Vehicle</p>
                   <p>{driverDetail.assignedAssetPlate || driverDetail.assignedAssetName || 'Unassigned'}</p>
+                  {driverDetail.wialonDriverId ? (
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Linked from Wialon</p>
+                  ) : null}
                 </div>
                 <div>
                   <p className="text-muted-foreground text-xs">Safety score</p>
@@ -1111,7 +1291,9 @@ export default function Drivers() {
                     {!safeArray(violations).length && (
                       <TableRow>
                         <TableCell colSpan={3} className="text-center text-muted-foreground py-4 text-xs">
-                          No violations linked — assign a vehicle or sync Wialon eco-driving data
+                          {driverDetail.assignedAssetId
+                            ? 'No violations on the assigned vehicle in the last 30 days'
+                            : 'Assign a vehicle to score violations from that asset'}
                         </TableCell>
                       </TableRow>
                     )}

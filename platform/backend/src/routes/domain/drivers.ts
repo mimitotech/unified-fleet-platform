@@ -135,6 +135,16 @@ router.put('/penalties', requireTenant, mod, requireWriteAccess, async (req: Ten
   }
 });
 
+router.post('/sync-wialon', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
+  try {
+    const { WialonDriverImportService } = await import('../../services/WialonDriverImportService.js');
+    const result = await WialonDriverImportService.importTenantDrivers(String(req.tenantId));
+    return success(res, result);
+  } catch (e) {
+    return error(res, (e as Error).message);
+  }
+});
+
 router.post('/sync-violations', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
   try {
     const { DomainSyncService } = await import('../../services/DomainSyncService.js');
@@ -196,16 +206,13 @@ router.get('/:id', requireTenant, mod, async (req: TenantRequest, res) => {
   const config = await DriverScoringService.getConfig(String(req.tenantId));
   const sinceIso = new Date(Date.now() - days * 86400000).toISOString().slice(0, 19).replace('T', ' ');
 
-  const { rows: ecos } = await query<{ violation_type: string }>(
-    `SELECT violation_type FROM eco_driving_violations
-     WHERE tenant_id = $1 AND occurred_at >= $2
-       AND (
-         driver_id = $3
-         OR (driver_name IS NOT NULL AND LOWER(driver_name) = LOWER($4))
-         OR ($5::text IS NOT NULL AND asset_id = $5)
-       )`,
-    [req.tenantId, sinceIso, d.id, d.name, d.assigned_asset_id]
-  ).catch(() => ({ rows: [] as Array<{ violation_type: string }> }));
+  const { rows: ecos } = d.assigned_asset_id
+    ? await query<{ violation_type: string }>(
+        `SELECT violation_type FROM eco_driving_violations
+         WHERE tenant_id = $1 AND occurred_at >= $2 AND asset_id = $3`,
+        [req.tenantId, sinceIso, d.assigned_asset_id],
+      ).catch(() => ({ rows: [] as Array<{ violation_type: string }> }))
+    : { rows: [] as Array<{ violation_type: string }> };
 
   const { rows: alertRows } = d.assigned_asset_id
     ? await query<{ type: string }>(
@@ -261,20 +268,18 @@ router.get('/:id/violations', requireTenant, mod, async (req: TenantRequest, res
   );
   if (!driverRows[0]) return error(res, 'Driver not found', 404);
   const d = driverRows[0];
-  const { rows: eco } = await query(
-    `SELECT id, unit_name, violation_type, severity, occurred_at, driver_name, value, 'eco' as source
-     FROM eco_driving_violations
-     WHERE tenant_id = $1
-       AND occurred_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
-       AND (
-         driver_id = $2
-         OR (driver_name IS NOT NULL AND LOWER(driver_name) = LOWER($3))
-         OR ($4 IS NOT NULL AND asset_id = $4)
-       )
-     ORDER BY occurred_at DESC
-     LIMIT $5`,
-    [req.tenantId, d.id, d.name, d.assigned_asset_id, limit]
-  ).catch(() => ({ rows: [] as Array<Record<string, unknown>> }));
+  const { rows: eco } = d.assigned_asset_id
+    ? await query(
+        `SELECT id, unit_name, violation_type, severity, occurred_at, driver_name, value, 'eco' as source
+         FROM eco_driving_violations
+         WHERE tenant_id = $1
+           AND occurred_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
+           AND asset_id = $2
+         ORDER BY occurred_at DESC
+         LIMIT $3`,
+        [req.tenantId, d.assigned_asset_id, limit],
+      ).catch(() => ({ rows: [] as Array<Record<string, unknown>> }))
+    : { rows: [] as Array<Record<string, unknown>> };
 
   const { rows: alerts } = d.assigned_asset_id
     ? await query(

@@ -115,25 +115,39 @@ export class WialonSyncService {
     let geofencesSynced = 0;
 
     if (!options?.skipOptionalDomain) {
+      try {
+        const { WialonDriverImportService } = await import('./WialonDriverImportService.js');
+        const result = await WialonDriverImportService.importTenantDrivers(tenantId);
+        driversSynced = result.imported + result.updated;
+      } catch {
+        /* optional — fall back to legacy adapter import */
+        const adapter = new WialonAdapter(scopedCreds);
+        try {
+          await adapter.connect();
+          try {
+            const drivers = await adapter.getDrivers();
+            for (const d of drivers) {
+              await query(
+                `INSERT INTO drivers (tenant_id, name, license_number, phone, email, status)
+                 VALUES ($1, $2, $3, $4, $5, 'available')
+                 ON CONFLICT (tenant_id, license_number) DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, updated_at = NOW()`,
+                [tenantId, d.name, d.licenseNumber || d.id, d.phone || '', d.email || null],
+              );
+              driversSynced++;
+            }
+          } catch {
+            /* optional */
+          }
+        } catch {
+          /* drivers optional when Wialon API rejects resource search */
+        } finally {
+          await adapter.disconnect().catch(() => undefined);
+        }
+      }
+
       const adapter = new WialonAdapter(scopedCreds);
       try {
         await adapter.connect();
-
-        try {
-          const drivers = await adapter.getDrivers();
-          for (const d of drivers) {
-            await query(
-              `INSERT INTO drivers (tenant_id, name, license_number, phone, email, status)
-               VALUES ($1, $2, $3, $4, $5, 'available')
-               ON CONFLICT (tenant_id, license_number) DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, updated_at = NOW()`,
-              [tenantId, d.name, d.licenseNumber || d.id, d.phone || '', d.email || null]
-            );
-            driversSynced++;
-          }
-        } catch {
-          /* optional */
-        }
-
         try {
           const zones = await adapter.getGeofences();
           for (const z of zones) {

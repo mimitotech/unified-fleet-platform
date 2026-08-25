@@ -264,6 +264,8 @@ export interface Driver {
   assignedAssetPlate?: string;
   fuelCardNumber?: string | null;
   hireDate?: string | null;
+  wialonDriverId?: string | null;
+  wialonResourceId?: number | null;
   safetyScore?: number | null;
   grade?: string | null;
   penaltyPoints?: number | null;
@@ -708,6 +710,11 @@ export const clientApi = {
     }),
   syncDriverViolations: () =>
     api<{ eco: number; drivers: number }>('/api/client/drivers/sync-violations', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  syncDriversFromWialon: () =>
+    api<{ imported: number; updated: number; assigned: number }>('/api/client/drivers/sync-wialon', {
       method: 'POST',
       body: JSON.stringify({}),
     }),

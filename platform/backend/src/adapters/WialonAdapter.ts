@@ -286,10 +286,26 @@ export class WialonAdapter extends BaseAdapter {
     return all;
   }
 
-  async getDrivers(): Promise<Array<{ id: string; name: string; licenseNumber?: string; phone?: string; email?: string }>> {
+  async getDrivers(): Promise<
+    Array<{
+      id: string;
+      name: string;
+      licenseNumber?: string;
+      phone?: string;
+      email?: string;
+      resourceId?: number;
+    }>
+  > {
     try {
       const resources = await this.searchResources(257);
-      const drivers: Array<{ id: string; name: string; licenseNumber?: string; phone?: string; email?: string }> = [];
+      const drivers: Array<{
+        id: string;
+        name: string;
+        licenseNumber?: string;
+        phone?: string;
+        email?: string;
+        resourceId?: number;
+      }> = [];
       for (const resource of resources) {
         const detail = await this.request<{
           item?: { drvrs?: Record<string, { id: number; n: string; p?: string; c?: string }> };
@@ -300,7 +316,8 @@ export class WialonAdapter extends BaseAdapter {
             id: String(d.id),
             name: d.n,
             phone: d.p,
-            licenseNumber: d.c || String(d.id),
+            licenseNumber: d.c?.trim() || String(d.id),
+            resourceId: resource.id,
           });
         }
       }
