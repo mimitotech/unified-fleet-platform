@@ -263,8 +263,8 @@ router.post('/users', requireTenant, async (req: TenantRequest, res) => {
 
     let credentialsEmailed = false;
     try {
-      const { sendAccountCredentialsEmail } = await import('../services/EmailService.js');
-      credentialsEmailed = await sendAccountCredentialsEmail({
+      const { emailCredentialsToUser } = await import('../services/EmailService.js');
+      credentialsEmailed = await emailCredentialsToUser({
         to: created.email,
         fullName: created.full_name,
         temporaryPassword: created.temporaryPassword || String(password || ''),
@@ -413,8 +413,8 @@ router.post('/users/:userId/reset-password', requireTenant, async (req: TenantRe
 
     let credentialsEmailed = false;
     try {
-      const { sendAccountCredentialsEmail } = await import('../services/EmailService.js');
-      credentialsEmailed = await sendAccountCredentialsEmail({
+      const { emailCredentialsToUser } = await import('../services/EmailService.js');
+      credentialsEmailed = await emailCredentialsToUser({
         to: result.email,
         temporaryPassword: result.temporaryPassword,
         reason: 'reset',

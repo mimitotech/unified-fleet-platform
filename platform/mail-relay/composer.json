@@ -1,0 +1,11 @@
+{
+  "name": "mams/mail-relay",
+  "description": "PHPMailer SMTP relay for MAMS (Node invokes via CLI)",
+  "require": {
+    "php": ">=7.4",
+    "phpmailer/phpmailer": "^6.9"
+  },
+  "config": {
+    "sort-packages": true
+  }
+}

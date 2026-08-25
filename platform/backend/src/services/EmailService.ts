@@ -2,6 +2,10 @@ import nodemailer, { type Transporter } from 'nodemailer';
 import { query } from '../config/database.js';
 import { logger } from '../config/logger.js';
 import { getPublicBaseUrl } from '../utils/publicUrl.js';
+import { isValidEmail, normalizeEmail } from './UserCreateService.js';
+import { invokePhpMailer, isPhpMailerRelayInstalled } from './PhpMailerTransport.js';
+
+export type MailTransportMode = 'auto' | 'nodemailer' | 'phpmailer';
 
 export type SmtpConfig = {
   host: string;
@@ -134,10 +138,22 @@ async function getTransporter(): Promise<{ transport: Transporter; cfg: SmtpConf
   return { transport: transporter, cfg };
 }
 
+function getMailTransportMode(): MailTransportMode {
+  const mode = strip(process.env.MAIL_TRANSPORT).toLowerCase();
+  if (mode === 'nodemailer' || mode === 'phpmailer') return mode;
+  return 'auto';
+}
+
+function normalizeRecipient(to: string): string | null {
+  const email = normalizeEmail(to);
+  if (!isValidEmail(email)) return null;
+  return email;
+}
+
 async function sendWithTransport(
   transport: Transporter,
   cfg: SmtpConfig,
-  opts: { to: string; subject: string; text: string; html?: string }
+  opts: { to: string; subject: string; text: string; html?: string },
 ): Promise<void> {
   await transport.sendMail({
     from: `"${cfg.fromName}" <${cfg.fromEmail}>`,
@@ -148,16 +164,61 @@ async function sendWithTransport(
   });
 }
 
+async function sendViaNodemailer(
+  cfg: SmtpConfig,
+  opts: { to: string; subject: string; text: string; html?: string },
+): Promise<{ ok: boolean; via: string }> {
+  const ready = await getTransporter();
+  if (!ready) {
+    return { ok: false, via: 'nodemailer:not-configured' };
+  }
+
+  const { transport } = ready;
+  try {
+    await sendWithTransport(transport, cfg, opts);
+    return { ok: true, via: `nodemailer:${cfg.host}:${cfg.port}` };
+  } catch (primaryErr) {
+    const alt = alternateSmtpConfig(cfg);
+    if (!alt) throw primaryErr;
+    logger.warn('[mail] nodemailer primary SMTP failed — trying alternate port', {
+      from: `${cfg.host}:${cfg.port}`,
+      to: `${alt.host}:${alt.port}`,
+      err: (primaryErr as Error).message,
+    });
+    const altTransport = buildTransport(alt);
+    await sendWithTransport(altTransport, alt, opts);
+    transporter = altTransport;
+    cachedKey = `${alt.host}|${alt.port}|${alt.user}|${alt.password.length}`;
+    return { ok: true, via: `nodemailer:${alt.host}:${alt.port}` };
+  }
+}
+
+async function sendViaPhpMailer(
+  cfg: SmtpConfig,
+  opts: { to: string; subject: string; text: string; html?: string },
+): Promise<{ ok: boolean; via: string; message?: string }> {
+  const result = await invokePhpMailer(cfg, opts);
+  if (!result.ok) {
+    return { ok: false, via: 'phpmailer', message: result.message };
+  }
+  return { ok: true, via: result.via || 'phpmailer' };
+}
+
 export async function sendMail(opts: {
   to: string;
   subject: string;
   text: string;
   html?: string;
 }): Promise<boolean> {
-  const ready = await getTransporter();
-  if (!ready) {
+  const cfg = await resolveSmtpConfig();
+  const recipient = normalizeRecipient(opts.to);
+  if (!recipient) {
+    logger.warn('[mail] invalid recipient — skip send', { to: opts.to, subject: opts.subject });
+    return false;
+  }
+  if (!cfg) {
     logger.warn('[mail] SMTP not configured — skip send', {
-      to: opts.to,
+      to: recipient,
       subject: opts.subject,
       envHost: Boolean(process.env.SMTP_HOST?.trim()),
       envUser: Boolean(process.env.SMTP_USER?.trim() || process.env.SMTP_FROM_EMAIL?.trim()),
@@ -166,44 +227,62 @@ export async function sendMail(opts: {
     return false;
   }
 
-  const { transport, cfg } = ready;
-  try {
-    await sendWithTransport(transport, cfg, opts);
-    logger.info('[mail] sent', { to: opts.to, subject: opts.subject, via: `${cfg.host}:${cfg.port}` });
-    return true;
-  } catch (primaryErr) {
-    const alt = alternateSmtpConfig(cfg);
-    if (!alt) {
-      logger.error('[mail] send failed', {
-        to: opts.to,
-        subject: opts.subject,
-        via: `${cfg.host}:${cfg.port}`,
-        err: (primaryErr as Error).message,
-      });
-      throw primaryErr;
-    }
-    logger.warn('[mail] primary SMTP failed — trying alternate port', {
-      from: `${cfg.host}:${cfg.port}`,
-      to: `${alt.host}:${alt.port}`,
-      err: (primaryErr as Error).message,
-    });
+  const payload = { ...opts, to: recipient };
+  const mode = getMailTransportMode();
+  let lastError: Error | undefined;
+
+  const tryNodemailer = async (): Promise<boolean> => {
     try {
-      const altTransport = buildTransport(alt);
-      await sendWithTransport(altTransport, alt, opts);
-      transporter = altTransport;
-      cachedKey = `${alt.host}|${alt.port}|${alt.user}|${alt.password.length}`;
-      logger.info('[mail] sent', { to: opts.to, subject: opts.subject, via: `${alt.host}:${alt.port}` });
-      return true;
-    } catch (altErr) {
-      logger.error('[mail] send failed on both SMTP ports', {
-        to: opts.to,
+      const result = await sendViaNodemailer(cfg, payload);
+      if (result.ok) {
+        logger.info('[mail] sent', { to: recipient, subject: opts.subject, via: result.via });
+        return true;
+      }
+      return false;
+    } catch (err) {
+      lastError = err as Error;
+      logger.warn('[mail] nodemailer send failed', {
+        to: recipient,
         subject: opts.subject,
-        primary: (primaryErr as Error).message,
-        alternate: (altErr as Error).message,
+        err: lastError.message,
       });
-      throw primaryErr;
+      return false;
     }
+  };
+
+  const tryPhpMailer = async (): Promise<boolean> => {
+    const result = await sendViaPhpMailer(cfg, payload);
+    if (result.ok) {
+      logger.info('[mail] sent', { to: recipient, subject: opts.subject, via: result.via });
+      return true;
+    }
+    logger.warn('[mail] PHPMailer send failed', {
+      to: recipient,
+      subject: opts.subject,
+      err: result.message,
+    });
+    return false;
+  };
+
+  if (mode === 'phpmailer') {
+    const ok = await tryPhpMailer();
+    if (!ok && lastError) throw lastError;
+    if (!ok) throw new Error('PHPMailer send failed');
+    return true;
   }
+
+  if (mode === 'nodemailer') {
+    const ok = await tryNodemailer();
+    if (!ok && lastError) throw lastError;
+    if (!ok) return false;
+    return true;
+  }
+
+  // auto: nodemailer first, PHPMailer fallback (Hostinger-friendly)
+  if (await tryNodemailer()) return true;
+  if (await tryPhpMailer()) return true;
+  if (lastError) throw lastError;
+  return false;
 }
 
 function brandShell(title: string, bodyHtml: string): string {
@@ -296,11 +375,33 @@ export async function sendAccountCredentialsEmail(opts: {
     html: brandShell(
       title,
       `<p>${escapeHtml(lead)}</p>
-       <p><strong>Email:</strong> ${escapeHtml(opts.to)}<br/><strong>Temporary password:</strong> <code>${escapeHtml(opts.temporaryPassword)}</code></p>
+       <p><strong>Email:</strong> ${escapeHtml(opts.to)}</p>
+       <p style="margin:16px 0 8px;font-size:13px;color:#4b5563;">Your one-time sign-in code:</p>
+       <p style="margin:0 0 16px;padding:14px 18px;background:#f0fdf4;border:1px dashed #004225;border-radius:8px;font-family:Consolas,Monaco,monospace;font-size:20px;letter-spacing:0.08em;color:#004225;">${escapeHtml(opts.temporaryPassword)}</p>
        <p style="margin:20px 0;"><a href="${loginUrl}" style="display:inline-block;background:#004225;color:#fff;text-decoration:none;padding:12px 18px;border-radius:6px;font-weight:600;">Sign in to MAMS</a></p>
-       <p style="font-size:13px;color:#6b7280;">Change your password after signing in. If you did not request this, contact your MIMITO MAMS administrator.</p>`,
+       <p style="font-size:13px;color:#6b7280;">Use this temporary password once, then change it immediately after signing in. If you did not request this, contact your MIMITO MAMS administrator.</p>`,
     ),
   });
+}
+
+/** Send account credentials / OTP-style temporary password to the user's registered email. */
+export async function emailCredentialsToUser(opts: {
+  to: string;
+  fullName?: string;
+  temporaryPassword: string;
+  reason: 'created' | 'reset' | 'forgot';
+}): Promise<boolean> {
+  const to = normalizeRecipient(opts.to);
+  if (!to) {
+    logger.warn('[mail] credentials email skipped — invalid recipient', { to: opts.to });
+    return false;
+  }
+  try {
+    return await sendAccountCredentialsEmail({ ...opts, to });
+  } catch (err) {
+    logger.error('[mail] credentials email failed', { to, err: (err as Error).message });
+    return false;
+  }
 }
 
 /** Persist env SMTP into system_settings so Admin → Email UI shows live values (password masked). */
@@ -338,21 +439,27 @@ export async function isSmtpConfiguredAsync(): Promise<boolean> {
 }
 
 export async function verifySmtpConnection(): Promise<{ ok: boolean; message: string }> {
-  const ready = await getTransporter();
-  if (!ready) {
+  const cfg = await resolveSmtpConfig();
+  if (!cfg) {
     return {
       ok: false,
       message: `SMTP not configured (env host=${Boolean(process.env.SMTP_HOST?.trim())} user=${Boolean(
-        process.env.SMTP_USER?.trim() || process.env.SMTP_FROM_EMAIL?.trim()
+        process.env.SMTP_USER?.trim() || process.env.SMTP_FROM_EMAIL?.trim(),
       )} passLen=${(process.env.SMTP_PASSWORD || '').length})`,
     };
   }
-  try {
-    await ready.transport.verify();
-    return { ok: true, message: `SMTP OK (${ready.cfg.host}:${ready.cfg.port})` };
-  } catch (err) {
-    const alt = alternateSmtpConfig(ready.cfg);
-    if (alt) {
+
+  const mode = getMailTransportMode();
+
+  const verifyNodemailer = async (): Promise<{ ok: boolean; message: string } | null> => {
+    const ready = await getTransporter();
+    if (!ready) return null;
+    try {
+      await ready.transport.verify();
+      return { ok: true, message: `SMTP OK (${ready.cfg.host}:${ready.cfg.port})` };
+    } catch (err) {
+      const alt = alternateSmtpConfig(ready.cfg);
+      if (!alt) return { ok: false, message: (err as Error).message };
       try {
         const altTransport = buildTransport(alt);
         await altTransport.verify();
@@ -366,8 +473,38 @@ export async function verifySmtpConnection(): Promise<{ ok: boolean; message: st
         };
       }
     }
-    return { ok: false, message: (err as Error).message };
+  };
+
+  const verifyPhp = async (): Promise<{ ok: boolean; message: string } | null> => {
+    if (!isPhpMailerRelayInstalled()) return null;
+    const result = await invokePhpMailer(cfg, {
+      to: cfg.fromEmail,
+      subject: 'MAMS SMTP verify',
+      text: 'verify',
+      verify: true,
+    });
+    if (!result.ok) return { ok: false, message: result.message || 'PHPMailer verify failed' };
+    return { ok: true, message: `SMTP OK (${result.via || 'phpmailer'})` };
+  };
+
+  if (mode === 'phpmailer') {
+    const php = await verifyPhp();
+    return php || { ok: false, message: 'PHPMailer relay not installed' };
   }
+
+  if (mode === 'nodemailer') {
+    const node = await verifyNodemailer();
+    return node || { ok: false, message: 'Nodemailer transport unavailable' };
+  }
+
+  const node = await verifyNodemailer();
+  if (node?.ok) return node;
+  const php = await verifyPhp();
+  if (php?.ok) return php;
+  return {
+    ok: false,
+    message: [node?.message, php?.message].filter(Boolean).join(' | ') || 'SMTP verification failed',
+  };
 }
 
 /** Safe status for /health — never includes password. */
@@ -376,15 +513,26 @@ export async function getSmtpPublicStatus(): Promise<{
   host: string | null;
   port: number | null;
   fromEmail: string | null;
+  transport: MailTransportMode;
+  phpmailerInstalled: boolean;
 }> {
   const cfg = await resolveSmtpConfig();
   if (!cfg) {
-    return { configured: false, host: null, port: null, fromEmail: null };
+    return {
+      configured: false,
+      host: null,
+      port: null,
+      fromEmail: null,
+      transport: getMailTransportMode(),
+      phpmailerInstalled: isPhpMailerRelayInstalled(),
+    };
   }
   return {
     configured: true,
     host: cfg.host,
     port: cfg.port,
     fromEmail: cfg.fromEmail,
+    transport: getMailTransportMode(),
+    phpmailerInstalled: isPhpMailerRelayInstalled(),
   };
 }

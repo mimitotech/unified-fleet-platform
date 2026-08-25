@@ -5,6 +5,7 @@ import { requireModule, requireWriteAccess } from '../../middleware/rbac.js';
 import { success, error } from '../../utils/response.js';
 import { toCamelRows } from '../../utils/mapper.js';
 import { DriverScoringService } from '../../services/DriverScoringService.js';
+import { resolveTenantAssetId } from '../../services/resolveTenantAssetId.js';
 
 const router = Router();
 const mod = requireModule('drivers');
@@ -215,10 +216,14 @@ router.post('/', requireTenant, mod, requireWriteAccess, async (req: TenantReque
   await DriverScoringService.ensureSchema();
   const {
     name, licenseNumber, phone, email, status, assignedAssetId, fuelCardNumber, hireDate,
-    permitClass, licenseExpiryDate,
+    permitClass, licenseExpiryDate, assignedAssetName, assignedAssetPlate,
   } = req.body;
   if (!name || !licenseNumber) return error(res, 'name and licenseNumber required');
   try {
+    const resolvedAssetId = await resolveTenantAssetId(String(req.tenantId), assignedAssetId, {
+      name: assignedAssetName,
+      plate: assignedAssetPlate,
+    });
     const { rows } = await query(
       `INSERT INTO drivers (
          tenant_id, name, license_number, phone, email, status, assigned_asset_id,
@@ -232,7 +237,7 @@ router.post('/', requireTenant, mod, requireWriteAccess, async (req: TenantReque
         phone || '',
         email || null,
         status || 'available',
-        assignedAssetId || null,
+        resolvedAssetId,
         fuelCardNumber || null,
         hireDate || null,
         permitClass || null,
@@ -245,6 +250,13 @@ router.post('/', requireTenant, mod, requireWriteAccess, async (req: TenantReque
     if (/duplicate|unique|uq_drivers/i.test(msg)) {
       return error(res, 'A driver with this license number already exists', 409);
     }
+    if (/foreign key|fk_drivers_asset/i.test(msg)) {
+      return error(
+        res,
+        'Assigned vehicle was not found in the fleet assets list. Clear the vehicle or pick another.',
+        400,
+      );
+    }
     return error(res, msg);
   }
 });
@@ -253,7 +265,7 @@ router.patch('/:id', requireTenant, mod, requireWriteAccess, async (req: TenantR
   await DriverScoringService.ensureSchema();
   const {
     name, phone, email, status, assignedAssetId, fuelCardNumber, hireDate, licenseNumber,
-    permitClass, licenseExpiryDate,
+    permitClass, licenseExpiryDate, assignedAssetName, assignedAssetPlate,
   } = req.body;
   // Explicit null clears assignment / fuel card; omit key to leave unchanged
   const clearAsset = Object.prototype.hasOwnProperty.call(req.body, 'assignedAssetId');
@@ -261,43 +273,64 @@ router.patch('/:id', requireTenant, mod, requireWriteAccess, async (req: TenantR
   const clearHire = Object.prototype.hasOwnProperty.call(req.body, 'hireDate');
   const clearPermitClass = Object.prototype.hasOwnProperty.call(req.body, 'permitClass');
   const clearLicenseExpiry = Object.prototype.hasOwnProperty.call(req.body, 'licenseExpiryDate');
-  const { rows } = await query(
-    `UPDATE drivers SET
-       name = COALESCE($3, name),
-       phone = COALESCE($4, phone),
-       email = COALESCE($5, email),
-       status = COALESCE($6, status),
-       assigned_asset_id = CASE WHEN $7 = 1 THEN $8 ELSE assigned_asset_id END,
-       fuel_card_number = CASE WHEN $9 = 1 THEN $10 ELSE fuel_card_number END,
-       hire_date = CASE WHEN $11 = 1 THEN $12 ELSE hire_date END,
-       license_number = COALESCE($13, license_number),
-       permit_class = CASE WHEN $14 = 1 THEN $15 ELSE permit_class END,
-       license_expiry_date = CASE WHEN $16 = 1 THEN $17 ELSE license_expiry_date END,
-       updated_at = NOW()
-     WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
-     RETURNING *`,
-    [
-      req.params.id,
-      req.tenantId,
-      name ?? null,
-      phone ?? null,
-      email ?? null,
-      status ?? null,
-      clearAsset ? 1 : 0,
-      clearAsset ? assignedAssetId || null : null,
-      clearFuel ? 1 : 0,
-      clearFuel ? fuelCardNumber || null : null,
-      clearHire ? 1 : 0,
-      clearHire ? hireDate || null : null,
-      licenseNumber ?? null,
-      clearPermitClass ? 1 : 0,
-      clearPermitClass ? permitClass || null : null,
-      clearLicenseExpiry ? 1 : 0,
-      clearLicenseExpiry ? licenseExpiryDate || null : null,
-    ]
-  );
-  if (!rows[0]) return error(res, 'Driver not found', 404);
-  return success(res, toCamelRows(rows)[0]);
+
+  let resolvedAssetId: string | null = null;
+  if (clearAsset) {
+    resolvedAssetId = await resolveTenantAssetId(String(req.tenantId), assignedAssetId, {
+      name: assignedAssetName,
+      plate: assignedAssetPlate,
+    });
+  }
+
+  try {
+    const { rows } = await query(
+      `UPDATE drivers SET
+         name = COALESCE($3, name),
+         phone = COALESCE($4, phone),
+         email = COALESCE($5, email),
+         status = COALESCE($6, status),
+         assigned_asset_id = CASE WHEN $7 = 1 THEN $8 ELSE assigned_asset_id END,
+         fuel_card_number = CASE WHEN $9 = 1 THEN $10 ELSE fuel_card_number END,
+         hire_date = CASE WHEN $11 = 1 THEN $12 ELSE hire_date END,
+         license_number = COALESCE($13, license_number),
+         permit_class = CASE WHEN $14 = 1 THEN $15 ELSE permit_class END,
+         license_expiry_date = CASE WHEN $16 = 1 THEN $17 ELSE license_expiry_date END,
+         updated_at = NOW()
+       WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+       RETURNING *`,
+      [
+        req.params.id,
+        req.tenantId,
+        name ?? null,
+        phone ?? null,
+        email ?? null,
+        status ?? null,
+        clearAsset ? 1 : 0,
+        clearAsset ? resolvedAssetId : null,
+        clearFuel ? 1 : 0,
+        clearFuel ? fuelCardNumber || null : null,
+        clearHire ? 1 : 0,
+        clearHire ? hireDate || null : null,
+        licenseNumber ?? null,
+        clearPermitClass ? 1 : 0,
+        clearPermitClass ? permitClass || null : null,
+        clearLicenseExpiry ? 1 : 0,
+        clearLicenseExpiry ? licenseExpiryDate || null : null,
+      ]
+    );
+    if (!rows[0]) return error(res, 'Driver not found', 404);
+    return success(res, toCamelRows(rows)[0]);
+  } catch (e) {
+    const msg = (e as Error).message || '';
+    if (/foreign key|fk_drivers_asset/i.test(msg)) {
+      return error(
+        res,
+        'Assigned vehicle was not found in the fleet assets list. Clear the vehicle or pick another.',
+        400,
+      );
+    }
+    return error(res, msg);
+  }
 });
 
 router.delete('/:id', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {

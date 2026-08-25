@@ -4,9 +4,15 @@ import { requireTenant, type TenantRequest } from '../../middleware/tenant.js';
 import { requireModule, requireWriteAccess } from '../../middleware/rbac.js';
 import { success, error } from '../../utils/response.js';
 import { toCamelRows } from '../../utils/mapper.js';
+import { isUuid, resolveTenantAssetId } from '../../services/resolveTenantAssetId.js';
 
 const router = Router();
 const mod = requireModule('routes');
+
+function sanitizeDriverId(driverId: unknown): string | null {
+  if (driverId == null || String(driverId).trim() === '') return null;
+  return isUuid(driverId) ? String(driverId).trim() : null;
+}
 
 type Checkpoint = {
   id?: string;
@@ -147,7 +153,7 @@ router.post('/from-trip/:tripId', requireTenant, mod, requireWriteAccess, async 
       trip.asset_id || null,
       trip.unit_name || null,
       null,
-      req.body?.driverId || null,
+      sanitizeDriverId(req.body?.driverId),
       req.body?.driverName || null,
       depTime,
       arrTime,
@@ -169,18 +175,30 @@ router.post('/', requireTenant, mod, requireWriteAccess, async (req: TenantReque
   if (!name) return error(res, 'name required');
   const checkpoints = Array.isArray(waypoints) ? (waypoints as Checkpoint[]) : [];
   const autoDuration = durationMinutesFromCheckpoints(checkpoints);
-  const { rows } = await query(
-    `INSERT INTO fleet_routes (tenant_id, name, status, asset_id, asset_name, asset_plate, driver_id, driver_name,
-       start_time, end_time, distance, waypoints, eta, color, estimated_duration, notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
-    [
-      req.tenantId, name, status || 'scheduled', assetId, assetName, assetPlate,
-      driverId, driverName, startTime || new Date(), endTime || null, distance || 0,
-      JSON.stringify(checkpoints), eta || endTime || null, color || 'blue',
-      estimatedDuration || autoDuration || 0, notes,
-    ]
-  );
-  return success(res, toCamelRows(rows)[0], 201);
+  try {
+    const resolvedAssetId = await resolveTenantAssetId(String(req.tenantId), assetId, {
+      name: assetName,
+      plate: assetPlate,
+    });
+    const { rows } = await query(
+      `INSERT INTO fleet_routes (tenant_id, name, status, asset_id, asset_name, asset_plate, driver_id, driver_name,
+         start_time, end_time, distance, waypoints, eta, color, estimated_duration, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+      [
+        req.tenantId, name, status || 'scheduled', resolvedAssetId, assetName || null, assetPlate || null,
+        sanitizeDriverId(driverId), driverName || null, startTime || new Date(), endTime || null, distance || 0,
+        JSON.stringify(checkpoints), eta || endTime || null, color || 'blue',
+        estimatedDuration || autoDuration || 0, notes,
+      ]
+    );
+    return success(res, toCamelRows(rows)[0], 201);
+  } catch (e) {
+    const msg = (e as Error).message || '';
+    if (/foreign key|fk_fleet_routes/i.test(msg)) {
+      return error(res, 'Vehicle or driver reference is invalid. Clear the selection or pick another.', 400);
+    }
+    return error(res, msg);
+  }
 });
 
 router.patch('/:id', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {
@@ -195,52 +213,70 @@ router.patch('/:id', requireTenant, mod, requireWriteAccess, async (req: TenantR
     computedDuration = durationMinutesFromCheckpoints(waypoints as Checkpoint[]);
   }
 
-  const { rows } = await query(
-    `UPDATE fleet_routes SET
-       name = COALESCE($3, name),
-       status = COALESCE($4, status),
-       end_time = COALESCE($5, end_time),
-       actual_start_time = COALESCE($6, actual_start_time),
-       actual_duration = COALESCE($7, actual_duration),
-       fuel_usage = COALESCE($8, fuel_usage),
-       notes = COALESCE($9, notes),
-       waypoints = COALESCE($10, waypoints),
-       estimated_duration = COALESCE($11, estimated_duration),
-       distance = COALESCE($12, distance),
-       driver_id = COALESCE($13, driver_id),
-       driver_name = COALESCE($14, driver_name),
-       asset_id = COALESCE($15, asset_id),
-       asset_name = COALESCE($16, asset_name),
-       asset_plate = COALESCE($17, asset_plate),
-       start_time = COALESCE($18, start_time),
-       eta = COALESCE($19, eta),
-       updated_at = NOW()
-     WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
-     RETURNING *`,
-    [
-      req.params.id,
-      req.tenantId,
-      name ?? null,
-      status ?? null,
-      endTime ?? null,
-      actualStartTime ?? null,
-      actualDuration ?? null,
-      fuelUsage ?? null,
-      notes ?? null,
-      waypoints != null ? JSON.stringify(waypoints) : null,
-      computedDuration ?? null,
-      distance ?? null,
-      driverId ?? null,
-      driverName ?? null,
-      assetId ?? null,
-      assetName ?? null,
-      assetPlate ?? null,
-      startTime ?? null,
-      eta ?? null,
-    ]
-  );
-  if (!rows[0]) return error(res, 'Route not found', 404);
-  return success(res, toCamelRows(rows)[0]);
+  let resolvedAssetId: string | null | undefined;
+  if (assetId !== undefined) {
+    resolvedAssetId = await resolveTenantAssetId(String(req.tenantId), assetId, {
+      name: assetName,
+      plate: assetPlate,
+    });
+  }
+
+  try {
+    const { rows } = await query(
+      `UPDATE fleet_routes SET
+         name = COALESCE($3, name),
+         status = COALESCE($4, status),
+         end_time = COALESCE($5, end_time),
+         actual_start_time = COALESCE($6, actual_start_time),
+         actual_duration = COALESCE($7, actual_duration),
+         fuel_usage = COALESCE($8, fuel_usage),
+         notes = COALESCE($9, notes),
+         waypoints = COALESCE($10, waypoints),
+         estimated_duration = COALESCE($11, estimated_duration),
+         distance = COALESCE($12, distance),
+         driver_id = CASE WHEN $13 = 1 THEN $14 ELSE driver_id END,
+         driver_name = COALESCE($15, driver_name),
+         asset_id = CASE WHEN $16 = 1 THEN $17 ELSE asset_id END,
+         asset_name = COALESCE($18, asset_name),
+         asset_plate = COALESCE($19, asset_plate),
+         start_time = COALESCE($20, start_time),
+         eta = COALESCE($21, eta),
+         updated_at = NOW()
+       WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+       RETURNING *`,
+      [
+        req.params.id,
+        req.tenantId,
+        name ?? null,
+        status ?? null,
+        endTime ?? null,
+        actualStartTime ?? null,
+        actualDuration ?? null,
+        fuelUsage ?? null,
+        notes ?? null,
+        waypoints != null ? JSON.stringify(waypoints) : null,
+        computedDuration ?? null,
+        distance ?? null,
+        driverId !== undefined ? 1 : 0,
+        driverId !== undefined ? sanitizeDriverId(driverId) : null,
+        driverName ?? null,
+        assetId !== undefined ? 1 : 0,
+        assetId !== undefined ? resolvedAssetId ?? null : null,
+        assetName ?? null,
+        assetPlate ?? null,
+        startTime ?? null,
+        eta ?? null,
+      ]
+    );
+    if (!rows[0]) return error(res, 'Route not found', 404);
+    return success(res, toCamelRows(rows)[0]);
+  } catch (e) {
+    const msg = (e as Error).message || '';
+    if (/foreign key|fk_fleet_routes/i.test(msg)) {
+      return error(res, 'Vehicle or driver reference is invalid. Clear the selection or pick another.', 400);
+    }
+    return error(res, msg);
+  }
 });
 
 router.delete('/:id', requireTenant, mod, requireWriteAccess, async (req: TenantRequest, res) => {

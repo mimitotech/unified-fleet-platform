@@ -182,7 +182,18 @@ export function BreakdownReportModal({
     if (!isSubmitting) onOpenChange(false);
   }, [onOpenChange, isSubmitting]);
 
-  const handleUnitChange = (unitId: string, unit: FleetUnit) => {
+  const handleUnitChange = (unitId: string, unit: FleetUnit | null) => {
+    if (!unit) {
+      setSelectedUnit(undefined);
+      setFormData((prev) => ({
+        ...prev,
+        vehicleId: '',
+        vehicleName: '',
+        vehiclePlate: '',
+        unit: undefined,
+      }));
+      return;
+    }
     setSelectedUnit(unit);
     const category = resolveWorkshopAssetCategory(unit);
     setFormData((prev) => ({

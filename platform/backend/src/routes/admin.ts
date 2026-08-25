@@ -392,7 +392,24 @@ router.post('/users/:id/reset-password', async (req: AuthRequest, res) => {
       resourceType: 'user',
       resourceId: userId,
     });
-    return success(res, { reset: true, temporaryPassword: result.temporaryPassword });
+
+    let credentialsEmailed = false;
+    try {
+      const { emailCredentialsToUser } = await import('../services/EmailService.js');
+      credentialsEmailed = await emailCredentialsToUser({
+        to: result.email,
+        temporaryPassword: result.temporaryPassword,
+        reason: 'reset',
+      });
+    } catch {
+      credentialsEmailed = false;
+    }
+
+    return success(res, {
+      reset: true,
+      temporaryPassword: result.temporaryPassword,
+      credentialsEmailed,
+    });
   } catch (e) {
     const err = e as Error & { status?: number };
     return error(res, err.message || 'Could not reset password', err.status || 500);
@@ -442,7 +459,23 @@ router.post('/system-users', requireSuperAdmin, async (req: AuthRequest, res) =>
       actorUserId: req.user?.id,
       actorEmail: req.user?.email,
     });
-    return success(res, user, 201);
+
+    let credentialsEmailed = false;
+    if (user.temporaryPassword) {
+      try {
+        const { emailCredentialsToUser } = await import('../services/EmailService.js');
+        credentialsEmailed = await emailCredentialsToUser({
+          to: user.email,
+          fullName: user.full_name,
+          temporaryPassword: user.temporaryPassword,
+          reason: 'created',
+        });
+      } catch {
+        credentialsEmailed = false;
+      }
+    }
+
+    return success(res, { ...user, credentialsEmailed }, 201);
   } catch (e) {
     const err = e as Error & { status?: number };
     return error(res, err.message, err.status || 500);
@@ -469,7 +502,24 @@ router.patch('/system-users/:id', requireSuperAdmin, async (req: AuthRequest, re
 router.post('/system-users/:id/reset-password', requireSuperAdmin, async (req: AuthRequest, res) => {
   try {
     const result = await resetSystemUserPassword(String(req.params.id), req.body?.password);
-    return success(res, { reset: true, temporaryPassword: result.temporaryPassword });
+
+    let credentialsEmailed = false;
+    try {
+      const { emailCredentialsToUser } = await import('../services/EmailService.js');
+      credentialsEmailed = await emailCredentialsToUser({
+        to: result.email,
+        temporaryPassword: result.temporaryPassword,
+        reason: 'reset',
+      });
+    } catch {
+      credentialsEmailed = false;
+    }
+
+    return success(res, {
+      reset: true,
+      temporaryPassword: result.temporaryPassword,
+      credentialsEmailed,
+    });
   } catch (e) {
     const err = e as Error & { status?: number };
     return error(res, err.message || 'Could not reset password', err.status || 500);
@@ -1217,7 +1267,31 @@ router.post('/tenants/:id/users', async (req: AuthRequest, res) => {
       auditAction: 'user.create',
       auditDetails: { by: 'admin' },
     });
-    return success(res, user, 201);
+
+    let credentialsEmailed = false;
+    if (user.temporaryPassword) {
+      try {
+        const { emailCredentialsToUser } = await import('../services/EmailService.js');
+        credentialsEmailed = await emailCredentialsToUser({
+          to: user.email,
+          fullName: user.full_name,
+          temporaryPassword: user.temporaryPassword,
+          reason: 'created',
+        });
+      } catch {
+        credentialsEmailed = false;
+      }
+    }
+
+    return success(
+      res,
+      {
+        ...user,
+        temporaryPassword: credentialsEmailed ? undefined : user.temporaryPassword,
+        credentialsEmailed,
+      },
+      201,
+    );
   } catch (e) {
     const err = e as Error & { status?: number };
     return error(res, err.message, err.status || 500);
@@ -1299,10 +1373,25 @@ router.post('/tenants/:id/users/from-wialon', async (req: AuthRequest, res) => {
       details: { wialonUserId, email: user.email },
     });
 
+    let credentialsEmailed = false;
+    if (user.created && user.temporaryPassword && user.email) {
+      try {
+        const { emailCredentialsToUser } = await import('../services/EmailService.js');
+        credentialsEmailed = await emailCredentialsToUser({
+          to: user.email,
+          temporaryPassword: user.temporaryPassword,
+          reason: 'created',
+        });
+      } catch {
+        credentialsEmailed = false;
+      }
+    }
+
     return success(res, {
       ...user,
       role: role || user.role,
-      temporaryPassword: user.temporaryPassword,
+      temporaryPassword: credentialsEmailed ? undefined : user.temporaryPassword,
+      credentialsEmailed,
     }, user.created ? 201 : 200);
   } catch (e) {
     return error(res, (e as Error).message);

@@ -87,4 +87,20 @@ runNode(vite, 'build', path.join(root, 'frontend'));
 log('Building backend…');
 runNode(tsc, '-p backend/tsconfig.json');
 
+const mailRelay = path.join(root, 'mail-relay');
+const composerJson = path.join(mailRelay, 'composer.json');
+if (fs.existsSync(composerJson)) {
+  log('Installing PHPMailer relay (mail-relay)…');
+  try {
+    execSync('composer install --no-dev --optimize-autoloader', {
+      stdio: 'inherit',
+      cwd: mailRelay,
+      env: process.env,
+    });
+  } catch (err) {
+    log(`composer install warning: ${err instanceof Error ? err.message : String(err)}`);
+    log('If outbound mail fails on Hostinger, run: cd mail-relay && composer install --no-dev');
+  }
+}
+
 log('Build complete.');

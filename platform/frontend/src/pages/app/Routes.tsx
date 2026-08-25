@@ -198,7 +198,7 @@ export default function RoutesPage() {
                       </div>
                       <div>
                         <Label>Vehicle</Label>
-                        <FleetUnitSelect value={unit?.id} onValueChange={(_, u) => setUnit(u)} />
+                        <FleetUnitSelect value={unit?.id} onValueChange={(_, u) => setUnit(u || undefined)} />
                       </div>
                       <div>
                         <Label>Driver</Label>

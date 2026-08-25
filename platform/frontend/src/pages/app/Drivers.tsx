@@ -63,6 +63,8 @@ const emptyForm = {
   email: '',
   status: 'available',
   assignedAssetId: '',
+  assignedAssetName: '',
+  assignedAssetPlate: '',
   fuelCardNumber: '',
 };
 
@@ -223,6 +225,8 @@ export default function Drivers() {
       email: d.email || '',
       status: d.status || 'available',
       assignedAssetId: d.assignedAssetId || '',
+      assignedAssetName: d.assignedAssetName || '',
+      assignedAssetPlate: d.assignedAssetPlate || '',
       fuelCardNumber: d.fuelCardNumber || '',
     });
     setOpen(true);
@@ -242,8 +246,13 @@ export default function Drivers() {
       email: form.email.trim() || undefined,
       status: form.status,
       assignedAssetId: form.assignedAssetId || null,
+      assignedAssetName: form.assignedAssetName || null,
+      assignedAssetPlate: form.assignedAssetPlate || null,
       fuelCardNumber: form.fuelCardNumber.trim() || null,
-    } as Partial<Driver>;
+    } as Partial<Driver> & {
+      assignedAssetName?: string | null;
+      assignedAssetPlate?: string | null;
+    };
 
     if (editing) {
       updateDriver.mutate(
@@ -752,7 +761,14 @@ export default function Drivers() {
               <Label>Assigned vehicle</Label>
               <FleetUnitSelect
                 value={form.assignedAssetId || undefined}
-                onValueChange={(id) => setForm((f) => ({ ...f, assignedAssetId: id || '' }))}
+                onValueChange={(id, unit) =>
+                  setForm((f) => ({
+                    ...f,
+                    assignedAssetId: id || '',
+                    assignedAssetName: unit?.name || '',
+                    assignedAssetPlate: unit?.plate || '',
+                  }))
+                }
               />
             </div>
           </div>

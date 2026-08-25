@@ -253,7 +253,7 @@ router.post('/forgot-password', async (req, res) => {
     return error(res, 'No account found with that email', 404);
   }
 
-  const { isSmtpConfiguredAsync, sendAccountCredentialsEmail } = await import('../services/EmailService.js');
+  const { isSmtpConfiguredAsync, emailCredentialsToUser } = await import('../services/EmailService.js');
   const smtpReady = await isSmtpConfiguredAsync();
   if (!smtpReady) {
     await AuditService.log({
@@ -276,7 +276,7 @@ router.post('/forgot-password', async (req, res) => {
   let emailed = false;
   let emailError: string | undefined;
   try {
-    emailed = await sendAccountCredentialsEmail({
+    emailed = await emailCredentialsToUser({
       to: user.email,
       fullName: user.full_name || undefined,
       temporaryPassword,

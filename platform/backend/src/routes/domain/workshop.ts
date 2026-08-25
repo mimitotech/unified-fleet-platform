@@ -19,12 +19,10 @@ import {
   safeWorkshopAlert,
   syncOpenWorkshopAlerts,
 } from '../../services/workshopAlertService.js';
+import { isUuid, resolveTenantAssetId } from '../../services/resolveTenantAssetId.js';
 
 const router = Router();
 const mod = requireModule('workshop');
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /** Resolve optional asset UUID; map external id via asset_mappings when possible. */
 async function resolveWorkshopAssetId(
@@ -33,36 +31,23 @@ async function resolveWorkshopAssetId(
   vehicleId: unknown,
 ): Promise<string | null> {
   const rawAsset = assetId != null ? String(assetId).trim() : '';
-  if (rawAsset && UUID_RE.test(rawAsset)) return rawAsset;
-
-  const external =
-    (vehicleId != null && /^\d+$/.test(String(vehicleId).trim()) ? String(vehicleId).trim() : '') ||
-    (rawAsset && /^\d+$/.test(rawAsset) ? rawAsset : '');
-  if (!external) return null;
-
-  try {
-    const { rows } = await query<{ asset_id: string }>(
-      `SELECT am.asset_id
-       FROM asset_mappings am
-       INNER JOIN assets a ON a.id = am.asset_id
-       WHERE a.tenant_id = $1 AND am.source_type = 'wialon' AND am.external_id = $2
-       LIMIT 1`,
-      [tenantId, external],
-    );
-    return rows[0]?.asset_id ?? null;
-  } catch {
-    return null;
+  if (rawAsset) {
+    return resolveTenantAssetId(tenantId, rawAsset, { createIfMissing: true });
   }
+  if (vehicleId != null && String(vehicleId).trim() !== '') {
+    return resolveTenantAssetId(tenantId, vehicleId, { createIfMissing: true });
+  }
+  return null;
 }
 
 function sanitizeDriverId(driverId: unknown): string | null {
   if (driverId == null || String(driverId).trim() === '') return null;
-  return UUID_RE.test(String(driverId).trim()) ? String(driverId).trim() : null;
+  return isUuid(driverId) ? String(driverId).trim() : null;
 }
 
 function sanitizeUuid(value: unknown): string | null {
   if (value == null || String(value).trim() === '') return null;
-  return UUID_RE.test(String(value).trim()) ? String(value).trim() : null;
+  return isUuid(value) ? String(value).trim() : null;
 }
 
 function asJson(value: unknown, fallback: unknown) {
