@@ -34,14 +34,14 @@ function resolveMailRelayRoot(): string {
 
 const mailRelayRoot = resolveMailRelayRoot();
 const sendScript = path.join(mailRelayRoot, 'send-mail.php');
-const vendorAutoload = path.join(mailRelayRoot, 'vendor/autoload.php');
+const phpmailerCore = path.join(mailRelayRoot, 'phpmailer', 'src', 'PHPMailer.php');
 
 export function getMailRelayRoot(): string {
   return mailRelayRoot;
 }
 
 export function isPhpMailerRelayInstalled(): boolean {
-  return fs.existsSync(sendScript) && fs.existsSync(vendorAutoload);
+  return fs.existsSync(sendScript) && fs.existsSync(phpmailerCore);
 }
 
 function smtpEnv(cfg: SmtpConfig): NodeJS.ProcessEnv {
@@ -124,7 +124,7 @@ export async function invokePhpMailer(
   if (!isPhpMailerRelayInstalled()) {
     return {
       ok: false,
-      message: `PHPMailer relay not installed at ${mailRelayRoot} (run platform/scripts/install-mail-relay.mjs)`,
+      message: `PHPMailer source missing at ${mailRelayRoot}/phpmailer/src (bundled in repo)`,
     };
   }
 

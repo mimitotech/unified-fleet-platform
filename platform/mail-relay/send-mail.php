@@ -10,13 +10,25 @@
 declare(strict_types=1);
 
 $root = __DIR__;
-$autoload = $root . '/vendor/autoload.php';
-if (!is_file($autoload)) {
-    fwrite(STDERR, json_encode(['ok' => false, 'error' => 'PHPMailer vendor/autoload.php missing — run composer install in platform/mail-relay']));
-    exit(1);
+$phpmailerSrc = $root . '/phpmailer/src';
+$coreFiles = [
+    $phpmailerSrc . '/Exception.php',
+    $phpmailerSrc . '/PHPMailer.php',
+    $phpmailerSrc . '/SMTP.php',
+];
+foreach ($coreFiles as $file) {
+    if (!is_file($file)) {
+        fwrite(STDERR, json_encode([
+            'ok' => false,
+            'error' => 'PHPMailer source missing in platform/mail-relay/phpmailer/src — commit bundled library files',
+        ]));
+        exit(1);
+    }
 }
 
-require $autoload;
+require $coreFiles[0];
+require $coreFiles[1];
+require $coreFiles[2];
 
 use PHPMailer\PHPMailer\Exception as MailException;
 use PHPMailer\PHPMailer\PHPMailer;

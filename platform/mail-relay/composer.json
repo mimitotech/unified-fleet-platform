@@ -1,11 +1,7 @@
 {
   "name": "mams/mail-relay",
-  "description": "PHPMailer SMTP relay for MAMS (Node invokes via CLI)",
+  "description": "PHPMailer SMTP relay for MAMS — library is bundled under phpmailer/src/ (no composer required on deploy)",
   "require": {
-    "php": ">=7.4",
-    "phpmailer/phpmailer": "^6.9"
-  },
-  "config": {
-    "sort-packages": true
+    "php": ">=7.4"
   }
 }

@@ -301,7 +301,7 @@ router.post('/forgot-password', async (req, res) => {
         : emailError && /auth|invalid login|535|534/i.test(emailError)
           ? ' (SMTP authentication failed — check mailbox password)'
           : emailError && /PHPMailer relay not installed|vendor\/autoload|PHP CLI not found/i.test(emailError)
-            ? ' (mail relay not installed — redeploy after build installs mail-relay)'
+          ? ' (mail relay source missing — redeploy latest code with platform/mail-relay/phpmailer)'
             : '';
     return error(
       res,
