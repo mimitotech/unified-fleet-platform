@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MAMS User Manual — Mimito Asset Management System</title>
+  <style>
+    :root {
+      --green: #004225;
+      --green-dark: #003018;
+      --green-soft: #e8f3ed;
+      --ink: #0f172a;
+      --muted: #64748b;
+      --line: #e2e8f0;
+      --card: #ffffff;
+      --accent: #1a6b45;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      background: #f7faf8;
+      line-height: 1.55;
+      font-size: 15px;
+    }
+    .shell { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; }
+    nav.toc {
+      position: sticky; top: 0; align-self: start;
+      height: 100vh; overflow: auto;
+      background: var(--green); color: #fff;
+      padding: 1.25rem 1rem 2rem;
+    }
+    nav.toc .brand { font-weight: 800; letter-spacing: 0.04em; font-size: 1.1rem; }
+    nav.toc .sub { font-size: 0.72rem; opacity: 0.8; margin: 0.25rem 0 1rem; }
+    nav.toc a {
+      display: block; color: rgba(255,255,255,0.88);
+      text-decoration: none; font-size: 0.82rem;
+      padding: 0.35rem 0.5rem; border-radius: 6px; margin: 0.1rem 0;
+    }
+    nav.toc a:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    nav.toc .sec { margin-top: 0.85rem; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.12em; opacity: 0.65; padding: 0 0.5rem; }
+    main { padding: 2rem 2.5rem 4rem; max-width: 920px; }
+    h1 { color: var(--green); font-size: 2rem; margin: 0 0 0.35rem; }
+    h2 {
+      color: var(--green); font-size: 1.35rem;
+      margin: 2.5rem 0 0.75rem; padding-top: 0.5rem;
+      border-top: 2px solid var(--green-soft);
+    }
+    h3 { color: var(--green-dark); font-size: 1.05rem; margin: 1.5rem 0 0.5rem; }
+    h4 { margin: 1.1rem 0 0.4rem; font-size: 0.95rem; }
+    p, li { color: #1e293b; }
+    .lede { color: var(--muted); font-size: 1.02rem; margin-bottom: 1.5rem; }
+    .meta {
+      display: flex; flex-wrap: wrap; gap: 0.5rem;
+      margin: 1rem 0 1.5rem;
+    }
+    .pill {
+      background: var(--green-soft); color: var(--green);
+      font-size: 0.75rem; font-weight: 700;
+      padding: 0.3rem 0.65rem; border-radius: 999px;
+    }
+    .callout {
+      background: var(--green-soft);
+      border-left: 4px solid var(--green);
+      padding: 0.85rem 1rem; border-radius: 0 8px 8px 0;
+      margin: 1rem 0;
+    }
+    .warn {
+      background: #fff7ed;
+      border-left: 4px solid #ea580c;
+      padding: 0.85rem 1rem; border-radius: 0 8px 8px 0;
+      margin: 1rem 0;
+    }
+    table {
+      width: 100%; border-collapse: collapse; margin: 0.75rem 0 1.25rem;
+      font-size: 0.88rem; background: var(--card);
+      box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+    }
+    th, td { border: 1px solid var(--line); padding: 0.55rem 0.65rem; text-align: left; vertical-align: top; }
+    th { background: var(--green); color: #fff; font-weight: 600; }
+    tr:nth-child(even) td { background: #fafcfa; }
+    figure {
+      margin: 1.25rem 0; background: #fff;
+      border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+      box-shadow: 0 8px 24px -16px rgba(0,66,37,0.35);
+    }
+    figure img { display: block; width: 100%; height: auto; }
+    figcaption {
+      font-size: 0.8rem; color: var(--muted);
+      padding: 0.65rem 0.9rem; background: #f8fafc;
+      border-top: 1px solid var(--line);
+    }
+    ol.steps { padding-left: 1.2rem; }
+    ol.steps li { margin: 0.35rem 0; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+    .card {
+      background: #fff; border: 1px solid var(--line); border-radius: 10px;
+      padding: 0.85rem 1rem;
+    }
+    .card strong { color: var(--green); display: block; margin-bottom: 0.25rem; }
+    footer.doc {
+      margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
+      font-size: 0.8rem; color: var(--muted);
+    }
+    @media (max-width: 900px) {
+      .shell { grid-template-columns: 1fr; }
+      nav.toc { position: relative; height: auto; }
+      main { padding: 1.25rem; }
+      .grid2 { grid-template-columns: 1fr; }
+    }
+    @media print {
+      nav.toc { display: none; }
+      .shell { display: block; }
+      main { max-width: none; padding: 0; }
+      h2 { break-before: page; }
+      h2:first-of-type { break-before: avoid; }
+      figure { break-inside: avoid; }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav class="toc" aria-label="Contents">
+      <div class="brand">MAMS</div>
+      <div class="sub">User Manual · Mimito</div>
+      <div class="sec">Start</div>
+      <a href="#start">Getting started</a>
+      <a href="#roles">Roles</a>
+      <div class="sec">Client</div>
+      <a href="#client">Client portal</a>
+      <a href="#dashboard">Dashboard</a>
+      <a href="#monitoring">Monitoring</a>
+      <a href="#fuel">Fuel</a>
+      <a href="#workshop">Workshop</a>
+      <a href="#alerts">Alerts</a>
+      <a href="#other">Other modules</a>
+      <a href="#settings">Settings</a>
+      <div class="sec">Admin</div>
+      <a href="#admin">Admin portal</a>
+      <a href="#tenants">Clients</a>
+      <a href="#system">System &amp; integrations</a>
+      <a href="#golive">Go-live checklist</a>
+      <div class="sec">Reference</div>
+      <a href="#print">Reports &amp; PDF</a>
+      <a href="#devices">Devices</a>
+      <a href="#trouble">Troubleshooting</a>
+      <a href="#glossary">Glossary</a>
+    </nav>
+
+    <main>
+      <h1>MAMS User Manual</h1>
+      <p class="lede">Complete guide for the <strong>Client portal</strong> and <strong>Admin portal</strong> — where to find things, what to click, and how to run day-to-day fleet operations.</p>
+      <div class="meta">
+        <span class="pill">Mimito Asset Management System</span>
+        <span class="pill">July 2026</span>
+        <span class="pill">mams.frontstardigital.com</span>
+      </div>
+
+      <h2 id="start">Part A — Getting started</h2>
+      <h3>Open the platform</h3>
+      <ol class="steps">
+        <li>Open Chrome, Edge, or Safari.</li>
+        <li>Go to <strong>https://mams.frontstardigital.com</strong>.</li>
+        <li>Click <strong>Sign In</strong>.</li>
+      </ol>
+      <figure>
+        <img src="images/02-landing.png" alt="MAMS landing page" />
+        <figcaption>Figure 1 — Landing page. Use Sign In to reach the login form.</figcaption>
+      </figure>
+
+      <h3>Sign in</h3>
+      <figure>
+        <img src="images/01-login.png" alt="MAMS login page" />
+        <figcaption>Figure 2 — Login: media left, form right (animated brand pane), Trusted by logos below. Optional Open Wialon Hosting link for the telematics console.</figcaption>
+      </figure>
+      <ol class="steps">
+        <li>Enter <strong>Email</strong> and <strong>Password</strong>.</li>
+        <li>Click <strong>Sign In</strong>.</li>
+        <li>Client users land in <code>/app/…</code>; platform admins land in <code>/admin/…</code>.</li>
+      </ol>
+      <div class="callout">
+        <strong>Forgot password?</strong> Use the link on the form, enter your email, then choose a new password.<br />
+        <strong>Also need Wialon?</strong> Use <em>Open Wialon Hosting</em> — MAMS remains your operations dashboard.
+      </div>
+
+      <h3 id="roles">Who sees what</h3>
+      <h4>Client roles</h4>
+      <table>
+        <thead><tr><th>Role</th><th>Access</th></tr></thead>
+        <tbody>
+          <tr><td>Client Admin</td><td>All enabled modules; manage users under Settings</td></tr>
+          <tr><td>Manager</td><td>Most operational modules with write access</td></tr>
+          <tr><td>Operator</td><td>Dashboard, Monitoring, Alerts, Routes (typically)</td></tr>
+          <tr><td>Viewer</td><td>Dashboard, Monitoring, Alerts — view only</td></tr>
+        </tbody>
+      </table>
+      <h4>Platform roles</h4>
+      <table>
+        <thead><tr><th>Role</th><th>Access</th></tr></thead>
+        <tbody>
+          <tr><td>Super Admin</td><td>Full admin portal including System Users</td></tr>
+          <tr><td>Platform Admin</td><td>Admin portal (clients, integrations, system)</td></tr>
+        </tbody>
+      </table>
+      <p>Your <strong>left sidebar</strong> only lists modules enabled for your organisation.</p>
+
+      <h2 id="client">Part B — Client portal</h2>
+      <p>After login: client branding in the shell, left navigation, main workspace, and often a <strong>Live</strong> refresh indicator.</p>
+
+      <h3 id="dashboard">Dashboard</h3>
+      <p><strong>Path:</strong> Sidebar → Dashboard · <code>/app/dashboard</code></p>
+      <ol class="steps">
+        <li>Set the date range (From / To).</li>
+        <li>Apply / <strong>Execute</strong> so KPIs match that period.</li>
+        <li>Review fuel, alerts, and fleet tiles.</li>
+        <li>Use quick links to jump into Monitoring, Fuel, Alerts, etc.</li>
+      </ol>
+      <div class="callout">Dashboard fuel figures use the <strong>same fuel ledger</strong> as the Fuel module for the same dates — always apply the period before comparing.</div>
+
+      <h3 id="monitoring">Monitoring</h3>
+      <p><strong>Path:</strong> Sidebar → Monitoring · <code>/app/monitoring</code></p>
+      <div class="grid2">
+        <div class="card"><strong>Live Map</strong>Fleet on the map; click a unit for the detail panel.</div>
+        <div class="card"><strong>Fleet List</strong>Search; filter Running / Stopped / Offline.</div>
+        <div class="card"><strong>Track</strong>Playback a route for a chosen interval.</div>
+        <div class="card"><strong>Events</strong>Alerts / eco / video events tied to units.</div>
+      </div>
+      <h4>Inspect an asset</h4>
+      <ol class="steps">
+        <li>Search or select the unit.</li>
+        <li>Read location, fuel, engine hours, and <strong>Sensors</strong> (named readings).</li>
+        <li>Use Map / Track / Commands as needed.</li>
+      </ol>
+      <div class="warn">Raw <strong>Live parameters</strong> (technical IO codes) are hidden for client users. Use <strong>Sensors</strong> for operational values.</div>
+
+      <h3 id="fuel">Fuel</h3>
+      <p><strong>Path:</strong> Sidebar → Fuel · <code>/app/fuel</code></p>
+      <table>
+        <thead><tr><th>Tab</th><th>Covers</th></tr></thead>
+        <tbody>
+          <tr><td>Vehicles</td><td>Road assets with fuel sensors</td></tr>
+          <tr><td>Generators</td><td>Gensets <strong>and</strong> stationary tanks (bowsers / tankers)</td></tr>
+          <tr><td>Machinery</td><td>Plant / machinery when configured</td></tr>
+          <tr><td>Reports</td><td>Run Wialon fuel report templates</td></tr>
+          <tr><td>Variance</td><td>Station vs sensor fills (when available)</td></tr>
+        </tbody>
+      </table>
+      <div class="warn">
+        <strong>Bowser / fuel tanker:</strong> These are storage tanks, not road vehicles. They appear under <strong>Generators</strong>. Level drops are treated as <strong>dispensed</strong> fuel when detected — not theft.
+      </div>
+      <h4>Use the fuel table &amp; charts</h4>
+      <ol class="steps">
+        <li>Open the correct category tab.</li>
+        <li>Pick Today / 7d / 14d / 30d or custom dates.</li>
+        <li>Refresh if data looks stale; search for an asset.</li>
+        <li>Charts below use the <strong>same period and filter</strong> as the table.</li>
+        <li>Set price per liter under costing if you need money views.</li>
+      </ol>
+      <h4>Run a fuel report</h4>
+      <ol class="steps">
+        <li>Fuel → <strong>Reports</strong>.</li>
+        <li>Choose report template, unit or group, and period.</li>
+        <li>Click <strong>Run report</strong>.</li>
+        <li>Open each table tab (and chart / Fuel Graph tabs when present).</li>
+        <li>Export <strong>CSV (all tables)</strong> or <strong>Download PDF / Print / PDF</strong> for a branded pack with all tables.</li>
+      </ol>
+
+      <h3 id="workshop">Workshop</h3>
+      <p><strong>Path:</strong> <code>/app/workshop</code> — inspections, maintenance, breakdowns, costing, and workshop reports. Log jobs against the correct asset; use costing for period spend.</p>
+
+      <h3 id="alerts">Alerts</h3>
+      <p><strong>Path:</strong> <code>/app/alerts</code></p>
+      <ol class="steps">
+        <li>Filter by severity / category / date.</li>
+        <li>Open an alert for time, asset, and description.</li>
+        <li>Acknowledge handled items.</li>
+      </ol>
+      <p>Related events also appear under Monitoring → Events.</p>
+
+      <h3 id="other">Other modules (when enabled)</h3>
+      <table>
+        <thead><tr><th>Module</th><th>Use for</th></tr></thead>
+        <tbody>
+          <tr><td>Surveillance</td><td>Cameras, live video, playback, video events</td></tr>
+          <tr><td>Drivers</td><td>Driver roster &amp; reports</td></tr>
+          <tr><td>Routes</td><td>Route planning &amp; tracking</td></tr>
+          <tr><td>Geofencing</td><td>Zones &amp; zone reports</td></tr>
+          <tr><td>Commands</td><td>Remote device commands</td></tr>
+          <tr><td>Trailers / Sensors / Emissions</td><td>As enabled for your tenant</td></tr>
+        </tbody>
+      </table>
+      <div class="callout">There is no single global Reports menu. Reports live <strong>inside</strong> each module (e.g. Fuel → Reports).</div>
+
+      <h3 id="settings">Settings</h3>
+      <table>
+        <thead><tr><th>Tab</th><th>Who</th><th>What</th></tr></thead>
+        <tbody>
+          <tr><td>Account</td><td>Everyone</td><td>Your profile / password options</td></tr>
+          <tr><td>Users</td><td>Client Admin+</td><td>Create and manage client users</td></tr>
+        </tbody>
+      </table>
+      <p>Logo and brand colours are set by platform admins, not in client Settings.</p>
+
+      <h4>Daily client checklist</h4>
+      <ol class="steps">
+        <li>Dashboard — apply today’s period.</li>
+        <li>Monitoring — critical assets online.</li>
+        <li>Fuel — fills, use, drops; correct tab for bowsers/gensets.</li>
+        <li>Alerts — acknowledge new items.</li>
+        <li>Workshop — open jobs.</li>
+        <li>Fuel → Reports — export management packs as needed.</li>
+      </ol>
+
+      <h2 id="admin">Part C — Admin portal</h2>
+      <p><strong>Path:</strong> <code>/admin/…</code> · Super Admin &amp; Platform Admin only.</p>
+      <p>Sidebar: Dashboard · Clients · Client Users · System Users (super only) · System · Integrations · Wialon / LocoNav / TrackSolid Centers · Support · My Account.</p>
+
+      <h3 id="tenants">Clients (tenants)</h3>
+      <p><strong>Path:</strong> <code>/admin/tenants</code></p>
+      <h4>Create</h4>
+      <ol class="steps">
+        <li>Clients → New client.</li>
+        <li>Set name, slug, status, limits, manager.</li>
+        <li>Save, then open client detail.</li>
+      </ol>
+      <h4>Configure (detail tabs)</h4>
+      <table>
+        <thead><tr><th>Tab</th><th>Actions</th></tr></thead>
+        <tbody>
+          <tr><td>General</td><td>Identity, status, limits</td></tr>
+          <tr><td>Integrations</td><td>Wialon / LocoNav / TrackSolid credentials</td></tr>
+          <tr><td>Branding</td><td>Logo, favicon, colours → Save Branding</td></tr>
+          <tr><td>Modules</td><td>Enable what the client sidebar may show</td></tr>
+          <tr><td>Fuel Module</td><td>Tenant fuel options</td></tr>
+          <tr><td>Users</td><td>Client users &amp; roles</td></tr>
+          <tr><td>Migration / Backup / Audit / API Keys</td><td>Go-live &amp; support</td></tr>
+        </tbody>
+      </table>
+
+      <h3 id="system">System &amp; integrations</h3>
+      <ul>
+        <li><strong>System → Login media</strong> — login slides and Trusted by logos (Figure 2).</li>
+        <li><strong>Integrations</strong> marketplace — global plugins on/off.</li>
+        <li><strong>Wialon Center</strong> — mother accounts, hierarchy, tenant linking.</li>
+        <li>LocoNav / TrackSolid Centers — provider-specific ops.</li>
+        <li><strong>Support</strong> — onboarding &amp; webhook URLs.</li>
+      </ul>
+
+      <h3 id="golive">New-client go-live checklist</h3>
+      <ol class="steps">
+        <li>Create client → General.</li>
+        <li>Connect Wialon (Integrations).</li>
+        <li>Confirm assets in Wialon Center / client Monitoring.</li>
+        <li>Enable Modules.</li>
+        <li>Set Branding.</li>
+        <li>Configure Fuel Module if needed.</li>
+        <li>Create Client Admin; verify client login.</li>
+        <li>Spot-check Fuel tabs and one Fuel → Reports run.</li>
+        <li>Confirm login media if required.</li>
+        <li>Hand over credentials + Part B of this manual.</li>
+      </ol>
+
+      <h2 id="print">Part D — Reports, print &amp; PDF</h2>
+      <ul>
+        <li><strong>CSV</strong> for spreadsheet work (Fuel can export all tables).</li>
+        <li><strong>PDF / Print</strong> for branded packs with tables and charts.</li>
+        <li>Multi-table reports include <strong>every table</strong>, not only the active tab.</li>
+        <li>After a deploy, refresh once if print modules fail to load.</li>
+      </ul>
+
+      <h2 id="devices">Part E — Desktop, tablet &amp; mobile</h2>
+      <table>
+        <thead><tr><th>Device</th><th>Guidance</th></tr></thead>
+        <tbody>
+          <tr><td>Desktop</td><td>Best for maps, multi-table reports, admin</td></tr>
+          <tr><td>Tablet</td><td>Full UI; landscape for Monitoring</td></tr>
+          <tr><td>Phone</td><td>Login &amp; alerts fine; use larger screen for deep Fuel reports / Track</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="trouble">Part F — Troubleshooting</h2>
+      <table>
+        <thead><tr><th>Symptom</th><th>Try this</th></tr></thead>
+        <tbody>
+          <tr><td>Can’t sign in</td><td>Reset password; confirm account active</td></tr>
+          <tr><td>Module missing</td><td>Enable module for the client (admin)</td></tr>
+          <tr><td>Empty Fuel table</td><td>Widen dates; Refresh; correct tab; check sync</td></tr>
+          <tr><td>Bowser under Vehicles</td><td>Should be Generators — contact support if wrong</td></tr>
+          <tr><td>Print/PDF error</td><td>Hard refresh; retry; use CSV meanwhile</td></tr>
+          <tr><td>Dashboard ≠ Fuel numbers</td><td>Same dates + Execute/Refresh on both</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="glossary">Part G — Glossary</h2>
+      <table>
+        <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>MAMS</td><td>Mimito Asset Management System</td></tr>
+          <tr><td>Client / Tenant</td><td>One customer organisation</td></tr>
+          <tr><td>Unit / Asset</td><td>Tracked object (vehicle, generator, bowser, …)</td></tr>
+          <tr><td>FLS</td><td>Fuel level sensor</td></tr>
+          <tr><td>Bowser</td><td>Fuel storage tank — under Generators in Fuel</td></tr>
+          <tr><td>Wialon</td><td>Telematics platform behind many reports</td></tr>
+        </tbody>
+      </table>
+
+      <footer class="doc">
+        © Mimito Technologies · MAMS User Manual · Screenshots from live public pages (landing &amp; login).<br />
+        Source: <code>docs/user-manual/</code> · Open the HTML file in a browser and use Print → Save as PDF for a PDF copy.
+      </footer>
+    </main>
+  </div>
+</body>
+</html>
