@@ -25,9 +25,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle,
-} from '@/components/ui/sheet';
+import { DriverDetailSheet } from '@/components/drivers/DriverDetailSheet';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuSeparator, DropdownMenuTrigger,
@@ -44,6 +42,7 @@ import {
 import { notify } from '@/lib/notify';
 import { safeArray } from '@/lib/safeArray';
 import { cn } from '@/lib/utils';
+import { clientFacingText } from '@/lib/clientFacingText';
 import { CHART, ALERT_SEVERITY } from '@/lib/chartColors';
 import {
   Users, UserCheck, Car, Coffee, FileText, Plus, Pencil, RefreshCw, Settings2,
@@ -145,12 +144,12 @@ export default function Drivers() {
   const updateDriver = useUpdateDriver();
   const deleteDriver = useDeleteDriver();
   const autoScoredRef = useRef(false);
-  const autoWialonRef = useRef(false);
+  const autoSyncRef = useRef(false);
   const [activeTab, setActiveTab] = useState('roster');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'available' | 'driving' | 'off-duty'>('all');
   const [gradeFilter, setGradeFilter] = useState<'all' | 'good' | 'bad' | 'ugly' | 'unscored'>('all');
-  const [assignmentFilter, setAssignmentFilter] = useState<'all' | 'assigned' | 'unassigned' | 'wialon'>('all');
+  const [assignmentFilter, setAssignmentFilter] = useState<'all' | 'assigned' | 'unassigned' | 'linked'>('all');
 
   const scoresTabActive = activeTab === 'scores';
 
@@ -178,7 +177,7 @@ export default function Drivers() {
     enabled: Boolean(selectedDriverId) && detailOpen,
   });
 
-  const { data: violations } = useQuery({
+  const { data: violations, isFetching: violationsFetching } = useQuery({
     queryKey: ['driverViolations', selectedDriverId],
     queryFn: () => clientApi.getDriverViolations(selectedDriverId, 80, 30),
     enabled: Boolean(selectedDriverId) && (detailOpen || scoresTabActive),
@@ -191,16 +190,16 @@ export default function Drivers() {
     staleTime: 60_000,
   });
 
-  const syncWialon = useMutation({
+  const syncFleetDrivers = useMutation({
     mutationFn: () => clientApi.syncDriversFromWialon(),
     onSuccess: (data) => {
       notify.success(
-        'Wialon drivers synced',
+        'Drivers synced',
         `${data.imported} imported · ${data.updated} updated · ${data.assigned} vehicle assignments`,
       );
       invalidateDriverQueries(qc);
     },
-    onError: (e) => notify.error('Wialon sync failed', (e as Error).message),
+    onError: (e) => notify.error('Driver sync failed', clientFacingText((e as Error).message)),
   });
 
   const syncViolations = useMutation({
@@ -254,12 +253,12 @@ export default function Drivers() {
   });
 
   useEffect(() => {
-    if (autoWialonRef.current || isLoading || syncWialon.isPending) return;
+    if (autoSyncRef.current || isLoading || syncFleetDrivers.isPending) return;
     if (!drivers?.length) {
-      autoWialonRef.current = true;
-      syncWialon.mutate();
+      autoSyncRef.current = true;
+      syncFleetDrivers.mutate();
     }
-  }, [drivers, isLoading, syncWialon.isPending]);
+  }, [drivers, isLoading, syncFleetDrivers.isPending]);
 
   useEffect(() => {
     if (autoScoredRef.current || isLoading || !drivers?.length || !scoresTabActive) return;
@@ -369,7 +368,7 @@ export default function Drivers() {
       if (statusFilter !== 'all' && d.status !== statusFilter) return false;
       if (assignmentFilter === 'assigned' && !d.assignedAssetId) return false;
       if (assignmentFilter === 'unassigned' && d.assignedAssetId) return false;
-      if (assignmentFilter === 'wialon' && !d.wialonDriverId) return false;
+      if (assignmentFilter === 'linked' && !d.wialonDriverId) return false;
       const grade = String(scoreByDriver.get(d.id)?.grade || d.grade || '').toLowerCase();
       if (gradeFilter === 'unscored' && grade) return false;
       if (gradeFilter !== 'all' && gradeFilter !== 'unscored' && grade !== gradeFilter) return false;
@@ -381,7 +380,7 @@ export default function Drivers() {
     const all = safeArray(drivers) as Driver[];
     const byStatus = { all: all.length, available: 0, driving: 0, 'off-duty': 0 };
     const byGrade = { all: all.length, good: 0, bad: 0, ugly: 0, unscored: 0 };
-    const byAssignment = { all: all.length, assigned: 0, unassigned: 0, wialon: 0 };
+    const byAssignment = { all: all.length, assigned: 0, unassigned: 0, linked: 0 };
     for (const d of all) {
       if (d.status === 'available') byStatus.available += 1;
       else if (d.status === 'driving') byStatus.driving += 1;
@@ -391,7 +390,7 @@ export default function Drivers() {
       else byGrade.unscored += 1;
       if (d.assignedAssetId) byAssignment.assigned += 1;
       else byAssignment.unassigned += 1;
-      if (d.wialonDriverId) byAssignment.wialon += 1;
+      if (d.wialonDriverId) byAssignment.linked += 1;
     }
     return { byStatus, byGrade, byAssignment };
   }, [drivers, scoreByDriver]);
@@ -530,10 +529,10 @@ export default function Drivers() {
                 <LoadingButton
                   size="sm"
                   variant="outline"
-                  loading={syncWialon.isPending}
-                  onClick={() => syncWialon.mutate()}
+                  loading={syncFleetDrivers.isPending}
+                  onClick={() => syncFleetDrivers.mutate()}
                 >
-                  <RefreshCw className="h-4 w-4 mr-1" /> Sync from Wialon
+                  <RefreshCw className="h-4 w-4 mr-1" /> Sync drivers
                 </LoadingButton>
                 <Button size="sm" variant="outline" onClick={() => downloadDriversCsv(filteredDrivers)}>
                   Export CSV
@@ -602,7 +601,7 @@ export default function Drivers() {
                     ['all', 'All', filterCounts.byAssignment.all],
                     ['assigned', 'Assigned', filterCounts.byAssignment.assigned],
                     ['unassigned', 'Unassigned', filterCounts.byAssignment.unassigned],
-                    ['wialon', 'From Wialon', filterCounts.byAssignment.wialon],
+                    ['linked', 'Fleet linked', filterCounts.byAssignment.linked],
                   ] as const
                 ).map(([id, label, n]) => (
                   <Button
@@ -623,7 +622,7 @@ export default function Drivers() {
               </div>
             </div>
 
-            {isLoading || syncWialon.isPending ? (
+            {isLoading || syncFleetDrivers.isPending ? (
               <Skeleton className="h-48" />
             ) : (
               <Table>
@@ -644,7 +643,11 @@ export default function Drivers() {
                 </TableHeader>
                 <TableBody>
                   {filteredDrivers.map((d) => (
-                    <TableRow key={d.id}>
+                    <TableRow
+                      key={d.id}
+                      className="cursor-pointer hover:bg-muted/40"
+                      onClick={() => openDetail(d)}
+                    >
                       {(() => {
                         const state = licenseState(d.licenseExpiryDate);
                         return (
@@ -653,7 +656,7 @@ export default function Drivers() {
                         <div className="flex items-center gap-1.5">
                           {d.name}
                           {d.wialonDriverId ? (
-                            <Badge variant="outline" className="text-[10px] px-1 py-0">Wialon</Badge>
+                            <Badge variant="outline" className="text-[10px] px-1 py-0">Linked</Badge>
                           ) : null}
                         </div>
                       </TableCell>
@@ -691,7 +694,7 @@ export default function Drivers() {
                         <Badge className={statusColors[d.status] || ''}>{d.status}</Badge>
                       </TableCell>
                       <TableCell>{d.assignedAssetPlate || d.assignedAssetName || '—'}</TableCell>
-                      <TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button size="sm" variant="ghost">
@@ -731,7 +734,7 @@ export default function Drivers() {
                       <TableCell colSpan={11} className="text-center text-muted-foreground py-8">
                         {drivers?.length
                           ? 'No drivers match the current filters'
-                          : 'No drivers yet — sync from Wialon or add manually'}
+                          : 'No drivers yet — sync from fleet or add manually'}
                       </TableCell>
                     </TableRow>
                   )}
@@ -834,7 +837,7 @@ export default function Drivers() {
                             setDetailOpen(true);
                           }}
                         >
-                          Details
+                          View profile
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -893,7 +896,7 @@ export default function Drivers() {
                 {!safeArray(fleetViolations).length && (
                   <TableRow>
                     <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                      No eco-driving or camera alerts in the last 30 days. Click Recompute after Wialon reports sync.
+                      No eco-driving or camera alerts in the last 30 days. Sync violations then recompute scores.
                     </TableCell>
                   </TableRow>
                 )}
@@ -1166,144 +1169,28 @@ export default function Drivers() {
         </DialogContent>
       </Dialog>
 
-      <Sheet open={detailOpen} onOpenChange={setDetailOpen}>
-        <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle>{driverDetail?.name || 'Driver profile'}</SheetTitle>
-            <SheetDescription>
-              License, vehicle assignment, safety score, and linked violations
-            </SheetDescription>
-          </SheetHeader>
-          {detailLoading ? (
-            <Skeleton className="h-64 mt-4" />
-          ) : driverDetail ? (
-            <div className="space-y-5 mt-4">
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <p className="text-muted-foreground text-xs">License</p>
-                  <p className="font-medium">{driverDetail.licenseNumber}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground text-xs">Status</p>
-                  <Badge className={statusColors[driverDetail.status] || ''}>{driverDetail.status}</Badge>
-                </div>
-                <div>
-                  <p className="text-muted-foreground text-xs">Phone</p>
-                  <p>{driverDetail.phone || '—'}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground text-xs">Vehicle</p>
-                  <p>{driverDetail.assignedAssetPlate || driverDetail.assignedAssetName || 'Unassigned'}</p>
-                  {driverDetail.wialonDriverId ? (
-                    <p className="text-[10px] text-muted-foreground mt-0.5">Linked from Wialon</p>
-                  ) : null}
-                </div>
-                <div>
-                  <p className="text-muted-foreground text-xs">Safety score</p>
-                  <p className="font-semibold text-lg">
-                    {driverDetail.safetyScore ?? driverDetail.projectedScore ?? '—'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground text-xs">Grade</p>
-                  {(driverDetail.grade || driverDetail.projectedGrade) ? (
-                    <Badge
-                      className={
-                        gradeColors[
-                          String(driverDetail.grade || driverDetail.projectedGrade).toLowerCase()
-                        ] || ''
-                      }
-                    >
-                      {driverDetail.grade || driverDetail.projectedGrade}
-                    </Badge>
-                  ) : (
-                    '—'
-                  )}
-                </div>
-              </div>
-
-              {driverDetail.violationBreakdown &&
-                Object.keys(driverDetail.violationBreakdown).length > 0 && (
-                  <div>
-                    <h4 className="font-medium text-sm mb-2">Penalty breakdown (30 days)</h4>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      {Object.entries(driverDetail.violationBreakdown).map(([k, n]) => (
-                        <div key={k} className="flex justify-between border rounded px-2 py-1">
-                          <span className="capitalize">{k.replace(/_/g, ' ')}</span>
-                          <span className="font-medium">{n}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-              <div className="flex flex-wrap gap-2">
-                <LoadingButton
-                  size="sm"
-                  loading={recomputeOne.isPending}
-                  onClick={() => recomputeOne.mutate(driverDetail.id)}
-                >
-                  <RefreshCw className="h-3.5 w-3.5 mr-1" />
-                  Recompute score
-                </LoadingButton>
-                <Button size="sm" variant="outline" onClick={() => openEdit(driverDetail)}>
-                  <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="text-destructive"
-                  onClick={() => confirmDelete(driverDetail)}
-                >
-                  <Trash2 className="h-3.5 w-3.5 mr-1" /> Remove
-                </Button>
-              </div>
-
-              <div>
-                <h4 className="font-medium text-sm mb-2">Violations (30 days)</h4>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>When</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Source</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(safeArray(violations) as Array<{
-                      id: string;
-                      occurredAt?: string;
-                      violationType: string;
-                      source?: string;
-                    }>).slice(0, 15).map((v) => (
-                      <TableRow key={v.id}>
-                        <TableCell className="text-xs">
-                          {v.occurredAt ? new Date(v.occurredAt).toLocaleString() : '—'}
-                        </TableCell>
-                        <TableCell>{String(v.violationType || '').replace(/_/g, ' ')}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline">
-                            {v.source === 'alert' ? 'Camera / alert' : 'Eco-driving'}
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {!safeArray(violations).length && (
-                      <TableRow>
-                        <TableCell colSpan={3} className="text-center text-muted-foreground py-4 text-xs">
-                          {driverDetail.assignedAssetId
-                            ? 'No violations on the assigned vehicle in the last 30 days'
-                            : 'Assign a vehicle to score violations from that asset'}
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-            </div>
-          ) : null}
-        </SheetContent>
-      </Sheet>
+      <DriverDetailSheet
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+        driver={driverDetail ?? null}
+        loading={detailLoading}
+        violations={
+          safeArray(violations) as Array<{
+            id: string;
+            occurredAt?: string;
+            violationType: string;
+            severity?: string;
+            unitName?: string;
+            source?: string;
+          }>
+        }
+        violationsLoading={violationsFetching && detailOpen}
+        penaltyConfig={penaltyConfig ?? null}
+        onEdit={() => driverDetail && openEdit(driverDetail)}
+        onRecompute={() => driverDetail && recomputeOne.mutate(driverDetail.id)}
+        onRemove={() => driverDetail && confirmDelete(driverDetail)}
+        recomputePending={recomputeOne.isPending}
+      />
     </AppLayout>
   );
 }

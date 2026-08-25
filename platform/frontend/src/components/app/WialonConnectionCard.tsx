@@ -8,6 +8,7 @@ import { WialonHierarchyPanel } from '@/components/admin/WialonHierarchyPanel';
 import { LoadingButton } from '@/components/shared/LoadingButton';
 import { RefreshCw, Satellite } from 'lucide-react';
 import { notify } from '@/lib/notify';
+import { clientFacingText } from '@/lib/clientFacingText';
 
 const tierLabel: Record<string, string> = {
   mother: 'Top / mother account',
@@ -37,7 +38,7 @@ export function WialonConnectionCard() {
         `${result.vehicles} vehicles${userPart}, ${result.drivers} drivers, ${result.geofences} geofences`
       );
     },
-    onError: (e: Error) => notify.error('Sync failed', e.message),
+    onError: (e: Error) => notify.error('Sync failed', clientFacingText(e.message)),
   });
 
   const meta = ctx?.sessionMeta;
@@ -67,7 +68,7 @@ export function WialonConnectionCard() {
               : 'Fleet telematics is not connected for this organization. Your platform administrator configures the connection under Admin → Clients → Integrations.'}
           </CardDescription>
           {configuredButBroken && ctx?.lastError && (
-            <p className="text-sm text-destructive pt-2">{ctx.lastError}</p>
+            <p className="text-sm text-destructive pt-2">{clientFacingText(ctx.lastError)}</p>
           )}
         </CardHeader>
       </Card>

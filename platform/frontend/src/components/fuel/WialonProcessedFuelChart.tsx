@@ -181,7 +181,7 @@ export function WialonProcessedFuelChart({
         <div>
           <h3 className="text-sm font-semibold">{chart.name || 'Processed fuel level'}</h3>
           <p className="text-[11px] text-muted-foreground">
-            Wialon report chart · {datasets.length} series · {rows.length.toLocaleString()} points
+            Report chart · {datasets.length} series · {rows.length.toLocaleString()} points
             {fillCount ? ` · ${fillCount} fill markers` : ''}
             {drainCount ? ` · ${drainCount} drain markers` : ''}
           </p>

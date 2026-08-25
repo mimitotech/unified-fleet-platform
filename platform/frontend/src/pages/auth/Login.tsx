@@ -525,7 +525,7 @@ export default function Login() {
                       className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border-2 border-primary/20 bg-primary/[0.04] text-sm font-bold text-primary transition-colors hover:border-primary/40 hover:bg-primary/[0.08]"
                     >
                       <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-                      Open Wialon Hosting
+                      Open fleet portal
                     </a>
                   </form>
                 )}

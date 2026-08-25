@@ -1,4 +1,5 @@
 import { safeArray } from './safeArray';
+import { clientFacingText } from './clientFacingText';
 import {
   readTenantPreviewSlugFromLocation,
   readTenantPreviewSlugFromSession,
@@ -162,7 +163,7 @@ export async function api<T>(
           isLinkPath
             ? 'The link request was cut off (gateway timeout). Refresh this page — the account may already be saved. If Integrations still shows the old account, try Link again.'
             : isHierarchyPath
-              ? 'Loading the Wialon account list timed out. Wait a moment and refresh — large mother accounts are cached after the first successful load.'
+              ? 'Loading the account list timed out. Wait a moment and refresh — large accounts are cached after the first successful load.'
               : 'The server took too long or returned a non-JSON error. Refresh and try again shortly.'
         );
       }
@@ -178,7 +179,7 @@ export async function api<T>(
     );
   }
 
-  if (!res.ok) throw new Error(json.error || res.statusText);
+  if (!res.ok) throw new Error(clientFacingText(json.error) || res.statusText);
   return json.data as T;
 }
 

@@ -85,7 +85,7 @@ export default function Emissions() {
   const syncViolations = useMutation({
     mutationFn: () => clientApi.syncEmissionsViolations(),
     onSuccess: (data) => {
-      notify.success('Violations synced', `${data.eco} driving events imported from Wialon`);
+      notify.success('Violations synced', `${data.eco} driving events imported from fleet telematics`);
       void refetchViolations();
     },
     onError: (e) => notify.error('Sync failed', (e as Error).message),
@@ -321,7 +321,7 @@ export default function Emissions() {
               <div>
                 <h3 className="font-semibold mb-1">Eco-driving violations</h3>
                 <p className="text-xs text-muted-foreground">
-                  Harsh events, speeding, and other eco criteria from Wialon reports and unit notifications.
+                  Harsh events, speeding, and other eco criteria from fleet reports and unit notifications.
                 </p>
               </div>
               <LoadingButton
@@ -331,7 +331,7 @@ export default function Emissions() {
                 onClick={() => syncViolations.mutate()}
               >
                 <RefreshCw className="h-3.5 w-3.5 mr-1" />
-                Sync from Wialon
+                Sync violations
               </LoadingButton>
             </div>
             {loadingViolations ? (
@@ -372,7 +372,7 @@ export default function Emissions() {
                   {!safeArray(violations).length && (
                     <TableRow>
                       <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                        No eco-driving violations in this range. They appear after Wialon eco-driving reports sync.
+                        No eco-driving violations in this range. They appear after eco-driving reports sync from fleet telematics.
                       </TableCell>
                     </TableRow>
                   )}

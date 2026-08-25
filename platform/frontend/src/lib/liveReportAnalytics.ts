@@ -127,7 +127,7 @@ export function buildReportCharts(reportId: string, rows: Record<string, unknown
         {
           id: 'status-mix',
           title: 'Fleet status mix',
-          subtitle: 'Live Wialon hosting status',
+          subtitle: 'Live fleet hosting status',
           type: 'pie',
           data: groupCount(rows, 'status', statusColors),
           xKey: 'name',
@@ -149,7 +149,7 @@ export function buildReportCharts(reportId: string, rows: Record<string, unknown
         {
           id: 'fuel-levels',
           title: 'Fuel levels',
-          subtitle: '% or liters from Wialon FLS',
+          subtitle: '% or liters from fuel level sensors',
           type: 'bar',
           data: fuelLevelRows(rows),
           xKey: 'name',
@@ -221,7 +221,7 @@ export function buildReportCharts(reportId: string, rows: Record<string, unknown
         {
           id: 'fuel-bars',
           title: 'Tank levels by unit',
-          subtitle: 'Wialon FLS live readings',
+          subtitle: 'Fuel level sensor live readings',
           type: 'bar',
           data: fuelLevelRows(rows),
           xKey: 'name',
@@ -503,7 +503,7 @@ export function buildReportKpis(reportId: string, rows: Record<string, unknown>[
         { label: 'Reporting', value: rows.filter((r) => r.fuelLive).length, tone: 'good' },
         { label: 'Low fuel', value: rows.filter((r) => (num(r.fuelPercent) ?? 100) < 25).length, tone: 'warn' },
         { label: 'Fill events', value: rows.filter((r) => (num(r.filledLiters) ?? 0) > 0).length, tone: 'good' },
-        { label: 'FLS sensors', value: rows.filter((r) => str(r.method) === 'Wialon FLS').length, tone: 'neutral' },
+        { label: 'FLS sensors', value: rows.filter((r) => str(r.method) === 'Wialon FLS' || str(r.method) === 'Fuel sensors').length, tone: 'neutral' },
       ];
     case 'trip-history': {
       const km = rows.reduce((a, r) => a + (num(r.distanceKm) ?? 0), 0);

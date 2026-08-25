@@ -415,7 +415,7 @@ export default function RoutesPage() {
           <div className="fleet-card">
             <h3 className="font-semibold mb-2">Create route from trip history / track playback</h3>
             <p className="text-sm text-muted-foreground mb-4">
-              Uses departure and arrival from synced Wialon trips as the first and last checkpoints.
+              Uses departure and arrival from synced fleet trips as the first and last checkpoints.
               Total duration is calculated from those times.
             </p>
             <Table>
